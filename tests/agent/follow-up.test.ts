@@ -53,6 +53,10 @@ describe('follow-up triggers', () => {
   it('treats empty or <silent> output as silence', () => {
     expect(isSilent('')).toBe(true);
     expect(isSilent('  <silent>')).toBe(true);
+    expect(isSilent('<s енsilent>')).toBe(true);
+    expect(isSilent('<Silent >')).toBe(true);
+    expect(isSilent('<b>Heads up</b>')).toBe(false);
+    expect(isSilent('Staying silent is not what I would do here, Dana.')).toBe(false);
     expect(isSilent('Hey, looks like we got cut off.')).toBe(false);
   });
 });

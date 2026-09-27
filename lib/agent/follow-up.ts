@@ -66,7 +66,12 @@ export function describeTrigger(state: SessionProjection, request: FollowUpReque
   };
 }
 
+/**
+ * True when the model chose silence. Tolerant of a mangled marker (seen live: "<s енsilent>"), so a
+ * garbled token is never shown to the user as a message.
+ */
 export function isSilent(text: string): boolean {
   const trimmed = text.trim();
-  return !trimmed || trimmed.toLowerCase().startsWith(SILENT);
+  if (!trimmed || trimmed.toLowerCase().startsWith(SILENT)) return true;
+  return trimmed.length <= 40 && /^<[^<>]{0,24}>$/.test(trimmed) && /s\W*i\W*l\W*e\W*n\W*t|silent/i.test(trimmed.replace(/[^\p{L}]/gu, ''));
 }
