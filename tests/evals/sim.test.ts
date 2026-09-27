@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
+import { VOICE_LIMITS } from '../../lib/voice/session-config';
 import { loadPersonas, type Persona } from '../../evals/sim/personas';
 import { cutMidSentence, fragmentChunks, simulate, withTimeout } from '../../evals/sim/run';
 import { createScriptedUser, type SimAction } from '../../evals/sim/user';
@@ -222,7 +223,8 @@ describe('simulated conversation', () => {
     const trace = await simulate(persona('dropped_call'), { user, model: script.model });
 
     expect(trace.steps[3]).toMatchObject({ callEnded: 'connection_lost', followUp: 'message' });
-    expect(user.seen[4].screen).toContain('[Card] Persona is ready to call');
+    // The new offer card sits after the follow-up that offered it, as the app shows it.
+    expect(user.seen[4].screen).toContain('Persona: The line dropped. Tap Answer to pick it back up.\n[Card] Persona is ready to call');
     expect(script.prompts[7]).toContain("Mention you're glad to be back after the line dropped.");
     expect(trace.steps[6].callEnded).toBeUndefined();
     expect(trace.steps[7]).toMatchObject({ callEnded: 'user_hangup', followUp: 'silent' });
@@ -241,6 +243,10 @@ describe('simulated conversation', () => {
     const trace = await simulate(persona('busy_founder'), { user, model: script.model });
 
     expect(trace.steps[7]).toMatchObject({ callEnded: 'remote_hangup', followUp: 'silent', outputs: ['Mm, go on.'] });
+    // The last reply on a capped call gets the app's own wrap-up instruction before the call ends.
+    expect(trace.steps[7].turns[0]).toMatchObject({ kind: 'voice', trigger: 'voice-wrap-up:live_sim_1' });
+    expect(script.prompts[8]).toContain(VOICE_LIMITS.wrapUp);
+    expect(script.prompts[7]).not.toContain(VOICE_LIMITS.wrapUp);
     expect(trace.events).toContainEqual(expect.objectContaining({ type: 'decision', trigger: 'followup:call:live_sim_1', outcome: 'silent' }));
     expect(trace.steps[8]).toMatchObject({ onCall: false, action: { type: 'leave' } });
     expect(script.remaining()).toBe(0);
@@ -276,19 +282,59 @@ describe('simulated conversation', () => {
     expect(script.remaining()).toBe(0);
   });
 
-  it('ends the conversation cleanly with status error when the model fails or hangs', async () => {
+  it('ends the conversation cleanly with status error when the model fails or hangs, and says which side failed', async () => {
     const failed = await simulate(persona('explorer'), { user: createScriptedUser([say('what is this?')]), model: scripted([{ fail: 'provider exploded' }]).model });
-    expect(failed).toMatchObject({ status: 'error', error: 'provider exploded' });
+    expect(failed).toMatchObject({ status: 'error', error: 'provider exploded', errorSource: 'app' });
     expect(failed.steps[0].incomplete).toBe(true);
     expect(scoreTrace(failed).stayed).toBe(false);
     expect(simInvariants(failed).filter((check) => !check.passed)).toEqual([]);
 
     const hung = await simulate(persona('explorer'), { user: createScriptedUser([say('what is this?')]), model: scripted([{ hang: true }]).model, turnTimeoutMs: 50 });
-    expect(hung.status).toBe('error');
+    expect(hung).toMatchObject({ status: 'error', errorSource: 'app' });
     expect(hung.error).toMatch(/reply turn timed out/);
 
     const userFailed = await simulate(persona('explorer'), { user: { next: async () => { throw new Error('Anthropic API HTTP 401'); } }, model: scripted([]).model });
-    expect(userFailed).toMatchObject({ status: 'error', error: 'Anthropic API HTTP 401', steps: [] });
+    expect(userFailed).toMatchObject({ status: 'error', error: 'Anthropic API HTTP 401', errorSource: 'user', steps: [] });
+
+    const userSilent = await simulate(persona('explorer'), { user: { next: () => new Promise(() => undefined) }, model: scripted([]).model, userTimeoutMs: 50 });
+    expect(userSilent).toMatchObject({ status: 'error', errorSource: 'user', error: expect.stringMatching(/simulated user timed out/) });
+  });
+
+  it('records leaving mid-call as the client does (a drop from a closed page) and runs no follow-up', async () => {
+    const script = scripted([{ call: { name: 'offer_call', input: {} } }, { text: 'Tap Answer.' }, { text: 'Hi there.' }, { text: 'Go on.' }]);
+    const trace = await simulate(persona('busy_founder'), { user: createScriptedUser([say('call?'), tap('answer_call'), speak('so the thing is'), leave('bored')]), model: script.model });
+    expect(trace.steps[3]).toMatchObject({ callEnded: 'page_closed', turns: [] });
+    expect(trace.steps[3].followUp).toBeUndefined();
+    expect(trace.events).toContainEqual(expect.objectContaining({ id: 'call:live_sim_1:dropped', phase: 'dropped', reason: 'page_closed' }));
+    expect(trace.events.some((event) => event.type === 'decision')).toBe(false);
+    expect(trace).toMatchObject({ status: 'left', leave: { feeling: 'bored' } });
+    expect(script.remaining()).toBe(0);
+  });
+
+  it('waits for an utterance with a thought to cut before hanging up mid-sentence', async () => {
+    const script = scripted([
+      { call: { name: 'offer_call', input: {} } }, { text: 'Tap Answer.' },
+      { text: 'Hi, what should I call you?' }, { text: 'Hi Jordan.' }, { text: 'Great. What is eating your week?' },
+      { text: 'Looks like we got cut off while you were telling me about the vendor numbers.' },
+    ]);
+    const long = 'Mostly chasing the vendor numbers every Friday afternoon for the report';
+    const user = createScriptedUser([say('call?'), tap('answer_call'), speak("I'm Jordan"), speak('Yes.'), speak(long), leave()]);
+    const trace = await simulate(persona('hangs_up_mid_sentence'), { user, model: script.model });
+    expect(trace.steps[3].delivered).toBeUndefined();
+    expect(trace.steps[3].callEnded).toBeUndefined();
+    expect(trace.steps[4]).toMatchObject({ delivered: cutMidSentence(long), callEnded: 'user_hangup', followUp: 'message' });
+    expect(script.remaining()).toBe(0);
+  });
+
+  it('keeps concurrent conversations apart', async () => {
+    const run = (name: string) => simulate(persona('busy_founder'), {
+      user: createScriptedUser([say(`call yourself ${name}`), leave()]),
+      model: scripted([{ call: { name: 'remember', input: { key: 'assistant_name', value: name } } }, { text: `${name} it is.` }]).model,
+    });
+    const [max, nova] = await Promise.all([run('Max'), run('Nova')]);
+    expect(max.finalProgress.assistantName).toEqual({ status: 'confirmed', value: 'Max' });
+    expect(nova.finalProgress.assistantName).toEqual({ status: 'confirmed', value: 'Nova' });
+    expect(max.events.some((event) => event.type === 'message' && event.text.includes('Nova'))).toBe(false);
   });
 
   it('stops at the action budget, ending a live call and following up', async () => {

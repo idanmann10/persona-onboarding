@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { OnboardingProgress } from '../lib/domain/project';
 import type { SimStep } from './sim/run';
 import type { SimRow } from './sim/summary';
-import { describeAction, valueMention } from './sim/score';
+import { describeAction, valueMention, wordsSoFar } from './sim/score';
 
 /**
  * Print a simulated-user run as readable transcripts: each action the person took, what the assistant
@@ -36,7 +36,7 @@ const oneLine = (text: string, limit = 400) => {
 const yes = (value: boolean) => (value ? 'yes' : 'no');
 
 for (const row of rows) {
-  const ending = row.status === 'left' ? `left ${row.leave?.feeling}: "${row.leave?.reason}"` : row.status === 'error' ? `ERROR: ${row.error}` : 'ran out of actions';
+  const ending = row.status === 'left' ? `left ${row.leave?.feeling}: "${row.leave?.reason}"` : row.status === 'error' ? `ERROR (${row.errorSource ?? 'app'}): ${row.error}` : 'ran out of actions';
   console.log(`\n=== ${row.personaId} #${row.attempt} (${Math.round(row.durationMs / 1000)}s)  ${ending}`);
   if (row.stages) {
     const stages = Object.entries(row.stages).filter(([key]) => key !== 'turns').map(([key, value]) => `${key} ${yes(Boolean(value))}`);
@@ -44,7 +44,8 @@ for (const row of rows) {
   }
   if (row.judge) console.log(`    judge: form_like ${row.judge.formLike ?? '-'}, pushy ${row.judge.pushy ?? '-'}, ignored_user ${row.judge.ignoredUser ?? '-'}, human ${row.judge.human ?? '-'}/5${row.judge.omittedLines ? ` (${row.judge.omittedLines} lines omitted)` : ''}`);
   if (row.invariantFailures?.length) console.log(`    HARD INVARIANT FAILURES: ${row.invariantFailures.join(', ')}`);
-  for (const step of row.steps ?? []) {
+  const said = wordsSoFar(row.steps ?? []);
+  for (const [position, step] of (row.steps ?? []).entries()) {
     if (args.includes('--screens')) console.log(`\n    ${step.screen.replace(/\n/g, '\n    | ')}`);
     console.log(`  [${step.index + 1}]${step.onCall ? ' (on call)' : ''} ${oneLine(describeAction(step.action), 300)}`);
     if (step.delivered) console.log(`       cut off: the app heard "${step.delivered}"`);
@@ -60,7 +61,7 @@ for (const row of rows) {
       console.log(`       ${label}: ${turn.shown ? oneLine(turn.text) : turn.kind === 'follow_up' ? '(stayed silent)' : '(nothing)'}`);
     }
     callEnd();
-    const value = valueMention(step);
+    const value = valueMention(step, said[position]);
     if (value) console.log(`       first value: mentioned "${value}" from an account read`);
     if (step.error) console.log(`       ! ${step.error}`);
     if (step.incomplete) console.log('       ! this step failed; see the error above');

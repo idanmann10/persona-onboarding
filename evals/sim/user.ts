@@ -173,10 +173,17 @@ export interface ClaudeUserOptions {
   timeoutMs?: number;
   /** Base wait before a retry; the second retry waits three times as long. */
   retryDelayMs?: number;
+  /** The reply budget with thinking off. */
   maxTokens?: number;
 }
 
 export interface ClaudeUsage { requests: number; inputTokens: number; outputTokens: number }
+
+/**
+ * Room for a model that cannot turn thinking off (it thinks at its default effort, and max_tokens
+ * covers the thinking as well as the reply).
+ */
+export const THINKING_MAX_TOKENS = 8_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const isTimeout = (error: unknown) => error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
@@ -190,9 +197,12 @@ function firstText(body: unknown): string | undefined {
 
 /**
  * A simulated user played by Claude over the Messages API. Each turn sends the persona as the system
- * prompt and the current screen as the only message. Rate limits, server errors and timeouts are
- * retried twice; a reply that is not a valid action gets one retry with a correction note. The API
- * key is only ever sent as a header; errors never include it.
+ * prompt and the current screen as the only message. Thinking is turned off: Claude Sonnet 5 otherwise
+ * thinks adaptively at high effort inside max_tokens, and a 500-token budget can end before any reply
+ * text. A model that refuses to turn thinking off (a 400 about thinking) is then asked at its default
+ * with room to think, for the rest of the conversation. Rate limits, server errors, timeouts and replies
+ * without text are retried twice; a reply that is not a valid action gets one retry with a correction
+ * note. The API key is only ever sent as a header; errors never include it.
  */
 export function createClaudeUser(options: ClaudeUserOptions): SimUser & { usage: ClaudeUsage } {
   const model = options.model ?? 'claude-sonnet-5';
@@ -201,6 +211,7 @@ export function createClaudeUser(options: ClaudeUserOptions): SimUser & { usage:
   const retryDelayMs = options.retryDelayMs ?? 1_000;
   const maxTokens = options.maxTokens ?? 500;
   const usage: ClaudeUsage = { requests: 0, inputTokens: 0, outputTokens: 0 };
+  let thinkingOff = true;
 
   async function complete(system: string, content: string): Promise<string> {
     let failure = '';
@@ -208,12 +219,15 @@ export function createClaudeUser(options: ClaudeUserOptions): SimUser & { usage:
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt) await sleep(wait || retryDelayMs * (attempt === 1 ? 1 : 3));
       wait = 0;
+      const request = thinkingOff
+        ? { model, max_tokens: maxTokens, thinking: { type: 'disabled' }, system, messages: [{ role: 'user', content }] }
+        : { model, max_tokens: Math.max(maxTokens, THINKING_MAX_TOKENS), system, messages: [{ role: 'user', content }] };
       let response: Response;
       try {
         response = await fetchFn(ANTHROPIC_URL, {
           method: 'POST',
           headers: { 'x-api-key': options.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }] }),
+          body: JSON.stringify(request),
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (error) {
@@ -230,6 +244,12 @@ export function createClaudeUser(options: ClaudeUserOptions): SimUser & { usage:
       }
       if (!response.ok) {
         const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 200);
+        if (response.status === 400 && thinkingOff && /thinking/i.test(detail)) {
+          // This model cannot turn thinking off. Ask again at its default; this does not use up an attempt.
+          thinkingOff = false;
+          attempt -= 1;
+          continue;
+        }
         throw new SimUserError(`Anthropic API HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
       }
       let body: unknown;
@@ -241,7 +261,11 @@ export function createClaudeUser(options: ClaudeUserOptions): SimUser & { usage:
       if (typeof reported?.input_tokens === 'number') usage.inputTokens += reported.input_tokens;
       if (typeof reported?.output_tokens === 'number') usage.outputTokens += reported.output_tokens;
       const text = firstText(body);
-      if (text === undefined) throw new SimUserError('Anthropic reply had no text block');
+      if (text === undefined) {
+        // Thinking used the whole budget, or the model declined: no reply text to read.
+        failure = `no reply text (stop_reason ${String((body as { stop_reason?: unknown }).stop_reason ?? 'unknown')})`;
+        continue;
+      }
       return text;
     }
     throw new SimUserError(`Anthropic API failed after 3 attempts (${failure})`);

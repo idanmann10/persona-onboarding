@@ -7,7 +7,7 @@ import { describeTrigger, isSilent, type FollowUpRequest } from '../../lib/agent
 import { generateTurnResult } from '../../lib/agent/runtime';
 import { PROMPT_VERSION } from '../../lib/agent/prompts';
 import { greetingEvent } from '../../lib/agent/session';
-import { voiceGreeting } from '../../lib/voice/session-config';
+import { VOICE_LIMITS, voiceGreeting } from '../../lib/voice/session-config';
 import { createCallOfferHandler } from '../../lib/http/call-offer';
 import { createConnectionHandlers } from '../../lib/http/connections';
 import { createAutomationHandler } from '../../lib/http/automations';
@@ -20,8 +20,10 @@ import { pendingControls, renderCallScreen, renderScreen } from './screen';
 /** A UUID, because the app's endpoints reject any other session cookie. */
 export const SIM_SESSION = '5e551a70-51a0-4000-8000-000000000001';
 export const SIM_TIMEZONE = 'America/New_York';
-/** The harness ends a call naturally after this many things the person said. */
+/** The harness ends a call after this many things the person said; the last reply gets the app's wrap-up instruction. */
 export const MAX_CALL_UTTERANCES = 6;
+/** A mid-sentence hang-up needs a thought to cut: the harness waits for an utterance at least this long. */
+export const MIN_WORDS_TO_CUT = 5;
 const ORIGIN = 'http://persona.sim.test';
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
 
@@ -87,6 +89,8 @@ export interface SimTrace {
   leave?: { feeling: LeaveFeeling; reason: string };
   /** Why the conversation stopped early (a model or simulated-user failure or timeout). */
   error?: string;
+  /** Which side failed: the app (its model turns and endpoints) or the simulated user. */
+  errorSource?: 'app' | 'user';
   steps: SimStep[];
   reads: FixtureRead[];
   events: SessionEvent[];
@@ -289,7 +293,8 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
     if (!live) return;
     const { callId } = live;
     live = undefined;
-    const phase = reason === 'connection_lost' ? 'dropped' : 'ended';
+    // As the call client reports it: a lost line and a closed page are drops (lib/voice/client.ts).
+    const phase = reason === 'connection_lost' || reason === 'page_closed' ? 'dropped' : 'ended';
     await append({ id: `call:${callId}:${phase}`, at: now().toISOString(), type: 'call', phase, callId, reason });
     step.callEnded = reason;
     if (followUp) await runFollowUp(step, { kind: 'call_ended', callId });
@@ -353,22 +358,26 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
 
   /**
    * One utterance on the call. The persona's own ending applies to the first call only, so a callback
-   * the app offers afterwards is measured as a call rather than cut again.
+   * the app offers afterwards is measured as a call rather than cut again. The hang-up cuts the second
+   * utterance, or the first one after it long enough to hold a thought; the line drops after the second
+   * exchange. At the utterance cap the assistant's reply gets the app's wrap-up instruction first.
    */
   async function speak(step: SimStep, text: string) {
     const call = live!;
     call.utterances += 1;
-    const enforced = call.ordinal === 1 && call.utterances === 2;
-    if (enforced && persona.call === 'hangs_up_mid_sentence') {
+    const first = call.ordinal === 1;
+    if (first && persona.call === 'hangs_up_mid_sentence' && call.utterances >= 2 && text.trim().split(/\s+/).length >= MIN_WORDS_TO_CUT) {
       step.delivered = cutMidSentence(text);
       await speakAs('user', step.delivered);
       return endCall(step, 'user_hangup');
     }
     await speakAs('user', text);
-    const turn = await runTurn(step, 'voice', `${call.callId}:turn-${call.utterances}`, 'voice');
+    const last = call.utterances >= MAX_CALL_UTTERANCES;
+    const turn = await runTurn(step, 'voice', `${call.callId}:turn-${call.utterances}`, 'voice',
+      last ? { id: `voice-wrap-up:${call.callId}`, instruction: VOICE_LIMITS.wrapUp } : undefined);
     if (turn.text) { await speakAs('assistant', turn.text); step.outputs.push(turn.text); }
-    if (enforced && persona.call === 'drops') return endCall(step, 'connection_lost');
-    if (call.utterances >= MAX_CALL_UTTERANCES) return endCall(step, 'remote_hangup');
+    if (first && persona.call === 'drops' && call.utterances === 2) return endCall(step, 'connection_lost');
+    if (last) return endCall(step, 'remote_hangup');
   }
 
   async function apply(step: SimStep, action: SimAction, state: SessionProjection) {
@@ -399,6 +408,7 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
     }
   }
 
+  let errorSource: SimTrace['errorSource'];
   try {
     await append(greetingEvent(now()));
     for (let index = 0; index < maxActions; index++) {
@@ -406,7 +416,13 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
       const onCall = Boolean(live);
       const screen = live ? renderCallScreen(state, live.callId) : renderScreen(state);
       const asked = Date.now();
-      const action = await withTimeout(options.user.next({ persona, screen, onCall, turn: index + 1 }), userTimeoutMs, 'The simulated user');
+      let action: SimAction;
+      try {
+        action = await withTimeout(options.user.next({ persona, screen, onCall, turn: index + 1 }), userTimeoutMs, 'The simulated user');
+      } catch (error) {
+        errorSource = 'user';
+        throw error;
+      }
       const step: SimStep = { index, onCall, screen, action, outputs: [], turns: [], tools: [], connected: [], userLatencyMs: Date.now() - asked, appLatencyMs: 0 };
       steps.push(step);
       await perform(step, () => apply(step, action, state));
@@ -422,11 +438,13 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
   } catch (error) {
     status = 'error';
     failure = errorText(error);
+    errorSource ??= 'app';
   }
+  // Copies: a turn abandoned by a timeout keeps running and may still append events or reads.
   const events = await store.readEvents();
   return {
     personaId: persona.id, promptVersion: PROMPT_VERSION, fixtureVersion: FIXTURE_VERSION, status,
-    ...(leave ? { leave } : {}), ...(failure ? { error: failure } : {}),
-    steps, reads: composio.reads, events, finalProgress: projectSession(events).onboarding, durationMs: Date.now() - startedAt,
+    ...(leave ? { leave } : {}), ...(failure ? { error: failure, errorSource } : {}),
+    steps, reads: [...composio.reads], events, finalProgress: projectSession(events).onboarding, durationMs: Date.now() - startedAt,
   };
 }

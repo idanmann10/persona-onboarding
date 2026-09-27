@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { loadPersonas, parsePersonas } from '../../evals/sim/personas';
 import raw from '../../evals/sim/personas.json';
 import {
-  ANTHROPIC_URL, buildUserSystemPrompt, buildUserTurnPrompt, createClaudeUser, createScriptedUser, extractJsonObject, parseSimAction, type SimUserInput,
+  ANTHROPIC_URL, THINKING_MAX_TOKENS, buildUserSystemPrompt, buildUserTurnPrompt, createClaudeUser, createScriptedUser, extractJsonObject, parseSimAction,
+  type SimUserInput,
 } from '../../evals/sim/user';
 
 const personas = loadPersonas();
 const persona = (id: string) => personas.find((item) => item.id === id)!;
 const input = (overrides: Partial<SimUserInput> = {}): SimUserInput => ({ persona: persona('busy_founder'), screen: 'Persona app. Chat with Persona.\n\nPersona: Hi!', onCall: false, turn: 1, ...overrides });
 
-type Call = { url: string; init: RequestInit; body: { model: string; max_tokens: number; system: string; messages: Array<{ role: string; content: string }> } };
+type Call = { url: string; init: RequestInit; body: { model: string; max_tokens: number; thinking?: unknown; system: string; messages: Array<{ role: string; content: string }> } };
 function fetchScript(responses: Array<Response | Error>) {
   const calls: Call[] = [];
   const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -76,8 +77,28 @@ describe('Claude user', () => {
     expect(call.url).toBe(ANTHROPIC_URL);
     expect(call.init).toMatchObject({ method: 'POST', headers: { 'x-api-key': 'sk-test-secret', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
     expect(call.init.signal).toBeInstanceOf(AbortSignal);
-    expect(call.body).toEqual({ model: 'claude-sonnet-5', max_tokens: 500, system: buildUserSystemPrompt(persona('busy_founder')), messages: [{ role: 'user', content: buildUserTurnPrompt(input()) }] });
+    expect(call.body).toEqual({
+      model: 'claude-sonnet-5', max_tokens: 500, thinking: { type: 'disabled' }, system: buildUserSystemPrompt(persona('busy_founder')),
+      messages: [{ role: 'user', content: buildUserTurnPrompt(input()) }],
+    });
     expect(user.usage).toEqual({ requests: 1, inputTokens: 120, outputTokens: 15 });
+  });
+
+  it('asks again at the model default, with room to think, when the model cannot turn thinking off', async () => {
+    const refusedOff = new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'thinking.type: "disabled" is not supported for this model' } }), { status: 400 });
+    const { fetch, calls } = fetchScript([refusedOff, reply('{"type":"say","text":"hi"}'), reply('{"type":"say","text":"again"}')]);
+    const user = createClaudeUser({ apiKey: 'k', fetch, retryDelayMs: 0 });
+    expect(await user.next(input())).toEqual({ type: 'say', text: 'hi' });
+    expect(await user.next(input({ turn: 2 }))).toEqual({ type: 'say', text: 'again' });
+    expect(calls.map((call) => [call.body.max_tokens, 'thinking' in call.body])).toEqual([[500, true], [THINKING_MAX_TOKENS, false], [THINKING_MAX_TOKENS, false]]);
+  });
+
+  it('retries a reply that has no text, such as thinking that used the whole budget', async () => {
+    const thoughtOnly = () => new Response(JSON.stringify({ content: [{ type: 'thinking', thinking: '' }], stop_reason: 'max_tokens', usage: { input_tokens: 100, output_tokens: 500 } }), { status: 200 });
+    const retried = fetchScript([thoughtOnly(), reply('{"type":"leave","feeling":"neutral","reason":"done"}')]);
+    expect(await createClaudeUser({ apiKey: 'k', fetch: retried.fetch, retryDelayMs: 0 }).next(input())).toMatchObject({ type: 'leave' });
+    const never = fetchScript([thoughtOnly(), thoughtOnly(), thoughtOnly()]);
+    await expect(createClaudeUser({ apiKey: 'k', fetch: never.fetch, retryDelayMs: 0 }).next(input())).rejects.toThrow('no reply text (stop_reason max_tokens)');
   });
 
   it('retries rate limits, server errors and timeouts twice, then gives up without leaking the key', async () => {

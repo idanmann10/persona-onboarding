@@ -71,7 +71,7 @@ async function run({ persona, attempt }: { persona: Persona; attempt: number }) 
     const judge = trace.status === 'error' ? null : await judgeConversation({ persona, events: trace.events }, { apiKey: judgeKey });
     row = {
       runId, personaId: persona.id, attempt, model, userModel, promptVersion: trace.promptVersion, fixtureVersion: trace.fixtureVersion,
-      status: trace.status, ...(trace.error ? { error: trace.error } : {}), ...(trace.leave ? { leave: trace.leave } : {}),
+      status: trace.status, ...(trace.error ? { error: trace.error, errorSource: trace.errorSource } : {}), ...(trace.leave ? { leave: trace.leave } : {}),
       stages: scoreTrace(trace), judge, harnessErrors: trace.steps.filter((step) => step.error).length,
       invariantFailures: invariants.filter((check) => !check.passed).map((check) => check.id), invariants,
       finalProgress: trace.finalProgress, steps: trace.steps, reads: trace.reads, events: trace.events,
@@ -79,7 +79,7 @@ async function run({ persona, attempt }: { persona: Persona; attempt: number }) 
     };
   } catch (error) {
     row = {
-      runId, personaId: persona.id, attempt, model, userModel, status: 'error', error: error instanceof Error ? error.message.slice(0, 300) : 'Unknown error',
+      runId, personaId: persona.id, attempt, model, userModel, status: 'error', errorSource: 'harness', error: error instanceof Error ? error.message.slice(0, 300) : 'Unknown error',
       stages: null, judge: null, harnessErrors: 0, invariantFailures: [], durationMs: Date.now() - started,
     };
   }
@@ -96,4 +96,5 @@ await writing;
 const order = new Map(personas.map((persona, index) => [persona.id, index]));
 rows.sort((a, b) => (order.get(a.personaId)! - order.get(b.personaId)!) || a.attempt - b.attempt);
 process.stdout.write(`\n${rows.map(personaLine).join('\n')}\n\n${summaryLines(rows).join('\n')}\n\nWrote ${fileURLToPath(output)}. Read the transcripts with: bun run eval:sim:show\n`);
-if (rows.some((row) => row.status === 'error')) process.exitCode = 1;
+// Like eval:app: a failed conversation or a hard invariant failure exits non-zero.
+if (rows.some((row) => row.status === 'error' || row.invariantFailures.length)) process.exitCode = 1;
