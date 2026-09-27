@@ -22,3 +22,9 @@ Each run writes a JSONL trace (model, prompt version, fixture version, steps wit
 - no read of an unconnected account.
 
 Any failure exits non-zero. Scenario expectations (tools used, facts recorded, follow-up versus silence, mentions) are reported for review, not as hard failures. The rubric above is still scored by a person from the same traces. Voice audio, OAuth and real inbox content are not exercised by the replay.
+
+## Simulated users
+
+`bun run eval:sim --all` (or `--id <persona>`, `--repeats 1-3`, `--concurrency 4`) has an LLM play each of the 16 personas in `evals/sim/personas.json` as a new user of the same app logic the replay uses. The person sees only what the page shows (messages, finished calls, cards with their buttons; `evals/sim/screen.ts`) and types, taps, talks on a call or leaves. Buttons go through the app's own endpoints; a call runs the app's greeting instruction and one voice-channel turn per utterance. The harness enforces how a first call ends for the personas who hang up mid-sentence or lose the line.
+
+Each conversation is scored automatically (`evals/sim/score.ts`): named, knows the user, need known, call offered and held, Gmail and Calendar connected, first value (a read whose results the assistant then named), task proposed, activated (a recurring task approved), brief complete, and stayed (did not leave annoyed, bored or confused). The hard invariants above are checked too. With `TYPESAFE_API_KEY`, Jev also judges each conversation: form-like, pushy, ignored the user, and how human it sounds. Needs `OPENAI_API_KEY` and `OPENAI_TEXT_MODEL` (the app) and `ANTHROPIC_API_KEY` (the simulated users). `bun run eval:sim:show [file] [--id <persona>] [--screens]` prints the transcripts.
