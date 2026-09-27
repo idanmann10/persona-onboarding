@@ -25,7 +25,7 @@ describe('connection HTTP contracts', () => {
 
   it('only reports the current session connections and ignores callback parameters other than attempt', async () => {
     const status = await handlers.status(new Request('https://persona.example/api/connections', { headers: { cookie: 'persona_session=owner' } }));
-    expect(await status.json()).toEqual({ calendar: true, gmail: false });
+    expect(await status.json()).toMatchObject({ calendar: true, gmail: false, apps: [expect.objectContaining({ slug: 'calendar', connected: true }), expect.objectContaining({ slug: 'gmail', connected: false })] });
     const callback = await handlers.callback(new Request(`https://persona.example/api/connections/callback?attempt=${attemptId}&connected_account_id=ca_stranger`, { headers: { cookie: 'persona_session=owner' } }));
     expect(callback.status).toBe(200);
     const page = await callback.text();
