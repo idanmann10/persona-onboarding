@@ -24,11 +24,12 @@ export function duration(startedAt?: string, endedAt?: string): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-export function Bubble({ speaker, text, pending }: { speaker: 'user' | 'assistant'; text: string; pending?: boolean }) {
+export function Bubble({ speaker, text, pending, label }: { speaker: 'user' | 'assistant'; text: string; pending?: boolean; label?: string }) {
   const parts = speaker === 'assistant' ? text.split(/\n{2,}/).filter((part) => part.trim()) : [text];
   if (!parts.length) return <div className="row assistant"><div className="bubble typing" aria-label="Persona is typing"><span /><span /><span /></div></div>;
   return (
     <>
+      {label ? <p className="bubble-label">{label}</p> : null}
       {parts.map((part, index) => (
         <div className={`row ${speaker}`} key={index}>
           <div className={`bubble${pending ? ' pending' : ''}`}>{part}</div>
@@ -48,12 +49,46 @@ interface ItemProps {
   onDeclineCall(): void;
   onConnect(toolkit: Toolkit): void;
   onDeclineConnection(toolkit: Toolkit): void;
+  onAutomation(action: 'approve' | 'decline' | 'disable' | 'run_now', id: string): void;
 }
 
-export function TimelineEntry({ item, assistantName, liveCallId, busy, connectable, onAnswer, onDeclineCall, onConnect, onDeclineConnection }: ItemProps) {
+function nextRunLabel(iso?: string): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return `Next: ${date.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
+}
+
+export function TimelineEntry({ item, assistantName, liveCallId, busy, connectable, onAnswer, onDeclineCall, onConnect, onDeclineConnection, onAutomation }: ItemProps) {
   switch (item.kind) {
     case 'message':
-      return <Bubble speaker={item.speaker} text={item.text} />;
+      return <Bubble speaker={item.speaker} text={item.text} label={item.origin === 'automation' ? 'Recurring task' : undefined} />;
+    case 'automation': {
+      if (item.status === 'declined') return <p className="system-line">Skipped “{item.title}”</p>;
+      if (item.status === 'disabled') return <p className="system-line">Turned off “{item.title}”</p>;
+      return (
+        <div className="event-card offer-card">
+          <div className="event-head">
+            <span className="event-icon" aria-hidden="true">↻</span>
+            <span><strong>{item.title}</strong><small>{item.schedule.charAt(0).toUpperCase() + item.schedule.slice(1)}{item.status === 'active' ? ` · ${nextRunLabel(item.nextRunAt)}` : ' in your time zone'}</small>{item.instruction ? <small>{item.instruction}</small> : null}</span>
+          </div>
+          <div className="event-actions">
+            {item.status === 'proposed' ? (
+              <>
+                <button type="button" className="primary" onClick={() => onAutomation('approve', item.automationId)} disabled={busy}>Approve</button>
+                <button type="button" className="quiet" onClick={() => onAutomation('decline', item.automationId)} disabled={busy}>Not now</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="primary" onClick={() => onAutomation('run_now', item.automationId)} disabled={busy}>Run now</button>
+                <button type="button" className="quiet" onClick={() => onAutomation('disable', item.automationId)} disabled={busy}>Turn off</button>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+    case 'automation_notice':
+      return <p className="system-line">“{item.title}” couldn't run this time</p>;
     case 'call': {
       const call = item.call;
       if (call.callId === liveCallId) return null;

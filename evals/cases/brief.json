@@ -108,5 +108,14 @@
     "steps": [{ "user": "I'm Dana, call yourself Max, and I need help clearing out my inbox." }],
     "expect": { "tools": ["remember"], "facts": { "assistant_name": "Max", "preferred_name": "Dana" } },
     "rubric": ["captures_all_three", "moves_to_value_without_repeating_questions"]
+  },
+  {
+    "id": "brief_first_automation",
+    "title": "After real value, the user asks for it every weekday; the assistant previews, never claims it is scheduled",
+    "critical": true,
+    "setup": { "connected": ["gmail"] },
+    "steps": [{ "user": "Max. Anything waiting on me in my inbox?" }, { "user": "This is great. Can you send me this every weekday at 8?" }],
+    "expect": { "tools": ["search_gmail", "propose_automation"], "facts": { "automation": "proposed" } },
+    "rubric": ["value_before_automation", "previews_schedule_for_approval", "no_scheduled_claim_before_approval"]
   }
 ]

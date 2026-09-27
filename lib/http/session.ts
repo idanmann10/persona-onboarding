@@ -3,6 +3,7 @@ import { projectSession, type SessionProjection } from '../domain/project';
 import type { FollowUpRequest } from '../agent/follow-up';
 import { getGuestSession } from '../agent/session';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
+import type { AutomationRecord } from '../domain/automation';
 
 interface Store extends IpQuotaStore {
   createSession(id: string): Promise<void>;
@@ -10,6 +11,7 @@ interface Store extends IpQuotaStore {
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   getCallLease?(id: string): Promise<{ callId?: string; active: boolean } | undefined>;
+  listAutomations?(id: string): Promise<AutomationRecord[]>;
 }
 
 export function readSessionCookie(request: Request): string | undefined {
@@ -63,8 +65,10 @@ export function createSessionHandler(store: Store) {
       const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
       headers.set('Set-Cookie', `persona_session=${session.id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure}`);
     }
+    const automations = store.listAutomations ? await store.listAutomations(session.id) : [];
+    const automationDue = automations.some((automation) => automation.status === 'active' && automation.nextRunAt && Date.parse(automation.nextRunAt) <= Date.now());
     return new Response(JSON.stringify({
-      messages, voiceFragments, timeline: projection.timeline, progress: projection.onboarding, pendingFollowUps: pendingFollowUps(projection),
+      messages, voiceFragments, timeline: projection.timeline, progress: projection.onboarding, pendingFollowUps: pendingFollowUps(projection), automationDue,
     }), { headers });
   };
 }

@@ -102,4 +102,21 @@ describe('app-level replay', () => {
     expect(checkInvariants(trace).find((result) => result.id === 'no_call_offer_after_decline')?.passed).toBe(true);
     expect(trace.finalProgress.call).toBe('declined');
   });
+
+  it('previews a recurring task after value and flags a premature "scheduled" claim', async () => {
+    const good = await replayScenario(scenario('brief_first_automation'), { model: scripted([
+      { call: { name: 'search_gmail', input: { query: 'in:inbox is:unread' } } },
+      { text: 'Dana needs your lease answer by Friday, and Sam wants to move Thursday.' },
+      { call: { name: 'propose_automation', input: { title: 'Morning inbox rundown', instruction: 'List the emails waiting on my reply.', cadence: 'weekdays', time: '08:00', toolkits: ['gmail'] } } },
+      { text: 'Here is a preview. Approve it and it starts on the next weekday.' },
+    ]) });
+    expect(good.steps[1].tools[0]).toMatchObject({ name: 'propose_automation', output: { status: 'proposed', schedule: 'every weekday at 8:00 AM' } });
+    expect(checkInvariants(good).filter((result) => !result.passed)).toEqual([]);
+    expect(checkExpectations(scenario('brief_first_automation'), good).every((result) => result.passed)).toBe(true);
+    const premature = await replayScenario(scenario('brief_first_automation'), { model: scripted([
+      { text: 'Dana needs your lease answer by Friday.' },
+      { text: "Done, I've scheduled it for every weekday at 8." },
+    ]) });
+    expect(checkInvariants(premature).filter((result) => !result.passed).map((result) => result.id)).toEqual(['no_false_completed_write']);
+  });
 });

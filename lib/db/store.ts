@@ -2,6 +2,17 @@ import type postgres from 'postgres';
 import type { SessionEvent } from '../domain/events';
 import { readFile } from 'node:fs/promises';
 import type { KnowledgeFact } from '../domain/knowledge';
+import type { AutomationRecord, AutomationStatus } from '../domain/automation';
+
+function automationFrom(row: Record<string, unknown>): AutomationRecord {
+  return {
+    id: row.id as string, sessionId: row.session_id as string, title: row.title as string, instruction: row.instruction as string,
+    toolkits: (row.toolkits as AutomationRecord['toolkits']) ?? [], cadence: row.cadence as AutomationRecord['cadence'],
+    ...(row.weekday === null || row.weekday === undefined ? {} : { weekday: Number(row.weekday) }),
+    time: row.local_time as string, ...(row.timezone ? { timezone: row.timezone as string } : {}),
+    status: row.status as AutomationStatus, ...(row.next_run_at ? { nextRunAt: new Date(row.next_run_at as string).toISOString() } : {}),
+  };
+}
 
 export function createStore(sql: ReturnType<typeof postgres>) {
   return {
@@ -132,6 +143,61 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         ON CONFLICT (client_key, scope, window_start) DO UPDATE SET count = persona_ip_limits.count + 1
         WHERE persona_ip_limits.count < ${limit} RETURNING count`;
       return rows.length > 0;
+    },
+    proposeAutomation: async (sessionId: string, automation: Omit<AutomationRecord, 'sessionId' | 'status' | 'timezone' | 'nextRunAt'>): Promise<void> => {
+      await sql`INSERT INTO persona_automations (id, session_id, title, instruction, toolkits, cadence, weekday, local_time, status)
+        VALUES (${automation.id}, ${sessionId}, ${automation.title}, ${automation.instruction}, ${sql.array(automation.toolkits)}, ${automation.cadence},
+          ${automation.weekday ?? null}, ${automation.time}, 'proposed')
+        ON CONFLICT (id) DO NOTHING`;
+    },
+    getAutomation: async (sessionId: string, id: string): Promise<AutomationRecord | undefined> => {
+      const rows = await sql`SELECT * FROM persona_automations WHERE session_id = ${sessionId} AND id = ${id} LIMIT 1`;
+      return rows[0] ? automationFrom(rows[0]) : undefined;
+    },
+    listAutomations: async (sessionId: string): Promise<AutomationRecord[]> => {
+      const rows = await sql`SELECT * FROM persona_automations WHERE session_id = ${sessionId} ORDER BY created_at, id`;
+      return rows.map(automationFrom);
+    },
+    approveAutomation: async (sessionId: string, id: string, timezone: string, nextRunAt: Date): Promise<'approved' | 'not_found' | 'conflict'> => {
+      try {
+        const rows = await sql`UPDATE persona_automations SET status = 'active', timezone = ${timezone}, next_run_at = ${nextRunAt}, approved_at = now()
+          WHERE session_id = ${sessionId} AND id = ${id} AND status = 'proposed' RETURNING id`;
+        return rows.length ? 'approved' : 'not_found';
+      } catch (error) {
+        if ((error as { code?: string }).code === '23505') return 'conflict';
+        throw error;
+      }
+    },
+    setAutomationStatus: async (sessionId: string, id: string, from: AutomationStatus, to: 'declined' | 'disabled'): Promise<boolean> => {
+      const rows = await sql`UPDATE persona_automations SET status = ${to}, claimed_until = NULL,
+          disabled_at = CASE WHEN ${to}::text = 'disabled' THEN now() ELSE disabled_at END
+        WHERE session_id = ${sessionId} AND id = ${id} AND status = ${from} RETURNING id`;
+      return rows.length > 0;
+    },
+    claimDueAutomations: async (sessionId: string | undefined, limit: number): Promise<AutomationRecord[]> => {
+      const rows = sessionId
+        ? await sql`UPDATE persona_automations SET claimed_until = now() + interval '3 minutes' WHERE id IN (
+            SELECT id FROM persona_automations WHERE status = 'active' AND session_id = ${sessionId} AND next_run_at <= now()
+              AND (claimed_until IS NULL OR claimed_until < now()) ORDER BY next_run_at LIMIT ${limit} FOR UPDATE SKIP LOCKED)
+          RETURNING *`
+        : await sql`UPDATE persona_automations SET claimed_until = now() + interval '3 minutes' WHERE id IN (
+            SELECT id FROM persona_automations WHERE status = 'active' AND next_run_at <= now()
+              AND (claimed_until IS NULL OR claimed_until < now()) ORDER BY next_run_at LIMIT ${limit} FOR UPDATE SKIP LOCKED)
+          RETURNING *`;
+      return rows.map(automationFrom);
+    },
+    startAutomationRun: async (run: { id: string; automationId: string; sessionId: string; scheduledFor: Date; trigger: 'schedule' | 'run_now' }): Promise<boolean> => {
+      const rows = await sql`INSERT INTO persona_automation_runs (id, automation_id, session_id, scheduled_for, trigger, status)
+        VALUES (${run.id}, ${run.automationId}, ${run.sessionId}, ${run.scheduledFor}, ${run.trigger}, 'running')
+        ON CONFLICT (automation_id, scheduled_for, trigger) DO NOTHING RETURNING id`;
+      return rows.length > 0;
+    },
+    finishAutomationRun: async (runId: string, status: 'succeeded' | 'failed', messageEventId?: string, error?: string): Promise<void> => {
+      await sql`UPDATE persona_automation_runs SET status = ${status}, message_event_id = ${messageEventId ?? null}, error = ${error?.slice(0, 500) ?? null}, finished_at = now()
+        WHERE id = ${runId}`;
+    },
+    advanceAutomation: async (id: string, nextRunAt: Date | null): Promise<void> => {
+      await sql`UPDATE persona_automations SET next_run_at = ${nextRunAt}, claimed_until = NULL WHERE id = ${id}`;
     },
     reserve: async (sessionId: string, key: string): Promise<boolean> => {
       const rows = await sql`INSERT INTO persona_reservations (session_id, reservation_key)

@@ -8,7 +8,7 @@ import { Bubble, duration, TimelineEntry, type Toolkit } from './thread';
 
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
 type FollowUpRequest = { kind: 'call_ended'; callId: string } | { kind: 'connection'; toolkit: Toolkit; acknowledge?: boolean };
-type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; pendingFollowUps?: FollowUpRequest[] };
+type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean };
 type Caption = { speaker: 'user' | 'assistant'; text: string };
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
@@ -72,7 +72,16 @@ export default function Home() {
   useEffect(() => {
     let active = true;
     refresh()
-      .then((snapshot) => { if (active && snapshot?.pendingFollowUps?.length) void runFollowUps(snapshot.pendingFollowUps); })
+      .then(async (snapshot) => {
+        if (!active || !snapshot) return;
+        if (snapshot.pendingFollowUps?.length) await runFollowUps(snapshot.pendingFollowUps);
+        if (snapshot.automationDue) {
+          setThinking(true);
+          const response = await post('/api/automations', { action: 'run_due' }).catch(() => undefined);
+          setThinking(false);
+          if (response?.ok) await refresh();
+        }
+      })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'The conversation could not be loaded.'); })
       .finally(() => { if (active) setLoading(false); });
     fetch('/api/capabilities', { cache: 'no-store' })
@@ -240,6 +249,18 @@ export default function Home() {
     }
   }
 
+  async function automation(action: 'approve' | 'decline' | 'disable' | 'run_now', id: string) {
+    setError('');
+    if (action === 'run_now') setThinking(true);
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const response = await post('/api/automations', { action, id, ...(action === 'approve' ? { timezone } : {}) });
+      if (!response.ok && response.status !== 409) throw new Error(response.status === 503 ? 'The text model is not configured yet.' : response.status === 429 ? 'Too many requests right now. Please try again shortly.' : 'That did not go through. Please try again.');
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'That did not go through.'); }
+    finally { setThinking(false); }
+  }
+
   async function declineConnection(toolkit: Toolkit) {
     await post('/api/connections/decline', { toolkit }).catch(() => undefined);
     await refresh().catch(() => undefined);
@@ -320,7 +341,7 @@ export default function Home() {
           {loading ? <p className="loading">Loading your conversation…</p> : null}
           {timeline.map((item) => (
             <TimelineEntry key={item.id} item={item} assistantName={assistantName} liveCallId={liveCallId} busy={busy || Boolean(connecting) || (item.kind === 'call_offer' && onCall)} connectable={{ gmail: capabilities.gmail, calendar: capabilities.calendar }}
-              onAnswer={() => void startCall()} onDeclineCall={() => void declineCall()} onConnect={(toolkit) => void connect(toolkit)} onDeclineConnection={(toolkit) => void declineConnection(toolkit)} />
+              onAnswer={() => void startCall()} onDeclineCall={() => void declineCall()} onConnect={(toolkit) => void connect(toolkit)} onDeclineConnection={(toolkit) => void declineConnection(toolkit)} onAutomation={(action, id) => void automation(action, id)} />
           ))}
           {draft ? <><Bubble speaker="user" text={draft.user.text} /><Bubble speaker="assistant" text={draft.assistant.text} pending /></> : null}
           {thinking && !draft ? <Bubble speaker="assistant" text="" /> : null}

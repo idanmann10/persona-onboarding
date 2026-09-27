@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { noteDecline, offerCall, remember, saidByUser, showConnection, type ActionContext } from '../../lib/agent/actions';
+import { noteDecline, offerCall, proposeAutomation, remember, saidByUser, showConnection, type ActionContext } from '../../lib/agent/actions';
 import { projectSession } from '../../lib/domain/project';
 import type { SessionEvent } from '../../lib/domain/events';
 
@@ -114,5 +114,30 @@ describe('note_decline', () => {
     expect(await noteDecline(after.ctx, { what: 'call' })).toMatchObject({ status: 'unchanged' });
     expect(await noteDecline(context({ connected: { gmail: true } }).ctx, { what: 'gmail' })).toMatchObject({ status: 'already_connected' });
     expect(await noteDecline(context({ channel: 'voice' }).ctx, { what: 'call' })).toMatchObject({ status: 'already_on_call' });
+  });
+});
+
+describe('propose_automation', () => {
+  const input = { title: 'Morning inbox rundown', instruction: 'List the emails waiting on my reply, newest first.', cadence: 'weekdays' as const, time: '08:00', toolkits: ['gmail' as const, 'gmail' as const] };
+
+  it('creates a proposal and a preview card, never a schedule', async () => {
+    const proposals: unknown[] = [];
+    const { ctx, appended } = context({ automations: { proposeAutomation: async (_id, automation) => { proposals.push(automation); } } });
+    expect(await proposeAutomation(ctx, input)).toMatchObject({ status: 'proposed', schedule: 'every weekday at 8:00 AM' });
+    expect(proposals).toEqual([expect.objectContaining({ title: 'Morning inbox rundown', cadence: 'weekdays', time: '08:00', toolkits: ['gmail'] })]);
+    expect(appended).toEqual([expect.objectContaining({ id: 'automation-proposal:t1', type: 'automation', phase: 'proposed', schedule: 'every weekday at 8:00 AM' })]);
+    expect(await proposeAutomation(ctx, input)).toMatchObject({ status: 'already_proposed' });
+    expect(proposals).toHaveLength(1);
+  });
+
+  it('refuses invalid schedules, a second active task, and missing storage', async () => {
+    const automations = { proposeAutomation: async () => undefined };
+    expect(await proposeAutomation(context({ automations }).ctx, { ...input, cadence: 'weekly' })).toMatchObject({ status: 'invalid' });
+    const active: SessionEvent[] = [
+      { id: 'p', at: 'x', type: 'automation', automationId: 'a1', phase: 'proposed', title: 'T', schedule: 's' },
+      { id: 'a', at: 'x', type: 'automation', automationId: 'a1', phase: 'approved', title: 'T', schedule: 's' },
+    ];
+    expect(await proposeAutomation(context({ automations }, active).ctx, input)).toMatchObject({ status: 'one_active' });
+    expect(await proposeAutomation(context().ctx, input)).toMatchObject({ status: 'unavailable' });
   });
 });

@@ -23,7 +23,9 @@ export type TimelineItem =
   | { kind: 'call'; id: string; call: CallRecord }
   | { kind: 'call_offer'; id: string; status: 'pending' | 'answered' | 'declined' }
   | { kind: 'connection_offer'; id: string; toolkit: Toolkit; status: 'pending' | 'connected' | 'declined' | 'failed'; reason?: string }
-  | { kind: 'connection_notice'; id: string; toolkit: Toolkit; phase: 'connected' | 'failed' | 'disconnected' };
+  | { kind: 'connection_notice'; id: string; toolkit: Toolkit; phase: 'connected' | 'failed' | 'disconnected' }
+  | { kind: 'automation'; id: string; automationId: string; title: string; schedule: string; instruction?: string; status: 'proposed' | 'active' | 'declined' | 'disabled'; nextRunAt?: string }
+  | { kind: 'automation_notice'; id: string; automationId: string; title: string; phase: 'failed' };
 
 export interface OnboardingProgress {
   assistantName: { status: SlotStatus; value?: string };
@@ -31,6 +33,7 @@ export interface OnboardingProgress {
   need: { status: SlotStatus; value?: string };
   gmail: 'not_offered' | 'offered' | 'declined' | 'connected' | 'failed';
   call: 'not_offered' | 'offered' | 'declined' | 'happened';
+  automation: { status: 'none' | 'proposed' | 'active' | 'declined' | 'disabled'; title?: string; schedule?: string };
 }
 
 export interface SessionProjection {
@@ -42,6 +45,7 @@ export interface SessionProjection {
   voiceFragments: Extract<SessionEvent, { type: 'voice_fragment' }>[];
   connections: Record<Toolkit, ConnectionPhase | 'none'>;
   decisions: Record<string, 'messaged' | 'silent'>;
+  automations: Array<Extract<TimelineItem, { kind: 'automation' }>>;
   timeline: TimelineItem[];
   onboarding: OnboardingProgress;
 }
@@ -51,10 +55,10 @@ const ENDED: CallPhase[] = ['ended', 'dropped'];
 export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
-    connections: { gmail: 'none', calendar: 'none' }, decisions: {}, timeline: [],
+    connections: { gmail: 'none', calendar: 'none' }, decisions: {}, automations: [], timeline: [],
     onboarding: {
       assistantName: { status: 'unknown' }, preferredName: { status: 'unknown' }, need: { status: 'unknown' },
-      gmail: 'not_offered', call: 'not_offered',
+      gmail: 'not_offered', call: 'not_offered', automation: { status: 'none' },
     },
   };
   const seen = new Set<string>();
@@ -73,7 +77,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
   // A card a tool created mid-turn (offer_call, show_connection) belongs after that turn's reply.
   const turnCards = new Map<string, TimelineItem[]>();
   const holdForTurn = (id: string, item: TimelineItem) => {
-    const turn = /^call-offer:(.+)$/.exec(id)?.[1] ?? /^connection-offer:(?:gmail|calendar):(.+)$/.exec(id)?.[1];
+    const turn = /^call-offer:(.+)$/.exec(id)?.[1] ?? /^connection-offer:(?:gmail|calendar):(.+)$/.exec(id)?.[1] ?? /^automation-proposal:(.+)$/.exec(id)?.[1];
     if (turn) turnCards.set(turn, [...(turnCards.get(turn) ?? []), item]);
   };
   const connectionOffers: Partial<Record<Toolkit, Extract<TimelineItem, { kind: 'connection_offer' }>>> = {};
@@ -139,6 +143,26 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
       case 'decision':
         state.decisions[event.trigger] = event.outcome;
         break;
+      case 'automation': {
+        let card = state.automations.find((item) => item.automationId === event.automationId);
+        if (event.phase === 'proposed') {
+          if (card) break;
+          card = { kind: 'automation', id: event.id, automationId: event.automationId, title: event.title, schedule: event.schedule, ...(event.instruction ? { instruction: event.instruction } : {}), status: 'proposed' };
+          state.automations.push(card);
+          state.timeline.push(card);
+          holdForTurn(event.id, card);
+        } else if (card) {
+          if (event.phase === 'approved') { card.status = 'active'; card.nextRunAt = event.nextRunAt; }
+          else if (event.phase === 'declined' || event.phase === 'disabled') { card.status = event.phase; delete card.nextRunAt; }
+          else if (event.phase === 'ran') {
+            // A run only happens for an approved task, whatever the approval path.
+            if (card.status === 'proposed') card.status = 'active';
+            if (event.nextRunAt) card.nextRunAt = event.nextRunAt;
+          }
+          else if (event.phase === 'failed') state.timeline.push({ kind: 'automation_notice', id: event.id, automationId: event.automationId, title: event.title, phase: 'failed' });
+        }
+        break;
+      }
     }
   }
   for (const utterance of groupUtterances(state.voiceFragments)) calls.get(utterance.callId)?.utterances.push(utterance);
@@ -166,5 +190,9 @@ function progress(state: SessionProjection): OnboardingProgress {
     call: state.calls.some((call) => Boolean(call.startedAt) || call.utterances.length > 0)
       ? 'happened'
       : lastCallEvent === 'declined' ? 'declined' : lastCallEvent === 'offered' ? 'offered' : 'not_offered',
+    automation: (() => {
+      const latest = state.automations.find((item) => item.status === 'active') ?? state.automations.at(-1);
+      return latest ? { status: latest.status, title: latest.title, schedule: latest.schedule } : { status: 'none' as const };
+    })(),
   };
 }

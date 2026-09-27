@@ -1,13 +1,19 @@
 import type { SessionEvent, Toolkit } from '../../lib/domain/events';
+import type { AutomationRecord } from '../../lib/domain/automation';
 
 /** An in-memory stand-in for the Postgres store with the same idempotent append semantics. */
 export function createMemoryStore(connected: Partial<Record<Toolkit, string>> = {}) {
   const events: SessionEvent[] = [];
   const ids = new Set<string>();
   const reservations = new Set<string>();
+  const automations: AutomationRecord[] = [];
   return {
     events,
     connected,
+    automations,
+    proposeAutomation: async (sessionId: string, automation: Omit<AutomationRecord, 'sessionId' | 'status' | 'timezone' | 'nextRunAt'>) => {
+      automations.push({ ...automation, sessionId, status: 'proposed' });
+    },
     sessionExists: async () => true,
     appendEvent: async (_sessionId: string, event: SessionEvent) => {
       if (ids.has(event.id)) return;

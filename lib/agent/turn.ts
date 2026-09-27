@@ -4,7 +4,8 @@ import type { CallEndReason, SessionEvent, Toolkit } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { buildSystemPrompt } from './prompts';
-import { noteDecline, noteDeclineInput, offerCall, offerCallInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
+import { noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
+import type { AutomationStore } from '../domain/automation';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
 
 type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
@@ -14,7 +15,7 @@ export interface TurnStore extends ActionStore {
 }
 
 export interface TurnDependencies {
-  store: TurnStore;
+  store: TurnStore & Partial<Pick<AutomationStore, 'proposeAutomation'>>;
   env: Record<string, string | undefined>;
   composio?: AccountReadClient;
   resolveIdentity?: (sessionId: string, userEvent: MessageEvent, clue: { first: string; last: string; company: string }) => Promise<unknown>;
@@ -107,6 +108,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   const context: ActionContext = {
     store: deps.store, sessionId, channel, turnId: options.turnId, state, userWords: words,
     capabilities: { voice: capabilities.voice, gmail: capabilities.gmail, calendar: capabilities.calendar }, connected, now: deps.now,
+    ...(deps.store.proposeAutomation ? { automations: { proposeAutomation: deps.store.proposeAutomation } } : {}),
   };
   const lastAssistant = state.messages.filter((message) => message.speaker === 'assistant').at(-1)?.text;
   const relevant = relevantToolkits({ userTexts: words, lastAssistant, include: options.trigger?.include });
@@ -127,6 +129,13 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
         description: 'Show an Answer button in the chat for a short browser call, after the user agreed to talk. It does not start the call.',
         inputSchema: offerCallInput,
         execute: () => offerCall(context),
+      }),
+    } : {}),
+    ...(deps.store.proposeAutomation && channel === 'text' && !options.trigger?.id.startsWith('automation:') ? {
+      propose_automation: tool({
+        description: 'Preview one recurring task (daily, weekdays or weekly at a local time) for the user to approve. It does not schedule anything by itself.',
+        inputSchema: proposeAutomationInput,
+        execute: (input) => proposeAutomation(context, input),
       }),
     } : {}),
     ...(capabilities.gmail || capabilities.calendar ? {

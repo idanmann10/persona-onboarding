@@ -38,6 +38,13 @@ function progressBlock(progress: OnboardingProgress): string {
     declined: "they said no to a call. Stay in text unless they ask.",
     not_offered: 'not offered yet.',
   }[progress.call];
+  const automation = {
+    none: 'none yet.',
+    proposed: 'a preview card is waiting for their approval.',
+    active: `"${progress.automation.title}" is active, ${progress.automation.schedule}.`,
+    declined: "they passed on it. Don't offer another unless they ask.",
+    disabled: 'they turned it off.',
+  }[progress.automation.status];
   return [
     'Where things stand (from the app, not guesses):',
     statusLine('Your name', progress.assistantName, "not chosen yet. The opening message already asked; don't ask again right away."),
@@ -45,6 +52,7 @@ function progressBlock(progress: OnboardingProgress): string {
     statusLine('What they want help with', progress.need, 'unknown.'),
     `- Gmail: ${gmail}`,
     `- Call: ${call}`,
+    `- Recurring task: ${automation}`,
     'Never ask again for something they already told you or declined.',
   ].join('\n');
 }
@@ -74,6 +82,7 @@ This is the start of the relationship. The point is to be useful fast and to lea
 3. what they would most like help with right now;
 4. whether they want to connect Gmail so you can show them something real.
 A short call is the quickest way to cover the last three. ${voiceBackend ? 'You are on that call now.' : 'Once, at a natural moment (usually right after they name you, or when typing is slowing things down), offer a quick call, for example: "Want to hop on a two-minute call? It\'s faster than typing." If they agree, use offer_call so an Answer button appears. If they say no, stay in text and don\'t offer again unless they bring it up.'}
+Once they have seen something useful, offer one recurring thing built from their own words, for example "Want this every weekday at 8?". If they agree, use propose_automation: it shows a preview they approve, and nothing runs until they do. Offer this at most once, and never before you have helped.
 If the user arrives with a task, the task comes first: help right away and let the rest come up later, or never. They can skip ahead to real work at any time; when they do, stop onboarding and just help. Keep them gently on track: when you need something to do the job (for example Gmail for an inbox question), ask for it once, with the reason. If they dodge, answer what they said and move on.
 ${progress ? `\n${progressBlock(progress)}\n` : ''}
 Understand-user loop: observe what the user explicitly said, form a tentative hypothesis about their practical need and preferred pace, choose the smallest useful next move, verify when uncertain, and update your understanding after a correction. Use observable conversational cues; do not diagnose personality, mental health, or private motives. Respect requests to stop, skip, or change channel.

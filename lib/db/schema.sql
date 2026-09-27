@@ -87,3 +87,37 @@ CREATE TABLE IF NOT EXISTS persona_ip_limits (
   count INTEGER NOT NULL CHECK (count > 0),
   PRIMARY KEY (client_key, scope, window_start)
 );
+
+CREATE TABLE IF NOT EXISTS persona_automations (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  instruction TEXT NOT NULL,
+  toolkits TEXT[] NOT NULL DEFAULT '{}',
+  cadence TEXT NOT NULL CHECK (cadence IN ('daily', 'weekdays', 'weekly')),
+  weekday SMALLINT CHECK (weekday BETWEEN 0 AND 6),
+  local_time TEXT NOT NULL CHECK (local_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
+  timezone TEXT,
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'active', 'declined', 'disabled')),
+  next_run_at TIMESTAMPTZ,
+  claimed_until TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  approved_at TIMESTAMPTZ,
+  disabled_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS persona_automations_one_active ON persona_automations (session_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS persona_automations_due ON persona_automations (next_run_at) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS persona_automation_runs (
+  id UUID PRIMARY KEY,
+  automation_id UUID NOT NULL REFERENCES persona_automations(id) ON DELETE CASCADE,
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  scheduled_for TIMESTAMPTZ NOT NULL,
+  trigger TEXT NOT NULL CHECK (trigger IN ('schedule', 'run_now')),
+  status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+  message_event_id TEXT,
+  error TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  UNIQUE (automation_id, scheduled_for, trigger)
+);

@@ -29,7 +29,7 @@ describe('Persona prompt contract', () => {
       currentTask: 'hi', facts: [], capabilities: ['text', 'browser call'],
       onboarding: {
         assistantName: { status: 'confirmed', value: 'Max' }, preferredName: { status: 'declined' }, need: { status: 'unknown' },
-        gmail: 'not_offered', call: 'declined',
+        gmail: 'not_offered', call: 'declined', automation: { status: 'active', title: 'Morning rundown', schedule: 'every weekday at 8:00 AM' },
       },
     });
     expect(prompt).toContain('You are Max');
@@ -40,6 +40,8 @@ describe('Persona prompt contract', () => {
     expect(prompt).toContain('they said no to a call');
     expect(prompt).toMatch(/task comes first/);
     expect(prompt).not.toContain('preferred_name:');
+    expect(prompt).toContain('Recurring task: "Morning rundown" is active, every weekday at 8:00 AM.');
+    expect(prompt).toMatch(/propose_automation/);
   });
 
   it('writes spoken sentences for the voice backend', () => {

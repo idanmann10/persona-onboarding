@@ -89,6 +89,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .transcript p b { font-weight: 600; margin-right: 4px; }
 .transcript p.assistant b { color: var(--muted); }
 .system-line { align-self: center; margin: 8px 0; color: var(--subtle); font-size: 12px; }
+.bubble-label { margin: 10px 0 2px 4px; color: var(--subtle); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
 
 .composer-area { flex: none; padding: 10px 16px calc(14px + env(safe-area-inset-bottom)); }
 .composer { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 16px; border: 1px solid var(--line); border-radius: 26px; background: var(--surface); box-shadow: 0 8px 28px rgba(22, 22, 22, .06); }

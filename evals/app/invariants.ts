@@ -65,7 +65,7 @@ export function checkExpectations(scenario: Scenario, trace: ScenarioTrace): Che
   const values: Record<string, string | undefined> = {
     assistant_name: progress.assistantName.status === 'declined' ? 'declined' : progress.assistantName.value,
     preferred_name: progress.preferredName.status === 'declined' ? 'declined' : progress.preferredName.value,
-    current_need: progress.need.value, gmail: progress.gmail, call: progress.call,
+    current_need: progress.need.value, gmail: progress.gmail, call: progress.call, automation: progress.automation.status,
   };
   for (const [key, expected] of Object.entries(scenario.expect.facts)) {
     results.push({ id: `fact:${key}`, passed: (values[key] ?? '').toLowerCase() === expected.toLowerCase(), detail: `got ${values[key] ?? 'nothing'}` });

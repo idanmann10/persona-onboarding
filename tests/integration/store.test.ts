@@ -13,6 +13,9 @@ import { resolveIdentityClaim } from '../../lib/research/service';
 import { createFollowUpHandler } from '../../lib/http/follow-up';
 import { createVoiceToolHandler } from '../../lib/http/voice-tool';
 import { createCallOfferHandler } from '../../lib/http/call-offer';
+import { createAutomationHandler, createDueRunner } from '../../lib/http/automations';
+import { proposeAutomation } from '../../lib/agent/actions';
+import { nextRun } from '../../lib/domain/schedule';
 
 const database = `persona_test_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 const adminUrl = new URL(process.env.TEST_DATABASE_ADMIN_URL || 'postgres://localhost/postgres');
@@ -427,5 +430,89 @@ describe('Postgres session store', () => {
     expect(JSON.stringify(rows)).not.toContain('203.0.113');
     const returning = await handler(new Request('http://localhost/api/session', { headers: { 'x-forwarded-for': '203.0.113.7', cookie } }));
     expect(returning.status).toBe(200);
+  });
+
+  async function proposed(store: ReturnType<typeof createStore>, sessionId: string, turnId = 'turn-auto') {
+    const ctx = {
+      store, sessionId, channel: 'text' as const, turnId, state: projectSession(await store.readEvents(sessionId)), userWords: ['every weekday morning please'],
+      capabilities: { voice: true, gmail: true, calendar: true }, connected: {}, automations: store,
+    };
+    const result = await proposeAutomation(ctx, { title: 'Morning inbox rundown', instruction: 'List the emails waiting on my reply, newest first.', cadence: 'weekdays', time: '08:00', toolkits: ['gmail'] });
+    expect(result).toMatchObject({ status: 'proposed' });
+    const card = projectSession(await store.readEvents(sessionId)).automations.at(-1)!;
+    return card.automationId;
+  }
+  const automationRequest = (sessionId: string, body: Record<string, unknown>) => request('http://localhost/api/automations', sessionId, body);
+
+  it('approves a previewed recurring task in the browser time zone and keeps one active per session', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    const id = await proposed(store, sessionId);
+    const handler = createAutomationHandler(store, undefined, () => new Date('2026-09-26T16:00:00Z'));
+    expect((await handler(automationRequest(sessionId, { action: 'approve', id, timezone: 'Mars/Olympus' }))).status).toBe(400);
+    expect((await handler(request('http://localhost/api/automations', sessionId, { action: 'approve', id, timezone: 'America/New_York' }, 'http://evil.example'))).status).toBe(403);
+    const approved = await handler(automationRequest(sessionId, { action: 'approve', id, timezone: 'America/New_York' }));
+    expect(await approved.json()).toEqual({ status: 'approved', nextRunAt: '2026-09-28T12:00:00.000Z' });
+    expect((await handler(automationRequest(sessionId, { action: 'approve', id, timezone: 'America/New_York' }))).status).toBe(409);
+    const second = await proposed(store, sessionId, 'turn-auto-2').catch(() => undefined);
+    expect(second).toBeUndefined();
+    const other = crypto.randomUUID();
+    await store.proposeAutomation(sessionId, { id: other, title: 'Second', instruction: 'Another recurring task here.', toolkits: [], cadence: 'daily', time: '09:00' });
+    expect(await (await handler(automationRequest(sessionId, { action: 'approve', id: other, timezone: 'America/New_York' }))).json()).toEqual({ status: 'conflict' });
+    const state = projectSession(await store.readEvents(sessionId));
+    expect(state.onboarding.automation).toEqual({ status: 'active', title: 'Morning inbox rundown', schedule: 'every weekday at 8:00 AM' });
+    expect(state.timeline.find((item) => item.kind === 'automation')).toMatchObject({ status: 'active', nextRunAt: '2026-09-28T12:00:00.000Z' });
+  });
+
+  it('runs a due occurrence once across two tabs, posts the result, and advances in the user zone', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    const id = await proposed(store, sessionId);
+    let generated = 0;
+    const handler = createAutomationHandler(store, async (_history, _id, trigger) => {
+      generated += 1;
+      expect(trigger.include).toEqual(['gmail']);
+      expect(trigger.instruction).toContain('Do exactly this now: List the emails waiting on my reply, newest first.');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return 'Two threads need you: Dana on the lease (Friday) and Sam about Thursday.';
+    });
+    const scheduledFor = new Date(Math.floor(Date.now() / 60_000) * 60_000 - 3 * 60_000);
+    await store.approveAutomation(sessionId, id, 'America/New_York', scheduledFor);
+    const snapshot = await (await createSessionHandler(store)(request('http://localhost/api/session', sessionId, undefined, 'http://localhost', 'GET'))).json();
+    expect(snapshot.automationDue).toBe(true);
+    const results = await Promise.all([handler(automationRequest(sessionId, { action: 'run_due' })), handler(automationRequest(sessionId, { action: 'run_due' }))]);
+    expect((await Promise.all(results.map((response) => response.json()))).map((body) => body.ran).sort()).toEqual([0, 1]);
+    expect(generated).toBe(1);
+    const state = projectSession(await store.readEvents(sessionId));
+    expect(state.messages.filter((message) => message.origin === 'automation').map((message) => message.text)).toEqual(['Two threads need you: Dana on the lease (Friday) and Sam about Thursday.']);
+    const expectedNext = nextRun({ cadence: 'weekdays', time: '08:00' }, 'America/New_York', new Date()).toISOString();
+    expect((await store.getAutomation(sessionId, id))?.nextRunAt).toBe(expectedNext);
+    expect(state.timeline.find((item) => item.kind === 'automation')).toMatchObject({ status: 'active', nextRunAt: expectedNext });
+    const runs = await sql`SELECT trigger, status, message_event_id FROM persona_automation_runs WHERE automation_id = ${id}`;
+    expect(runs).toEqual([{ trigger: 'schedule', status: 'succeeded', message_event_id: `answer:automation:${id}:${scheduledFor.toISOString()}:schedule` }]);
+    const runNow = await handler(automationRequest(sessionId, { action: 'run_now', id }));
+    expect(await runNow.json()).toMatchObject({ status: 'ran', message: { role: 'assistant' } });
+    expect((await store.getAutomation(sessionId, id))?.nextRunAt).toBe(expectedNext);
+    expect((await handler(automationRequest(sessionId, { action: 'disable', id }))).status).toBe(200);
+    expect((await handler(automationRequest(sessionId, { action: 'run_now', id }))).status).toBe(409);
+    expect(projectSession(await store.readEvents(sessionId)).onboarding.automation.status).toBe('disabled');
+  });
+
+  it('records a failed run without claiming anything happened, and the cron entry point needs its secret', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    const id = await proposed(store, sessionId);
+    await store.approveAutomation(sessionId, id, 'Europe/London', new Date(Date.now() - 60_000));
+    const runner = createDueRunner(store, async () => { throw new Error('model down'); }, 'cron-secret');
+    expect((await runner(new Request('http://localhost/api/automations/run-due'))).status).toBe(404);
+    expect((await runner(new Request('http://localhost/api/automations/run-due', { headers: { authorization: 'Bearer wrong' } }))).status).toBe(404);
+    const response = await runner(new Request('http://localhost/api/automations/run-due', { headers: { authorization: 'Bearer cron-secret' } }));
+    expect(await response.json()).toMatchObject({ ran: 0 });
+    const state = projectSession(await store.readEvents(sessionId));
+    expect(state.timeline.some((item) => item.kind === 'automation_notice')).toBe(true);
+    expect(state.messages.some((message) => message.origin === 'automation')).toBe(false);
+    const [run] = await sql`SELECT status, error FROM persona_automation_runs WHERE automation_id = ${id}`;
+    expect(run).toEqual({ status: 'failed', error: 'model down' });
+    expect(Date.parse((await store.getAutomation(sessionId, id))!.nextRunAt!)).toBeGreaterThan(Date.now());
   });
 });

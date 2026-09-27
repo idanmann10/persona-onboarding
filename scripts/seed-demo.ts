@@ -41,6 +41,13 @@ try {
     { id: 'connection-offer:gmail:demo-m3', at: at(91), type: 'connection', toolkit: 'gmail', phase: 'offered', reason: "I'll find last month's update and draft this one from it." },
     { id: 'answer:demo-m3', at: at(91), type: 'message', speaker: 'assistant', channel: 'text', text: "Then let me look at last month's. Connect Gmail below and I'll draft this month's from it." },
   ];
+  const automationId = '0c9f0d6e-4b7a-4f0e-9d51-6a1c2b3d4e5f';
+  await store.proposeAutomation(sessionId, { id: automationId, title: 'Morning inbox rundown', instruction: 'List the emails waiting on my reply, newest first.', toolkits: ['gmail'], cadence: 'weekdays', time: '08:00' });
+  events.push(
+    { id: 'demo-m4', at: at(120), type: 'message', speaker: 'user', channel: 'text', text: 'Could you send me something like this every weekday at 8?' },
+    { id: 'automation-proposal:demo-m4', at: at(121), type: 'automation', automationId, phase: 'proposed', title: 'Morning inbox rundown', schedule: 'every weekday at 8:00 AM', instruction: 'List the emails waiting on my reply, newest first.' },
+    { id: 'answer:demo-m4', at: at(121), type: 'message', speaker: 'assistant', channel: 'text', text: "Here's a preview. Approve it and it starts on the next weekday morning." },
+  );
   for (const event of events) await store.appendEvent(sessionId, event);
   console.log(`Seeded ${events.length} events into ${sessionId}`);
 } finally {

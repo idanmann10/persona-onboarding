@@ -8,6 +8,7 @@ describe('conversation timeline and onboarding progress', () => {
   it('starts with nothing known and nothing offered', () => {
     expect(projectSession([]).onboarding).toEqual({
       assistantName: { status: 'unknown' }, preferredName: { status: 'unknown' }, need: { status: 'unknown' }, gmail: 'not_offered', call: 'not_offered',
+      automation: { status: 'none' },
     });
   });
 
@@ -26,7 +27,7 @@ describe('conversation timeline and onboarding progress', () => {
     const state = projectSession(events);
     expect(state.onboarding).toEqual({
       assistantName: { status: 'confirmed', value: 'Max' }, preferredName: { status: 'declined' }, need: { status: 'tentative', value: 'inbox triage' },
-      gmail: 'not_offered', call: 'happened',
+      gmail: 'not_offered', call: 'happened', automation: { status: 'none' },
     });
     expect(state.timeline.map((item) => item.kind)).toEqual(['message', 'call_offer', 'call']);
     const offer = state.timeline[1];
@@ -75,5 +76,18 @@ describe('conversation timeline and onboarding progress', () => {
       { id: 'connection-offer:gmail:live_1:call_2', at: at(4), type: 'connection', toolkit: 'gmail', phase: 'offered' },
     ]);
     expect(state.timeline.map((item) => item.id)).toEqual(['m1', 'answer:m1', 'call-offer:m1', 'connection-offer:gmail:m1', 'connection-offer:gmail:live_1:call_2']);
+  });
+
+  it('tracks an automation from preview card to active schedule, after the reply that proposed it', () => {
+    const state = projectSession([
+      { id: 'm1', at: at(1), type: 'message', speaker: 'user', channel: 'text', text: 'send me this every weekday morning' },
+      { id: 'automation-proposal:m1', at: at(2), type: 'automation', automationId: 'a1', phase: 'proposed', title: 'Morning inbox rundown', schedule: 'every weekday at 8:00 AM', instruction: 'List emails waiting on my reply.' },
+      { id: 'answer:m1', at: at(3), type: 'message', speaker: 'assistant', channel: 'text', text: 'Here is a preview. Approve it and it starts tomorrow.' },
+      { id: 'automation:a1:approved', at: at(4), type: 'automation', automationId: 'a1', phase: 'approved', title: 'Morning inbox rundown', schedule: 'every weekday at 8:00 AM', nextRunAt: '2026-09-28T12:00:00.000Z' },
+      { id: 'automation:a1:failed:r1', at: at(5), type: 'automation', automationId: 'a1', phase: 'failed', title: 'Morning inbox rundown', schedule: 'every weekday at 8:00 AM' },
+    ]);
+    expect(state.timeline.map((item) => item.kind)).toEqual(['message', 'message', 'automation', 'automation_notice']);
+    expect(state.timeline[2]).toMatchObject({ status: 'active', nextRunAt: '2026-09-28T12:00:00.000Z' });
+    expect(state.onboarding.automation).toEqual({ status: 'active', title: 'Morning inbox rundown', schedule: 'every weekday at 8:00 AM' });
   });
 });
