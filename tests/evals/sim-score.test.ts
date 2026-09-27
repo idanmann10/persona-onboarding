@@ -7,8 +7,9 @@ import { firstValueStep, itemTerms, mentions, offerAfterDecline, scoreTrace, sim
 import { INBOX } from '../../evals/app/fixtures';
 
 const at = '2026-09-27T12:00:00.000Z';
+/** A saved fact; the assistant's own name comes from the customize tool, as in the app. */
 const fact = (key: string, value: string, evidence: 'confirmed' | 'tentative' | 'declined' = 'confirmed'): SessionEvent =>
-  ({ id: `fact:${key}:${value}:${evidence}`, at, type: 'fact', key, value, evidence, provenance: evidence === 'tentative' ? 'assistant_inferred' : 'user_said', sourceEventId: 'm1' });
+  ({ id: `fact:${key}:${value}:${evidence}`, at, type: 'fact', key, value, evidence, provenance: evidence === 'tentative' ? 'assistant_inferred' : 'user_said', sourceEventId: key === 'assistant_name' ? 'customize:m1' : 'm1' });
 const step = (partial: Partial<SimStep> = {}): SimStep => ({
   index: 0, onCall: false, screen: '', action: { type: 'say', text: 'hi' }, outputs: [], turns: [], tools: [], connected: [], userLatencyMs: 0, appLatencyMs: 0, ...partial,
 });
@@ -25,7 +26,7 @@ describe('stages', () => {
   it('starts with nothing reached', () => {
     expect(scoreTrace(trace([]))).toEqual({
       named: false, knowsUser: false, needKnown: false, callOffered: false, callHappened: false, gmailConnected: false, calendarConnected: false,
-      firstValue: false, taskProposed: false, activated: false, briefComplete: false, stayed: true, turns: 0,
+      firstValue: false, taskProposed: false, activated: false, briefComplete: false, graduated: false, goalMet: false, stayed: true, turns: 0,
     });
   });
 
@@ -79,6 +80,19 @@ describe('stages', () => {
     // The call offered in words and declined in text leaves no card, and still settles the brief.
     const spokenNo: SessionEvent = { id: 'call-decline:m2', at, type: 'call', phase: 'declined' };
     expect(scoreTrace(trace([...settled.slice(0, 3), declined, spokenNo]))).toMatchObject({ callOffered: false, briefComplete: true });
+  });
+
+  it('meets the goal when the brief is complete, or when the person skipped the rest of setup', () => {
+    const skipped: SessionEvent = { id: 'onboarding:graduated', at, type: 'onboarding', phase: 'graduated', reason: 'just let me in' };
+    expect(scoreTrace(trace([fact('assistant_name', 'Max'), skipped]))).toMatchObject({ graduated: true, goalMet: true, briefComplete: false });
+    expect(scoreTrace(trace([skipped]))).toMatchObject({ named: false, graduated: true, goalMet: true });
+    const brief = [
+      fact('assistant_name', 'Max'), fact('preferred_name', 'Dana'), fact('current_need', 'inbox'),
+      { id: 'call-offer:m1', at, type: 'call', phase: 'offered' } as SessionEvent,
+      { id: 'connection:gmail:x:declined', at, type: 'connection', toolkit: 'gmail', phase: 'declined' } as SessionEvent,
+    ];
+    expect(scoreTrace(trace(brief))).toMatchObject({ briefComplete: true, graduated: false, goalMet: true });
+    expect(scoreTrace(trace(brief.slice(0, 4)))).toMatchObject({ briefComplete: false, graduated: false, goalMet: false });
   });
 
   it('stays unless the person left unhappy or the conversation failed', () => {
