@@ -161,10 +161,10 @@ describe('customize', () => {
 
   it('keeps a name the assistant chose tentative, and a look it chose confirmed', async () => {
     const { ctx, appended } = context({ userWords: ['you pick'] });
-    expect(await customize(ctx, { name: 'Nova', avatar: 'Lagoon' })).toMatchObject({ status: 'saved', changed: { name: 'Nova', avatar: 'lagoon' } });
+    expect(await customize(ctx, { name: 'Nova', avatar: 'Sage' })).toMatchObject({ status: 'saved', changed: { name: 'Nova', avatar: 'sage' } });
     expect(appended).toEqual([
       expect.objectContaining({ key: 'assistant_name', value: 'Nova', evidence: 'tentative', provenance: 'assistant_inferred' }),
-      expect.objectContaining({ id: 'customize:avatar:t1', key: 'avatar', value: 'lagoon', evidence: 'confirmed', provenance: 'assistant_inferred' }),
+      expect.objectContaining({ id: 'customize:avatar:t1', key: 'avatar', value: 'sage', evidence: 'confirmed', provenance: 'assistant_inferred' }),
     ]);
   });
 
@@ -196,7 +196,9 @@ describe('customize', () => {
   it('reports unchanged for the current or default values', async () => {
     const history: SessionEvent[] = [{ id: 'f', at: 'x', type: 'fact', key: 'assistant_name', value: 'Max', evidence: 'confirmed', provenance: 'user_said', sourceEventId: 'm' }];
     const { ctx, appended } = context({ userWords: ['max'] }, history);
-    expect(await customize(ctx, { name: 'Max', avatar: 'pearl', personality: 'warm' })).toMatchObject({ status: 'unchanged' });
+    expect(await customize(ctx, { name: 'Max', avatar: 'default', personality: 'warm' })).toMatchObject({ status: 'unchanged' });
+    // The retired default orb reads as the default portrait.
+    expect(await customize(ctx, { avatar: 'pearl' })).toMatchObject({ status: 'unchanged' });
     expect(appended).toEqual([]);
   });
 

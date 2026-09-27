@@ -68,7 +68,9 @@ describe('Persona prompt contract', () => {
     const prompt = buildSystemPrompt({ facts: [], capabilities: ['text'], onboarding: progress() });
     expect(prompt).toMatch(/Use remember only for something new or changed about them: what to call them and what they need/);
     expect(prompt).toMatch(/Use customize when they name you or ask to change your name, look, personality .* or call voice, and switch right away/);
-    expect(prompt).toMatch(/When they first name you, you may also give yourself a look .* they can ask for another color/);
+    expect(prompt).toMatch(/When they first name you, you may also give yourself a default look that fits the name \(sunny, sage, nova, pixel, fox, bloom\)/);
+    expect(prompt).toMatch(/they can ask for any look in words \("a fox in a hoodie"\) and you'll paint it/);
+    expect(prompt).toMatch(/painting it takes a few seconds/);
     expect(prompt).not.toContain('⋯');
     expect(prompt).not.toContain('assistant_name');
   });
