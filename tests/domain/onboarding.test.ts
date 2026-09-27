@@ -60,4 +60,12 @@ describe('setup status (the brief as server state)', () => {
     const graduated = projectSession([{ id: 'onboarding:graduated', at, type: 'onboarding', phase: 'graduated' }]);
     expect((await remember({ ...ctx(["I'm Dana"]), state: graduated }, { key: 'preferred_name', value: 'Dana' }) as { next?: string }).next).toBeUndefined();
   });
+
+  it('counts replies since setup last moved, so the assistant comes back after helping', async () => {
+    const { repliesSinceSetupMoved } = await import('../../lib/domain/onboarding');
+    const say = (id: string, speaker: 'user' | 'assistant'): SessionEvent => ({ id, at, type: 'message', speaker, channel: 'text', text: 'x', ...(id === 'g' ? { origin: 'greeting' as const } : {}) });
+    const events: SessionEvent[] = [say('g', 'assistant'), say('u1', 'user'), fact('assistant_name', 'Max'), say('a1', 'assistant'), say('u2', 'user'), say('a2', 'assistant'), say('u3', 'user'), say('a3', 'assistant')];
+    expect(repliesSinceSetupMoved(events)).toBe(2);
+    expect(repliesSinceSetupMoved([...events, fact('preferred_name', 'Dana')])).toBe(0);
+  });
 });

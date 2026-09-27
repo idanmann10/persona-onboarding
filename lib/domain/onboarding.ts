@@ -1,4 +1,5 @@
 import type { OnboardingProgress } from './project';
+import type { SessionEvent } from './events';
 
 /**
  * The trial brief's goal, as server state: a session ends with the four things known — a name for the
@@ -46,3 +47,30 @@ export const SETUP_LABELS: Record<SetupItem, string> = {
   need: 'what they need help with',
   gmail: 'Gmail',
 };
+
+const SETUP_FACTS = new Set(['assistant_name', 'preferred_name', 'current_need']);
+
+/** An event that moves setup forward: an item saved or declined, the Gmail card shown or answered, the call offered or taken. */
+function movesSetup(event: SessionEvent): boolean {
+  if (event.type === 'fact') return SETUP_FACTS.has(event.key);
+  if (event.type === 'connection') return event.toolkit === 'gmail' && event.phase !== 'disconnected';
+  if (event.type === 'call') return event.phase !== 'ended' && event.phase !== 'dropped';
+  return event.type === 'onboarding';
+}
+
+/**
+ * The user's messages since setup last moved forward. Helping with a task is right, but without this the
+ * assistant helps and never comes back (live simulation: the user's name was never asked in 8 of 11
+ * sessions that missed the goal). The prompt turns this into one short ask, then an explicit
+ * finish-or-skip choice, and then stops asking.
+ */
+export function repliesSinceSetupMoved(events: SessionEvent[]): number {
+  let since = 0;
+  for (const event of events) {
+    if (movesSetup(event)) since = 0;
+    // Count the user's messages: an exchange that went by without progress. The reply in the turn that made
+    // progress lands after its fact, so counting replies would count that turn as stalled.
+    else if (event.type === 'message' && event.speaker === 'user') since++;
+  }
+  return since;
+}

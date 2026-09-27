@@ -8,7 +8,7 @@ import { customize, customizeInput, noteDecline, noteDeclineInput, offerCall, of
 import type { AutomationStore } from '../domain/automation';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
 import { personalityLine, personaSettings } from '../domain/persona';
-import { setupStatus } from '../domain/onboarding';
+import { repliesSinceSetupMoved, setupStatus } from '../domain/onboarding';
 import { describeTurn, type TraceSink, type TurnTrace } from '../observability/trace';
 import { generateAvatar } from '../avatars/generate';
 
@@ -214,6 +214,8 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   const instructions = buildSystemPrompt({
     facts, capabilities: labels, onboarding: state.onboarding, calls: callLines(state), personality: personalityLine(personaSettings(state)),
     setup: setupStatus(state.onboarding, { graduated: state.setup.stage === 'graduated', voice: capabilities.voice }),
+    // Automation runs and app-event follow-ups don't nudge; a reply to the user does.
+    setupStalledFor: options.trigger ? 0 : repliesSinceSetupMoved(history),
     now: (deps.now?.() ?? new Date()).toISOString(), mode: channel === 'voice' ? 'voice_backend' : 'text',
   });
   const messages = modelMessages(state);

@@ -19,6 +19,8 @@ interface PromptInput {
   personality?: string;
   /** Where the brief's goal stands: what's still open and the one next move (see lib/domain/onboarding.ts). */
   setup?: SetupStatus;
+  /** Assistant replies since setup last moved forward (see repliesSinceSetupMoved). */
+  setupStalledFor?: number;
 }
 
 const HIDDEN_FACTS = new Set(['identity_lookup_status', 'assistant_name', 'preferred_name', 'current_need', 'personality', 'voice', 'avatar']);
@@ -81,6 +83,15 @@ const NEXT_UP: Record<SetupItem, { text: string; voice: string }> = {
   },
 };
 
+/** A firm, per-turn instruction once setup has stalled: ask once or twice, then offer finish-or-skip, then stop. */
+function setupNudge(setup: SetupStatus, stalledFor: number, voice: boolean): string | undefined {
+  if (voice || setup.stage !== 'active' || !setup.next || stalledFor < 1) return undefined;
+  const ask = NEXT_UP[setup.next].text;
+  if (stalledFor <= 2) return `This reply: answer what they said first, then end with one short, casual line for the next setup item (${ask}) Skip it only if they're in the middle of something that needs your full answer, or said they want to stop.`;
+  if (stalledFor === 3) return 'This reply: answer what they said, then give them the choice in one light line: finish setting you up now (it takes about 30 seconds) or skip it for now. If they choose to skip, use graduate.';
+  return "Setup has been offered enough: don't ask setup questions again unless they bring it up. Just help.";
+}
+
 function setupLine(setup: SetupStatus, voice: boolean): string {
   if (setup.stage === 'graduated') return "Setup: they chose to skip the rest and get started. Don't ask setup questions; just help, and offer Gmail only if a request needs it.";
   if (setup.stage === 'complete') return 'Setup: done, everything is known. No more setup questions; just help.';
@@ -131,7 +142,7 @@ ${voice
     ? "- If they want something recurring, say you'll set it up in the chat right after the call; you can't schedule it from the call."
     : '- When you have just shown them a real result from their accounts, offer to make it recurring in the same message and show the preview with propose_automation, for example "Want this every weekday at 8? Approve it below and it\'s set." Build it from their words and what you just did. The card is the question, and nothing runs until they approve. Offer this once; if they pass, don\'t offer again unless they ask. Without connected accounts, a recurring check-in built from their need, such as "Mondays at 9: plan my week", works too.'}
 - When they ask what you can do, answer in one or two sentences with the single most useful thing for them right now, and put up the matching button. No capability lists.${voice ? '' : '\n- One button per message: at most one of offer_call, show_connection and propose_automation in a reply, the one that serves what they just asked for. Two asks at once feels like a form.'}
-${progress ? `\n${progressBlock(progress, input.setup ? setupLine(input.setup, voice) : undefined)}\n` : ''}
+${progress ? `\n${progressBlock(progress, input.setup ? setupLine(input.setup, voice) : undefined)}\n` : ''}${input.setup && setupNudge(input.setup, input.setupStalledFor ?? 0, voice) ? `${setupNudge(input.setup, input.setupStalledFor ?? 0, voice)}\n` : ''}
 Memory
 Use remember only for something new or changed about them: what to call them and what they need. What's already saved is listed above; don't save it again, and don't announce that you saved anything.
 When one message gives you several things (a name for you, their name, their need), make all those tool calls together in one step, not one after another: each extra step makes them wait about a second.
