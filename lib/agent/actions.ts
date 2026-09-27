@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { SessionEvent, Toolkit } from '../domain/events';
-import type { SessionProjection } from '../domain/project';
+import type { OnboardingProgress, SessionProjection } from '../domain/project';
 import type { AutomationStore } from '../domain/automation';
 import { describeSchedule, isValidSchedule } from '../domain/schedule';
+import { setupStatus, type SetupItem } from '../domain/onboarding';
 import { AVATARS, CUSTOM_PERSONALITY_LIMIT, DEFAULT_AVATAR, DEFAULT_PERSONALITY, PERSONALITIES, VOICES, avatarFrom, personalityFrom, type VoiceId } from '../domain/persona';
 import type { AvatarResult } from '../avatars/generate';
 
@@ -83,11 +84,39 @@ const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Goog
 
 const timestamp = (ctx: ActionContext) => (ctx.now?.() ?? new Date()).toISOString();
 
+const UNLESS_ASKED = " Unless they asked for something just now: then help with that first and come back to this later.";
+const NEXT_STEP: Record<'text' | 'voice', Partial<Record<SetupItem, string>>> = {
+  text: {
+    call: `Next, in this same reply: offer the call and put the Answer button up with offer_call ("Easier to talk? Tap Answer and I'll pick up, or just keep typing.").${UNLESS_ASKED}`,
+    preferred_name: `Next, in this same reply: ask what to call them.${UNLESS_ASKED}`,
+    need: `Next, in this same reply: ask what they'd most like off their plate.${UNLESS_ASKED}`,
+    gmail: `Next, in this same reply: offer Gmail with show_connection, tied to what they need.${UNLESS_ASKED}`,
+  },
+  voice: {
+    preferred_name: 'Next: ask what to call them.',
+    need: "Next: ask what they'd most like off their plate.",
+    gmail: 'Next: put the Connect Gmail button on their screen with show_connection and tell them to tap it.',
+  },
+};
+
+/**
+ * The setup step that follows this change, for the reply being written now. The prompt's "Next up" line
+ * is computed before the turn, so without this a name given in this very message would still read as
+ * the next thing to ask for, and the call would never be offered.
+ */
+function nextStep(ctx: ActionContext, change: Partial<OnboardingProgress>): { next?: string } {
+  if (ctx.state.setup.stage !== 'active') return {};
+  const setup = setupStatus({ ...ctx.state.onboarding, ...change }, { voice: ctx.capabilities.voice });
+  if (setup.stage === 'complete') return { next: "That completes setup: in a few words, tell them they're all set, then carry on." };
+  const next = setup.next ? NEXT_STEP[ctx.channel][setup.next] : undefined;
+  return next ? { next } : {};
+}
+
 export async function remember(ctx: ActionContext, input: z.infer<typeof rememberInput>) {
   const id = `fact:${input.key}:${ctx.turnId}`;
   if (input.declined) {
     await ctx.store.appendEvent(ctx.sessionId, { id, at: timestamp(ctx), type: 'fact', key: input.key, value: 'declined', evidence: 'declined', provenance: 'user_said', sourceEventId: ctx.turnId });
-    return { status: 'saved' as const, key: input.key, evidence: 'declined' as const };
+    return { status: 'saved' as const, key: input.key, evidence: 'declined' as const, ...nextStep(ctx, input.key === 'preferred_name' ? { preferredName: { status: 'declined' } } : { need: { status: 'declined' } }) };
   }
   const value = input.value?.replace(/\s+/g, ' ').trim() ?? '';
   const limit = input.key === 'current_need' ? 300 : 60;
@@ -105,7 +134,7 @@ export async function remember(ctx: ActionContext, input: z.infer<typeof remembe
   const evidence = said ? 'confirmed' as const : 'tentative' as const;
   const provenance = said ? 'user_said' as const : 'assistant_inferred' as const;
   await ctx.store.appendEvent(ctx.sessionId, { id, at: timestamp(ctx), type: 'fact', key: input.key, value, evidence, provenance, sourceEventId: ctx.turnId });
-  return { status: 'saved' as const, key: input.key, value, evidence, provenance };
+  return { status: 'saved' as const, key: input.key, value, evidence, provenance, ...nextStep(ctx, input.key === 'preferred_name' ? { preferredName: { status: evidence, value } } : { need: { status: evidence, value } }) };
 }
 
 const ASSISTANT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} .'-]*$/u;
@@ -213,6 +242,7 @@ export async function customize(ctx: ActionContext, input: z.infer<typeof custom
   }
   return {
     status: 'saved' as const, changed, ...(paintFailure ? { failed: { avatar: paintFailure } } : {}),
+    ...(changed.name ? nextStep(ctx, { assistantName: { status: 'confirmed', value: changed.name } }) : {}),
     note: `The app shows the change in the chat. Switch to it right away.${changed.voice && ctx.channel === 'voice' ? ' The new voice applies from the next call.' : ''}${paintFailure ? " The new look couldn't be painted this time; say so in a few words." : ''}`,
   };
 }
@@ -223,7 +253,8 @@ export async function offerCall(ctx: ActionContext) {
   const phase = ctx.state.call.phase;
   if (phase === 'accepted' || phase === 'started') return { status: 'already_on_call' as const };
   if (ctx.state.call.offerPending) return { status: 'already_offered' as const, note: 'The Answer button is already in the chat.' };
-  if (ctx.state.onboarding.call === 'declined' && !CALL_WORDS.test(ctx.userWords.at(-1) ?? '')) {
+  // After a call, the progress reads 'happened'; a later "no more calls" is the latest call event.
+  if ((ctx.state.onboarding.call === 'declined' || ctx.state.call.phase === 'declined') && !CALL_WORDS.test(ctx.userWords.at(-1) ?? '')) {
     return { status: 'declined_recently' as const, note: 'They said no to a call. Stay in text; offer again only if they ask.' };
   }
   await ctx.store.appendEvent(ctx.sessionId, { id: `call-offer:${ctx.turnId}`, at: timestamp(ctx), type: 'call', phase: 'offered' });
@@ -258,7 +289,10 @@ export async function noteDecline(ctx: ActionContext, input: z.infer<typeof note
     if (ctx.state.connections[input.what] === 'declined') return { status: 'unchanged' as const };
     await ctx.store.appendEvent(ctx.sessionId, { id: `connection-decline:${input.what}:${ctx.turnId}`, at: timestamp(ctx), type: 'connection', toolkit: input.what, phase: 'declined' });
   }
-  return { status: 'saved' as const, note: "Noted. Don't offer it again unless they ask." };
+  return {
+    status: 'saved' as const, note: "Noted. Don't offer it again unless they ask.",
+    ...nextStep(ctx, input.what === 'call' ? { call: 'declined' } : input.what === 'gmail' ? { gmail: 'declined' } : {}),
+  };
 }
 
 export async function showConnection(ctx: ActionContext, input: z.infer<typeof showConnectionInput>) {

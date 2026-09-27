@@ -46,4 +46,18 @@ describe('setup status (the brief as server state)', () => {
     expect(appended).toEqual([expect.objectContaining({ id: 'onboarding:graduated', type: 'onboarding', phase: 'graduated', reason: 'just let me in' })]);
     expect(await graduate({ ...ctx, state: projectSession(appended) }, {})).toMatchObject({ status: 'unchanged' });
   });
+
+  it('tells the model the next step in the same reply, so naming leads straight to the call offer', async () => {
+    const { customize, remember, noteDecline } = await import('../../lib/agent/actions');
+    const ctx = (userWords: string[], history: SessionEvent[] = []) => ({ store: { appendEvent: async () => undefined }, sessionId: 's', channel: 'text' as const, turnId: `t${userWords.length}`, state: projectSession(history), userWords, capabilities: { voice: true, gmail: true, calendar: true }, connected: {}, now: () => new Date(at) });
+    const named = await customize(ctx(['Nova']), { name: 'Nova' });
+    expect(named).toMatchObject({ status: 'saved' });
+    expect((named as { next?: string }).next).toMatch(/offer_call/);
+    const history = [fact('assistant_name', 'Nova'), { id: 'd', at, type: 'call', phase: 'declined' } as SessionEvent];
+    expect((await remember(ctx(["I'm Dana"], history), { key: 'preferred_name', value: 'Dana' }) as { next?: string }).next).toMatch(/off their plate/);
+    const declined = await noteDecline(ctx(['no calls'], [fact('assistant_name', 'Nova')]), { what: 'call' });
+    expect((declined as { next?: string }).next).toMatch(/what to call them/);
+    const graduated = projectSession([{ id: 'onboarding:graduated', at, type: 'onboarding', phase: 'graduated' }]);
+    expect((await remember({ ...ctx(["I'm Dana"]), state: graduated }, { key: 'preferred_name', value: 'Dana' }) as { next?: string }).next).toBeUndefined();
+  });
 });

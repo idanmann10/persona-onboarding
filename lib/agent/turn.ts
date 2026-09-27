@@ -120,6 +120,12 @@ export function callLines(state: SessionProjection): string[] {
   });
 }
 
+function hungUpJustNow(state: SessionProjection, trigger?: TurnTrigger): boolean {
+  if (!trigger?.id.startsWith('followup:call:')) return false;
+  const call = state.calls.find((record) => trigger.id === `followup:call:${record.callId}`);
+  return call?.reason === 'user_hangup' || call?.reason === 'page_closed';
+}
+
 export async function prepareTurn(deps: TurnDependencies, sessionId: string, history: SessionEvent[], options: { turnId: string; trigger?: TurnTrigger; channel?: 'text' | 'voice' }): Promise<PreparedTurn> {
   const state = projectSession(history);
   const capabilities = availableCapabilities(deps.env);
@@ -161,7 +167,8 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
         execute: (input) => graduate(context, input),
       }),
     } : {}),
-    ...(capabilities.voice && channel === 'text' ? {
+    // They ended the call themselves: the follow-up must not put another call offer up (a prompt line alone didn't hold).
+    ...(capabilities.voice && channel === 'text' && !hungUpJustNow(state, options.trigger) ? {
       offer_call: tool({
         description: 'Put an Answer button in the chat for a short browser call. The button is the invitation: the call starts only if they tap it.',
         inputSchema: offerCallInput,

@@ -4,10 +4,11 @@ import { readCalendarWindow, searchMailbox } from '../integrations/reads';
 import type { Toolkit } from '../integrations/connections';
 
 const RELEVANT: Record<Toolkit, RegExp> = {
-  calendar: /\b(calendar|schedule|meeting|meetings|appointment|availability|agenda|free time|this week|my week|next week|today.?s plan|tomorrow.?s plan)\b/i,
-  gmail: /\b(gmail|email|emails|e-mail|mail|inbox|unread|message from|messages from|reply|replies|respond to|waiting on|thread|newsletters?|unsubscribe)\b/i,
+  // English plus the words people use in Spanish, French, German and Portuguese.
+  calendar: /\b(calendar|schedule|meeting|meetings|appointment|availability|agenda|free time|this week|my week|next week|today.?s plan|tomorrow.?s plan|calendario|reuni[oó]n(es)?|cita|semana|calendrier|r[ée]union|rendez-vous|kalender|termin|besprechung|calend[aá]rio|reuni[aã]o)\b/i,
+  gmail: /\b(gmail|email|emails|e-mail|mail|inbox|unread|message from|messages from|reply|replies|respond to|waiting on|thread|newsletters?|unsubscribe|correo|correos|bandeja|mensajes?|responder|courriel|courriels|posteingang|nachricht(en)?|caixa de entrada|mensagens?)\b/i,
 };
-const AFFIRMATION = /^\s*(yes|yeah|yep|sure|ok|okay|please|go ahead|do it|sounds good|let'?s do it|yes please)\b/i;
+const AFFIRMATION = /^\s*(yes|yeah|yep|sure|ok|okay|please|go ahead|do it|sounds good|let'?s do it|yes please|s[ií]|claro|dale|por favor|oui|d'accord|ja|gerne|sim|pode)\b/i;
 
 export function accountReadRelevant(toolkit: Toolkit, text: string): boolean {
   return RELEVANT[toolkit].test(text);
