@@ -15,7 +15,7 @@
  * postgres:16 service); each run creates and drops its own database there.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { createWriteStream, mkdirSync } from 'node:fs';
+import { createWriteStream, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -79,6 +79,8 @@ function run(job) {
   });
 }
 
+// A clean checkout has no generated route types; stale ones from a dev server can name deleted routes.
+rmSync('.next/types', { recursive: true, force: true });
 console.log(`local CI on ${branch} @ ${sha.slice(0, 12)}${dirty ? ' (with UNCOMMITTED changes)' : ''}: ${jobs.join(', ')}`);
 console.log(`logs: ${logDir}`);
 const results = [];
