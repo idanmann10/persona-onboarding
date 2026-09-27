@@ -407,4 +407,25 @@ describe('Postgres session store', () => {
     expect(state.onboarding.call).toBe('declined');
     expect(state.timeline).toContainEqual({ kind: 'call_offer', id: 'call-offer:t1', status: 'declined' });
   });
+
+  it('caps new conversations and calls per client address across cookies, storing only a hash', async () => {
+    const store = createStore(sql);
+    const fresh = (ip: string) => new Request('http://localhost/api/session', { headers: { 'x-forwarded-for': `${ip}, 10.0.0.1` } });
+    const handler = createSessionHandler(store);
+    const statuses: number[] = [];
+    let cookie = '';
+    for (let i = 0; i < 31; i++) {
+      const response = await handler(fresh('203.0.113.7'));
+      statuses.push(response.status);
+      cookie ||= (response.headers.get('set-cookie') || '').split(';')[0];
+    }
+    expect(statuses.filter((status) => status === 200)).toHaveLength(30);
+    expect(statuses.at(-1)).toBe(429);
+    expect((await handler(fresh('203.0.113.8'))).status).toBe(200);
+    const rows = await sql`SELECT client_key FROM persona_ip_limits WHERE scope = 'session'`;
+    expect(rows.every((row) => /^[0-9a-f]{32}$/.test(row.client_key as string))).toBe(true);
+    expect(JSON.stringify(rows)).not.toContain('203.0.113');
+    const returning = await handler(new Request('http://localhost/api/session', { headers: { 'x-forwarded-for': '203.0.113.7', cookie } }));
+    expect(returning.status).toBe(200);
+  });
 });

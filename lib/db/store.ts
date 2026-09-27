@@ -124,6 +124,15 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         WHERE persona_rate_limits.count < ${limit} RETURNING count`;
       return rows.length > 0;
     },
+    consumeIpQuota: async (clientKey: string, scope: string, limit: number, windowSeconds: number): Promise<boolean> => {
+      const windowStart = new Date(Math.floor(Date.now() / (windowSeconds * 1000)) * windowSeconds * 1000).toISOString();
+      if (Math.random() < 0.01) await sql`DELETE FROM persona_ip_limits WHERE window_start < now() - interval '2 days'`;
+      const rows = await sql`INSERT INTO persona_ip_limits (client_key, scope, window_start, count)
+        VALUES (${clientKey}, ${scope}, ${windowStart}, 1)
+        ON CONFLICT (client_key, scope, window_start) DO UPDATE SET count = persona_ip_limits.count + 1
+        WHERE persona_ip_limits.count < ${limit} RETURNING count`;
+      return rows.length > 0;
+    },
     reserve: async (sessionId: string, key: string): Promise<boolean> => {
       const rows = await sql`INSERT INTO persona_reservations (session_id, reservation_key)
         VALUES (${sessionId}, ${key}) ON CONFLICT DO NOTHING RETURNING reservation_key`;

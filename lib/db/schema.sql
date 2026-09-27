@@ -79,3 +79,11 @@ CREATE TABLE IF NOT EXISTS persona_reservations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (session_id, reservation_key)
 );
+
+CREATE TABLE IF NOT EXISTS persona_ip_limits (
+  client_key TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  window_start TIMESTAMPTZ NOT NULL,
+  count INTEGER NOT NULL CHECK (count > 0),
+  PRIMARY KEY (client_key, scope, window_start)
+);

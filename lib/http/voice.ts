@@ -3,8 +3,9 @@ import { readSessionCookie } from './session';
 import { projectSession } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { buildLiveSession } from '../voice/session-config';
+import { withinIpLimit, type IpQuotaStore } from './client-key';
 
-interface Store {
+interface Store extends IpQuotaStore {
   sessionExists(id: string): Promise<boolean>;
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -23,6 +24,7 @@ export function createVoiceSessionHandler(store: Store, key: string, upstream: t
     try { body = await request.json(); } catch { return new Response('Invalid JSON', { status: 400 }); }
     const sdp = body && typeof body === 'object' && 'sdp' in body ? (body as { sdp: unknown }).sdp : undefined;
     if (typeof sdp !== 'string' || !sdp.trim() || sdp.length > 65_536) return new Response('Invalid SDP offer', { status: 400 });
+    if (!(await withinIpLimit(store, request, 'voice'))) return new Response('Call limit reached; try again later', { status: 429 });
     const leaseId = crypto.randomUUID();
     if (!(await store.acquireCallLease(sessionId, leaseId))) return new Response('A call is already active', { status: 409 });
     if (!(await store.consumeQuota(sessionId, 'voice', 3, 600))) {

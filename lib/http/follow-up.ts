@@ -3,8 +3,9 @@ import { projectSession } from '../domain/project';
 import { describeTrigger, isSilent, type FollowUpRequest } from '../agent/follow-up';
 import type { TurnTrigger } from '../agent/turn';
 import { readSessionCookie } from './session';
+import { withinIpLimit, type IpQuotaStore } from './client-key';
 
-interface Store {
+interface Store extends IpQuotaStore {
   sessionExists(id: string): Promise<boolean>;
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -54,7 +55,7 @@ export function createFollowUpHandler(store: Store, run: (history: SessionEvent[
       if (await store.reserve(sessionId, trigger.id)) await store.appendEvent(sessionId, { id: `decision:${trigger.id}`, at: new Date().toISOString(), type: 'decision', trigger: trigger.id, outcome: 'silent' });
       return Response.json({ status: 'silent' });
     }
-    if (!(await store.consumeQuota(sessionId, 'chat', 12, 60))) return new Response('Too many requests; try again shortly', { status: 429 });
+    if (!(await store.consumeQuota(sessionId, 'chat', 12, 60)) || !(await withinIpLimit(store, request, 'follow_up'))) return new Response('Too many requests; try again shortly', { status: 429 });
     if (!(await store.reserve(sessionId, trigger.id))) return Response.json({ status: 'pending' }, { status: 202 });
     let text: string;
     try { text = await run(history, sessionId, trigger); }

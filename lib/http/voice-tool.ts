@@ -2,11 +2,12 @@ import type { SessionEvent, Toolkit } from '../domain/events';
 import { projectSession } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { readSessionCookie } from './session';
+import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { noteDecline, noteDeclineInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext } from '../agent/actions';
 import { calendarReadInput, gmailSearchInput, relevantToolkits, runCalendarRead, runGmailSearch, type AccountReadClient } from '../agent/account-tools';
 import { userWords } from '../agent/turn';
 
-interface Store {
+interface Store extends IpQuotaStore {
   sessionExists(id: string): Promise<boolean>;
   hasEvent(id: string, eventId: string): Promise<boolean>;
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -35,7 +36,7 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
       return new Response('Invalid tool call', { status: 400 });
     }
     if (!(await store.hasEvent(sessionId, `call:${callId}:accepted`))) return new Response('Call not found', { status: 404 });
-    if (!(await store.consumeQuota(sessionId, 'tool', 40, 600))) return Response.json({ output: JSON.stringify({ status: 'rate_limited' }) });
+    if (!(await store.consumeQuota(sessionId, 'tool', 40, 600)) || !(await withinIpLimit(store, request, 'tool'))) return Response.json({ output: JSON.stringify({ status: 'rate_limited' }) });
     let args: unknown;
     try { args = JSON.parse(body.arguments || '{}'); } catch { return Response.json({ output: JSON.stringify({ status: 'invalid_arguments' }) }); }
     const state = projectSession(await store.readEvents(sessionId));

@@ -2,8 +2,9 @@ import type { SessionEvent } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
 import type { FollowUpRequest } from '../agent/follow-up';
 import { getGuestSession } from '../agent/session';
+import { withinIpLimit, type IpQuotaStore } from './client-key';
 
-interface Store {
+interface Store extends IpQuotaStore {
   createSession(id: string): Promise<void>;
   sessionExists(id: string): Promise<boolean>;
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -36,7 +37,10 @@ export function pendingFollowUps(state: SessionProjection, now = Date.now()): Fo
 
 export function createSessionHandler(store: Store) {
   return async (request: Request): Promise<Response> => {
-    const session = await getGuestSession(store, readSessionCookie(request));
+    const cookie = readSessionCookie(request);
+    const known = Boolean(cookie && /^[0-9a-f-]{36}$/i.test(cookie) && await store.sessionExists(cookie));
+    if (!known && !(await withinIpLimit(store, request, 'session'))) return new Response('Too many new conversations from this network. Try again later.', { status: 429 });
+    const session = await getGuestSession(store, cookie);
     let events = session.events;
     const state = projectSession(events);
     const live = state.calls.find((call) => call.phase === 'accepted' || call.phase === 'started');

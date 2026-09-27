@@ -1,8 +1,9 @@
 import type { SessionEvent } from '../domain/events';
 import { runTextTurn } from '../agent/chat';
 import { readSessionCookie } from './session';
+import { withinIpLimit, type IpQuotaStore } from './client-key';
 
-interface Store {
+interface Store extends IpQuotaStore {
   sessionExists(id: string): Promise<boolean>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -24,7 +25,7 @@ export function createChatHandler(store: Store, respond: (history: SessionEvent[
       return new Response('Invalid message', { status: 400 });
     }
     const existingAnswer = (await store.readEvents(sessionId)).some((event) => event.id === `answer:${id}`);
-    if (!existingAnswer && !(await store.consumeQuota(sessionId, 'chat', 12, 60))) return new Response('Too many messages; try again shortly', { status: 429 });
+    if (!existingAnswer && (!(await store.consumeQuota(sessionId, 'chat', 12, 60)) || !(await withinIpLimit(store, request, 'chat')))) return new Response('Too many messages; try again shortly', { status: 429 });
     const event: SessionEvent = { id, at: new Date().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: text.trim() };
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
