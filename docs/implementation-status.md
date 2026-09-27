@@ -28,13 +28,24 @@ Build status for the private preview branch (`feat/foundation`, draft PR #1). Th
   - connection notices;
   - a live call bar with captions.
   Checked at desktop width and at 375px.
+- **Recurring task (one per session).**
+  - `propose_automation` previews a daily / weekday / weekly task at a local time. Only Approve schedules it, recording the browser's time zone.
+  - Runs use the same turn builder and gates as chat, with the task's accounts opened read-only. The result posts as a message tagged `automation`, with a `ran` event as proof.
+  - A unique run row per occurrence makes it execute once. Due work is claimed with `FOR UPDATE SKIP LOCKED`, the next run advances with daylight-saving changes handled, and failures never claim work.
+  - The UI has Run now and Turn off. The page runs whatever is due for its session on load; a hosting cron can call `/api/automations/run-due` with `CRON_SECRET`.
+- **Per-network limits.** New sessions, chat turns, call starts, voice tool calls and follow-ups count against a per-client window keyed by a salted hash of the address, so churning cookies cannot mint unlimited billed calls. Raw IPs are never stored.
 - **Carried over from the previous slice.** Guarded Context.dev identity research; disconnect and conversation deletion (provider revocation first); per-session quotas; the 48 seed cases and the prompt-only trace runner.
 
 ## Verified locally (Windows, 2026-09-27)
 
 Commands run against a real Postgres 18 (embedded) at the head of this branch:
 - `bun run db:migrate`
-- `bun run test`: 30 files, 122 tests passing. These include 20 Postgres integration tests covering the follow-up once-only behaviour, silence, retry, lost calls, voice tool gates, typing during a call, and declines.
+- `bun run test`: 31 files, 134 tests passing. These include 24 Postgres integration tests covering:
+  - follow-ups running once, silence, and retry after a failed run;
+  - lost calls, voice tool gates, typing during a call, and declines;
+  - per-network limits;
+  - approving a recurring task in the browser's time zone, with one active per session;
+  - a due run executing once across two racing requests, run now, disable, the failure path, and the cron secret.
 - `bun run typecheck`
 - `bun run build`
 
@@ -53,8 +64,7 @@ GitHub Actions still does not start (account billing / spending limit); that is 
 
 ## Still open
 
-- **Durable recurring task** (preview, approval, Run now, disable, proof of execution). The architecture calls it an optional follow-up; the founder's Arlo data says a day-1 automation is the strongest activation signal.
-- **Hosted preview and ops:** hosted Postgres, account sign-in, edge-level abuse limits, retention policy, observability, and privacy/legal review for automatic public-person research.
+- **Hosted preview and ops:** hosted Postgres, a cron for due recurring tasks, account sign-in, retention policy, observability, and privacy/legal review for automatic public-person research. Per-network limits are in the app; add edge limits at the host if abuse appears.
 - **Voice hardening:** `session.client.data_channel` permissions for the browser channel (left out until a live call can verify the field), and a sideband connection if the server must observe calls independently of the tab.
 - **Evals:** human rubric scoring of live traces, voice listening, and scenario permutations.
 

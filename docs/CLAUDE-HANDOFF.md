@@ -80,7 +80,10 @@ The 48-case corpus and its permutations cover these and more. The spec's release
   5. The Persona UI.
   6. `note_decline`.
   7. The app-level replay harness.
-  8. This documentation update.
+  8. A documentation update.
+  9. Per-network limits.
+  10. One approved recurring task.
+  11. This documentation update.
 - Local clone used by Claude: `C:\Users\idan mann\Desktop\persona-onboarding` (Windows). Codex's Mac worktree was `/Users/idanmann/Projects/persona-onboarding/.worktrees/foundation`.
 
 ## Implemented
@@ -98,6 +101,8 @@ See [implementation status](implementation-status.md) for the full list. In shor
 - **Human follow-ups** after hang-ups, drops and connections, derived from server state, exactly once, and allowed to stay silent. Follow-ups still owed are replayed on return.
 - **Popup OAuth** that survives a live call. Composio Gmail payloads are parsed in the shape the API really returns.
 - **App-level scenario replay** with fixtures and automatic hard invariants.
+- **One approved recurring task.** A preview card is created by `propose_automation`. Approve records the browser's time zone. Each occurrence runs once (unique run row plus `SKIP LOCKED` claim), and every run leaves proof: an `automation` message and a `ran` event. Run now and Turn off are in the UI; the cron entry point needs `CRON_SECRET`.
+- **Per-network limits** on sessions, chat, calls, voice tools and follow-ups, keyed by salted address hashes.
 
 **Decisions made in this session, and why:**
 - **Onboarding opportunities.** The architecture review's "interpret *try* contextually" is encoded as a progress block from durable state, not a script. The model sees what is known or declined and is told never to re-ask it.
@@ -110,7 +115,7 @@ See [implementation status](implementation-status.md) for the full list. In shor
 
 On Windows with an embedded PostgreSQL 18.4, at this branch's head:
 - `bun run db:migrate`
-- `bun run test`: 30 files, 122 tests. These include 20 Postgres integration tests and the replay harness tests run against a scripted model.
+- `bun run test`: 31 files, 134 tests. These include 24 Postgres integration tests and the replay harness tests run against a scripted model.
 - `bun run typecheck` (ignore stale `.next/types` from a running dev server)
 - `bun run build`
 
@@ -148,8 +153,8 @@ Idan said he can configure credentials and a test Google account; **do not ask h
      - close the tab and reopen.
    - Composio OAuth with an evaluator account: popup and redirect fallback, a wrong account, missing scopes, and the real Gmail payload against the parser.
 2. **Fix what the live pass finds.** Most likely areas: GPT-Live event shapes (nested `response.event` types, transcript fields), prompt wording for tool timing, and mobile popup/microphone behaviour.
-3. **Hosted preview.** Vercel plus hosted Postgres (for example, Neon through the Vercel integration), with `APP_BASE_URL` and the Composio callback URL set to the preview origin, and edge-level rate limits for anonymous sessions and calls. This gives the trial's "link to try".
-4. **One approved recurring task** (roadmap slice 4): preview, explicit approval, Run now, disable, a durable schedule with an atomic claim, and proof of execution.
+3. **Hosted preview.** Vercel plus hosted Postgres (for example, Neon through the Vercel integration). Set `APP_BASE_URL` and the Composio callback URL to the preview origin, and set `CRON_SECRET` with a Vercel Cron on `/api/automations/run-due`; sub-daily crons need a paid plan, otherwise due tasks run when the page opens. This gives the trial's "link to try".
+4. **Recurring task, live:** with keys, approve a task, use Run now, and check the scheduled run and the cron route on the host.
 5. **Remaining release gates:** sign-in, retention/deletion policy, observability, privacy/legal review for automatic person research, GitHub Actions billing, and CI verification. Keep the repository private until Idan approves publication.
 
 Do not silently treat an API response, transcript fragment, or tool call request as a completed action. Preserve source labels and user corrections across text and voice. Work in small reviewable commits, update `docs/implementation-status.md` and the draft PR description when behavior changes, and report tested versus untested behavior plainly.
