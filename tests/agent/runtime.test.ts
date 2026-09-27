@@ -28,4 +28,63 @@ describe('turn runtime', () => {
     expect(calls).toBe(MAX_STEPS);
     expect(saved).toHaveLength(MAX_STEPS - 1);
   });
+
+  it('ends the turn when the reply was written beside cards that went up, instead of writing it twice', async () => {
+    let calls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        calls++;
+        return {
+          content: [
+            { type: 'text' as const, text: 'Dana needs your answer by Friday. Want this every weekday at 8?' },
+            { type: 'tool-call' as const, toolCallId: `p${calls}`, toolName: 'propose_automation', input: '{}' },
+          ],
+          finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' }, usage, warnings: [],
+        };
+      },
+    });
+    const turn: PreparedTurn = {
+      instructions: 'test', messages: [{ role: 'user', content: 'anything waiting on me?' }],
+      tools: { propose_automation: tool({ inputSchema: z.object({}), execute: async () => ({ status: 'proposed' }) }) },
+      state: undefined as never, allowSystemInMessages: false,
+    };
+    expect(await generateTurn(turn, {}, model)).toBe('Dana needs your answer by Friday. Want this every weekday at 8?');
+    expect(calls).toBe(1);
+  });
+
+  it('keeps going when a card was refused, so the reply can be corrected', async () => {
+    let calls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        calls++;
+        return calls === 1
+          ? { content: [{ type: 'text' as const, text: 'Here is a preview.' }, { type: 'tool-call' as const, toolCallId: 'p1', toolName: 'propose_automation', input: '{}' }], finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' }, usage, warnings: [] }
+          : { content: [{ type: 'text' as const, text: 'You already have one running; want me to swap it?' }], finishReason: { unified: 'stop' as const, raw: 'stop' }, usage, warnings: [] };
+      },
+    });
+    const turn: PreparedTurn = {
+      instructions: 'test', messages: [{ role: 'user', content: 'every weekday at 8' }],
+      tools: { propose_automation: tool({ inputSchema: z.object({}), execute: async () => ({ status: 'one_active' }) }) },
+      state: undefined as never, allowSystemInMessages: false,
+    };
+    expect(await generateTurn(turn, {}, model)).toContain('swap it');
+    expect(calls).toBe(2);
+  });
+
+  it('retries once when a request stalls, and gives up after that', async () => {
+    let calls = 0;
+    const stalled = (signal?: AbortSignal) => new Promise<never>((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason)));
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        calls++;
+        if (calls === 1) return stalled(options.abortSignal);
+        return { content: [{ type: 'text' as const, text: 'Back on track.' }], finishReason: { unified: 'stop' as const, raw: 'stop' }, usage, warnings: [] };
+      },
+    });
+    const turn: PreparedTurn = { instructions: 'test', messages: [{ role: 'user', content: 'hi' }], tools: {}, state: undefined as never, allowSystemInMessages: false };
+    expect(await generateTurn(turn, { MODEL_STEP_TIMEOUT_MS: '30' }, model)).toBe('Back on track.');
+    expect(calls).toBe(2);
+    const alwaysStalls = new MockLanguageModelV3({ doGenerate: async (options) => stalled(options.abortSignal) });
+    await expect(generateTurn(turn, { MODEL_STEP_TIMEOUT_MS: '30' }, alwaysStalls)).rejects.toThrow(/time/i);
+  });
 });

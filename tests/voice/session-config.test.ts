@@ -33,7 +33,7 @@ describe('GPT-Live session configuration', () => {
   });
 
   it('greets first and asks for the next missing thing', () => {
-    expect(voiceGreeting(projectSession([]))).toMatch(/^Greet the caller now in English\. .*ask what you should call them/);
+    expect(voiceGreeting(projectSession([]))).toMatch(/^Greet the caller now in the language they have been using \(English if unsure\)\. .*ask what you should call them/);
     expect(voiceGreeting(projectSession(named))).toMatch(/as Max\..*ask what they would most like a hand with/);
   });
 
@@ -55,7 +55,7 @@ describe('GPT-Live session configuration', () => {
     const responses = (session as unknown as { delegation: { responses: { model: string; tool_choice: string; parallel_tool_calls: boolean; tools: Array<{ type: string; name: string; parameters: Record<string, unknown> }> } } }).delegation.responses;
     expect(responses).toMatchObject({ model: 'gpt-6-luna', tool_choice: 'auto', parallel_tool_calls: false });
     expect(responses.tools.map((tool) => tool.name)).toEqual(['remember', 'note_decline', 'show_connection', 'search_gmail', 'read_calendar_window']);
-    expect(responses.tools[0].parameters).toMatchObject({ type: 'object', properties: { key: { enum: ['assistant_name', 'preferred_name', 'current_need'] } } });
+    expect(responses.tools[0].parameters).toMatchObject({ type: 'object', properties: { key: { enum: ['assistant_name', 'preferred_name', 'current_need', 'personality'] } } });
     expect(responses.tools[0].parameters).not.toHaveProperty('$schema');
     const off = buildLiveSession(projectSession([]), { OPENAI_VOICE_DELEGATION: 'off' }, { gmail: true, calendar: true });
     expect(off.delegation).toBe(false);
@@ -63,5 +63,21 @@ describe('GPT-Live session configuration', () => {
     expect(off.session.instructions).not.toContain('search_gmail');
     expect(off.session.instructions).not.toContain('remember:');
     expect(off.session.instructions).toContain('There is no backend on this call.');
+  });
+
+});
+
+describe('call personality and voice', () => {
+  it('speaks in the chosen voice and personality, and passes the personality to the backend', () => {
+    const chosen: SessionEvent[] = [
+      ...named,
+      { id: 's1', at: 'x', type: 'fact', key: 'personality', value: 'playful', evidence: 'confirmed', provenance: 'user_confirmed', sourceEventId: 'settings:1' },
+      { id: 's2', at: 'x', type: 'fact', key: 'voice', value: 'ripple', evidence: 'confirmed', provenance: 'user_confirmed', sourceEventId: 'settings:1' },
+    ];
+    const live = buildLiveSession(projectSession(chosen), { OPENAI_VOICE: 'marin' }, { gmail: true, calendar: false });
+    expect(live.session.audio.output.voice).toBe('ripple');
+    expect(live.session.instructions).toMatch(/Personality: playful/);
+    expect(live.session.delegation?.responses.instructions).toMatch(/Personality: playful/);
+    expect(buildLiveSession(projectSession(named), { OPENAI_VOICE: 'cedar' }, { gmail: true, calendar: false }).session.audio.output.voice).toBe('cedar');
   });
 });

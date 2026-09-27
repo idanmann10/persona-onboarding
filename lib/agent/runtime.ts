@@ -1,4 +1,4 @@
-import { generateText, stepCountIs, streamText, type LanguageModel } from 'ai';
+import { generateText, stepCountIs, streamText, type LanguageModel, type StopCondition, type ToolSet } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import type { PreparedTurn, TurnDependencies } from './turn';
 import { createComposioClient } from '../integrations/composio';
@@ -22,6 +22,28 @@ export function turnDependencies(store: TurnDependencies['store'] & ResearchStor
 /** Model steps per turn. Saving several facts and showing a card can take one step each. */
 export const MAX_STEPS = 6;
 
+/** A stalled request fails in under a minute instead of leaving the user watching dots; it is retried once. */
+function timeoutFor(env: Env) {
+  const stepMs = Number(env.MODEL_STEP_TIMEOUT_MS) || 45_000;
+  return { stepMs, totalMs: Math.max(stepMs * 2, 100_000) };
+}
+const isTimeout = (error: unknown) => error instanceof Error && /time(d)? ?out/i.test(`${error.name} ${error.message}`);
+
+/** Tools whose only effect is a saved fact or a card on screen: a reply beside them needs no further step. */
+const CARD_TOOLS = new Set(['remember', 'note_decline', 'offer_call', 'show_connection', 'propose_automation']);
+const CARD_DONE = new Set(['saved', 'unchanged', 'offered', 'already_offered', 'shown', 'already_shown', 'proposed', 'already_proposed', 'already_connected', 'already_on_call']);
+
+/**
+ * A step that wrote the reply and only put up cards is the whole turn. Another step would only repeat
+ * the reply (seen live: the answer written twice around a preview card). A rejected or refused card
+ * still gets a step, so the model can correct what it said.
+ */
+const repliedWithCards: StopCondition<ToolSet> = ({ steps }) => {
+  const last = steps.at(-1);
+  if (!last?.text.trim() || !last.toolResults.length) return false;
+  return last.toolResults.every((result) => CARD_TOOLS.has(result.toolName) && CARD_DONE.has(String((result.output as { status?: unknown } | undefined)?.status)));
+};
+
 /** The last step may not call tools, so a turn that spent its budget on tools still ends in a reply. */
 function lastStepWrites({ stepNumber }: { stepNumber: number }) {
   return stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none' as const } : undefined;
@@ -36,30 +58,45 @@ function modelSettings(env: Env, override?: LanguageModel) {
   };
 }
 
+function turnSettings(turn: PreparedTurn, env: Env, override?: LanguageModel) {
+  return {
+    ...modelSettings(env, override), system: turn.instructions, messages: turn.messages, tools: turn.tools,
+    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: [stepCountIs(MAX_STEPS), repliedWithCards], prepareStep: lastStepWrites, timeout: timeoutFor(env),
+  };
+}
+
 /** Stream a turn's text. A tool step between two pieces of text gets a paragraph break. */
 export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): AsyncGenerator<string> {
-  const result = streamText({
-    ...modelSettings(env, override), system: turn.instructions, messages: turn.messages, tools: turn.tools,
-    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: stepCountIs(MAX_STEPS), prepareStep: lastStepWrites,
-  });
-  let emitted = false;
-  let pendingBreak = false;
-  for await (const part of result.fullStream) {
-    if (part.type === 'finish-step') pendingBreak = emitted;
-    else if (part.type === 'text-delta' && part.text) {
-      if (pendingBreak) { yield '\n\n'; pendingBreak = false; }
-      emitted = true;
-      yield part.text;
-    } else if (part.type === 'error') throw part.error;
+  for (let attempt = 1; ; attempt++) {
+    let emitted = false;
+    try {
+      const result = streamText(turnSettings(turn, env, override));
+      let pendingBreak = false;
+      for await (const part of result.fullStream) {
+        if (part.type === 'finish-step') pendingBreak = emitted;
+        else if (part.type === 'text-delta' && part.text) {
+          if (pendingBreak) { yield '\n\n'; pendingBreak = false; }
+          emitted = true;
+          yield part.text;
+        } else if (part.type === 'error') throw part.error;
+      }
+      return;
+    } catch (error) {
+      // Tools are idempotent per turn, so a stall before any text can safely run the turn again.
+      if (emitted || attempt > 1 || !isTimeout(error)) throw error;
+      console.warn('Model request stalled before replying; retrying once');
+    }
   }
 }
 
 /** The full result (steps, tool calls, usage) for callers that inspect it, such as the scenario replay. */
-export function generateTurnResult(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel) {
-  return generateText({
-    ...modelSettings(env, override), system: turn.instructions, messages: turn.messages, tools: turn.tools,
-    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: stepCountIs(MAX_STEPS), prepareStep: lastStepWrites,
-  });
+export async function generateTurnResult(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel) {
+  try { return await generateText(turnSettings(turn, env, override)); }
+  catch (error) {
+    if (!isTimeout(error)) throw error;
+    console.warn('Model request stalled; retrying once');
+    return generateText(turnSettings(turn, env, override));
+  }
 }
 
 export async function generateTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): Promise<string> {

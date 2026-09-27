@@ -47,6 +47,18 @@ export function createStore(sql: ReturnType<typeof postgres>) {
           VALUES (${crypto.randomUUID()}, ${id}, ${event.id}, 'user', ${event.key}, ${event.value}, ${event.evidence}, ${event.provenance}, ${event.sourceUrl || null}, ${event.sourceEventId})`;
       });
     },
+    /** The newest sessions with their events, for the funnel. */
+    recentSessions: async (limit = 500): Promise<Array<{ id: string; events: SessionEvent[] }>> => {
+      const rows = await sql`SELECT s.id, e.payload FROM (SELECT id, created_at FROM persona_sessions ORDER BY created_at DESC LIMIT ${limit}) s
+        JOIN persona_events e ON e.session_id = s.id ORDER BY s.created_at DESC, s.id, e.seq`;
+      const sessions = new Map<string, SessionEvent[]>();
+      for (const row of rows) {
+        const events = sessions.get(row.id as string) ?? [];
+        events.push(row.payload as SessionEvent);
+        sessions.set(row.id as string, events);
+      }
+      return [...sessions].map(([id, events]) => ({ id, events }));
+    },
     readEvents: async (id: string): Promise<SessionEvent[]> => {
       const rows = await sql`SELECT payload FROM persona_events WHERE session_id = ${id} ORDER BY seq`;
       return rows.map((row) => row.payload as SessionEvent);

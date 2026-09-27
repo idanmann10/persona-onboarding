@@ -1,5 +1,6 @@
 import type { CallEndReason } from '@/lib/domain/events';
 import type { TimelineItem } from '@/lib/domain/project';
+import { PERSONALITIES, VOICES, isPersonalityId, isVoiceId } from '@/lib/domain/persona';
 
 export type Toolkit = 'gmail' | 'calendar';
 
@@ -52,6 +53,13 @@ interface ItemProps {
   onAutomation(action: 'approve' | 'decline' | 'disable' | 'run_now', id: string): void;
 }
 
+function settingsLine(key: string, value: string): string {
+  if (key === 'assistant_name') return `Renamed to ${value}`;
+  if (key === 'personality') return `Personality: ${isPersonalityId(value) ? PERSONALITIES[value].label : 'your own description'}`;
+  if (key === 'voice') return `Call voice: ${isVoiceId(value) ? VOICES[value].label : value}`;
+  return 'Settings updated';
+}
+
 function nextRunLabel(iso?: string): string {
   if (!iso) return '';
   const date = new Date(iso);
@@ -89,6 +97,8 @@ export function TimelineEntry({ item, assistantName, liveCallId, busy, connectab
     }
     case 'automation_notice':
       return <p className="system-line">“{item.title}” couldn't run this time</p>;
+    case 'settings_notice':
+      return <p className="system-line">{settingsLine(item.key, item.value)}</p>;
     case 'call': {
       const call = item.call;
       if (call.callId === liveCallId) return null;

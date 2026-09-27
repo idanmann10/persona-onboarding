@@ -130,7 +130,7 @@ describe('Postgres session store', () => {
     expect((await handler(request(session.id))).status).toBe(429);
     const answer = await result.json();
     expect(answer).toMatchObject({ session: { id: 'live_test' }, transport: { type: 'webrtc', sdp: 'answer-sdp' }, delegation: true });
-    expect(answer.greeting).toMatch(/^Greet the caller now in English\. .*ask what you should call them/);
+    expect(answer.greeting).toMatch(/^Greet the caller now in the language they have been using \(English if unsure\)\. .*ask what you should call them/);
     expect(answer.limits).toMatchObject({ checkInAfterMs: 20_000, closeAfterMs: 30_000, maxDurationMs: 720_000 });
     const liveSession = (sent as { session: { model: string; input: Array<{ role: string }>; delegation: { type: string; responses: { model: string; tools: Array<{ name: string }> } } } }).session;
     expect(liveSession.model).toBe('gpt-live-1');
@@ -555,5 +555,26 @@ describe('Postgres session store', () => {
     expect(state.messages.some((message) => message.origin === 'automation')).toBe(false);
     expect(state.timeline.some((item) => item.kind === 'automation_notice')).toBe(true);
     expect(state.timeline.find((item) => item.kind === 'automation')).toMatchObject({ status: 'active', nextRunAt: expect.any(String) });
+  });
+
+
+  it('lists recent sessions with their events for the funnel', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    await store.appendEvent(sessionId, { id: 'm1', at: new Date().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: 'Max' });
+    const recent = await store.recentSessions(1_000);
+    const mine = recent.find((session) => session.id === sessionId);
+    expect(mine?.events.map((event) => event.id)).toEqual(['greeting:v1', 'm1']);
+  });
+
+  it('records a return visit after a gap, once, and returns the settings', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    await sql`UPDATE persona_events SET payload = jsonb_set(payload, '{at}', to_jsonb((now() - interval '2 hours')::text)) WHERE session_id = ${sessionId}`;
+    const handler = createSessionHandler(store, { OPENAI_VOICE: 'marin' });
+    const load = async () => (await handler(new Request('http://localhost/api/session', { headers: { cookie: `persona_session=${sessionId}` } }))).json();
+    expect((await load()).settings).toEqual({ personality: { id: 'warm', label: 'Warm' }, voice: 'marin' });
+    await load();
+    expect((await store.readEvents(sessionId)).filter((event) => event.type === 'visit')).toHaveLength(1);
   });
 });

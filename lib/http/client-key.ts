@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 
-export type IpScope = 'session' | 'chat' | 'voice' | 'tool' | 'follow_up' | 'voice_event';
+export type IpScope = 'session' | 'chat' | 'voice' | 'tool' | 'follow_up' | 'voice_event' | 'settings';
 
 /**
  * Per-client limits across all guest sessions, so churning cookies cannot mint unlimited sessions or
@@ -15,6 +15,7 @@ export const IP_LIMITS: Record<IpScope, [number, number]> = {
   // Every call the voice limit allows, at full length: 12 calls x 12 min x ~90 posts a minute
   // (transcript batches every 700 ms while someone talks, plus typed text and phase changes).
   voice_event: [15_000, 3_600],
+  settings: [120, 3_600],
 };
 
 /**

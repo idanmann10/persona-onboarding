@@ -64,10 +64,12 @@ describe('app-level replay', () => {
 
   it('reads fixtures only after the user connects, and the model sees Composio-shaped mail', async () => {
     const trace = await replayScenario(scenario('brief_gmail_value'), { model: scripted([
+      { call: { name: 'remember', input: { key: 'assistant_name', value: 'Max' } } },
       { call: { name: 'show_connection', input: { toolkit: 'gmail', reason: 'See who is waiting on a reply' } } },
       { text: 'Max it is. Connect Gmail below and I will find what people need from you.' },
       { call: { name: 'search_gmail', input: { query: 'in:inbox is:unread newer_than:3d' } } },
-      { text: 'Dana needs your lease answer by Friday, and Sam wants to move Thursday. Want a reply drafted for Dana?' },
+      { call: { name: 'propose_automation', input: { title: 'Morning inbox rundown', instruction: 'List the emails waiting on my reply.', cadence: 'weekdays', time: '08:00', toolkits: ['gmail'] } } },
+      { text: 'Dana needs your lease answer by Friday, and Sam wants to move Thursday. Want this every weekday at 8? Approve it below.' },
     ]) });
     expect(trace.reads).toEqual([expect.objectContaining({ slug: 'GMAIL_FETCH_EMAILS', allowed: true })]);
     const search = trace.steps[1].tools[0];
@@ -107,6 +109,7 @@ describe('app-level replay', () => {
 
   it('previews a recurring task after value and flags a premature "scheduled" claim', async () => {
     const good = await replayScenario(scenario('brief_first_automation'), { model: scripted([
+      { call: { name: 'remember', input: { key: 'assistant_name', value: 'Max' } } },
       { call: { name: 'search_gmail', input: { query: 'in:inbox is:unread' } } },
       { text: 'Dana needs your lease answer by Friday, and Sam wants to move Thursday.' },
       { call: { name: 'propose_automation', input: { title: 'Morning inbox rundown', instruction: 'List the emails waiting on my reply.', cadence: 'weekdays', time: '08:00', toolkits: ['gmail'] } } },

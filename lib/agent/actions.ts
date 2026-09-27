@@ -3,6 +3,7 @@ import type { SessionEvent, Toolkit } from '../domain/events';
 import type { SessionProjection } from '../domain/project';
 import type { AutomationStore } from '../domain/automation';
 import { describeSchedule, isValidSchedule } from '../domain/schedule';
+import { CUSTOM_PERSONALITY_LIMIT, personalityFrom } from '../domain/persona';
 
 export interface ActionStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -28,13 +29,13 @@ export interface ActionContext {
   now?: () => Date;
 }
 
-export const REMEMBER_KEYS = ['assistant_name', 'preferred_name', 'current_need'] as const;
+export const REMEMBER_KEYS = ['assistant_name', 'preferred_name', 'current_need', 'personality'] as const;
 export type RememberKey = (typeof REMEMBER_KEYS)[number];
 
 export const rememberInput = z.object({
-  key: z.enum(REMEMBER_KEYS).describe('assistant_name: what the user wants to call you. preferred_name: what to call the user. current_need: what they want help with, in their words.'),
+  key: z.enum(REMEMBER_KEYS).describe("assistant_name: the name the user gives YOU. preferred_name: the user's own name, only when they say it is theirs. current_need: the task or problem they want handled, in their words. personality: how they want you to come across; use warm, direct, playful or polished when one fits, otherwise their words."),
   value: z.string().max(300).optional().describe('The value, as the user said it. Omit when declined is true.'),
-  declined: z.boolean().optional().describe('True when the user would rather not say.'),
+  declined: z.boolean().optional().describe('True only when they refuse to share this exact thing. Saying no to a call or an account is note_decline, not this.'),
 });
 export const offerCallInput = z.object({ reason: z.string().max(200).optional().describe('One line on why a call helps now.') });
 export const noteDeclineInput = z.object({ what: z.enum(['call', 'gmail', 'calendar']).describe('What the user said no to.') });
@@ -72,12 +73,15 @@ const timestamp = (ctx: ActionContext) => (ctx.now?.() ?? new Date()).toISOStrin
 
 export async function remember(ctx: ActionContext, input: z.infer<typeof rememberInput>) {
   const id = `fact:${input.key}:${ctx.turnId}`;
+  if (input.declined && input.key === 'personality') return { status: 'rejected' as const, reason: 'A personality cannot be declined; keep the current one.' };
   if (input.declined) {
     await ctx.store.appendEvent(ctx.sessionId, { id, at: timestamp(ctx), type: 'fact', key: input.key, value: 'declined', evidence: 'declined', provenance: 'user_said', sourceEventId: ctx.turnId });
     return { status: 'saved' as const, key: input.key, evidence: 'declined' as const };
   }
-  const value = input.value?.replace(/\s+/g, ' ').trim() ?? '';
-  const limit = input.key === 'current_need' ? 300 : 60;
+  const raw = input.value?.replace(/\s+/g, ' ').trim() ?? '';
+  // A personality that names a preset is stored as the preset; anything else is kept in their words.
+  const value = input.key === 'personality' && raw ? (personalityFrom(raw).id === 'custom' ? raw : personalityFrom(raw).id) : raw;
+  const limit = input.key === 'current_need' ? 300 : input.key === 'personality' ? CUSTOM_PERSONALITY_LIMIT : 60;
   if (!value || value.length > limit || /[\u0000-\u001f]|https?:\/\//i.test(value)) {
     return { status: 'rejected' as const, reason: `Provide a short ${input.key === 'current_need' ? 'description' : 'name'} without links.` };
   }

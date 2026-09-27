@@ -4,11 +4,13 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type Keyboard
 import type { OnboardingProgress, TimelineItem } from '@/lib/domain/project';
 import { reconcileFailedTurn } from '@/lib/ui/reconcile';
 import { startBrowserCall, type VoiceController, type VoiceCallbacks } from '@/lib/voice/client';
+import { PERSONALITIES, VOICES, isPersonalityId, isVoiceId, type PersonaSettings } from '@/lib/domain/persona';
 import { Bubble, duration, TimelineEntry, type Toolkit } from './thread';
 
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
 type FollowUpRequest = { kind: 'call_ended'; callId: string } | { kind: 'connection'; toolkit: Toolkit; acknowledge?: boolean };
-type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean };
+type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: PersonaSettings; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean };
+type SettingsChange = { assistantName?: string; personality?: string | { custom: string }; voice?: string };
 type Caption = { speaker: 'user' | 'assistant'; text: string };
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
@@ -30,6 +32,11 @@ export default function Home() {
   const [capabilities, setCapabilities] = useState({ text: false, voice: false, calendar: false, gmail: false });
   const [connections, setConnections] = useState({ calendar: false, gmail: false });
   const [menuOpen, setMenuOpen] = useState(false);
+  const [settings, setSettings] = useState<PersonaSettings | null>(null);
+  const [nameDraft, setNameDraft] = useState('');
+  const [customDraft, setCustomDraft] = useState('');
+  const [customOpen, setCustomOpen] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [connecting, setConnecting] = useState<Toolkit | null>(null);
@@ -51,6 +58,7 @@ export default function Home() {
     const snapshot = await response.json() as Snapshot;
     setTimeline(snapshot.timeline ?? timelineFromMessages(snapshot.messages));
     if (snapshot.progress) setProgress(snapshot.progress);
+    if (snapshot.settings) setSettings(snapshot.settings);
     void fetch('/api/connections', { cache: 'no-store' }).then((result) => result.ok ? result.json() as Promise<{ calendar: boolean; gmail: boolean }> : null).then((status) => { if (status) setConnections(status); }).catch(() => undefined);
     return snapshot;
   }, []);
@@ -219,6 +227,34 @@ export default function Home() {
     }
   }
 
+  function toggleMenu() {
+    setMenuOpen((open) => {
+      if (!open) {
+        setNameDraft(settings?.assistantName ?? '');
+        setCustomDraft(settings?.personality.text ?? '');
+        setCustomOpen(settings?.personality.id === 'custom');
+      }
+      return !open;
+    });
+    setConfirmDelete(false);
+  }
+
+  async function saveSettings(change: SettingsChange) {
+    if (savingSettings) return;
+    setSavingSettings(true);
+    setError('');
+    try {
+      const response = await post('/api/settings', change);
+      if (!response.ok) throw new Error(response.status === 400 ? "That didn't look right. Use a short name or description, without links." : response.status === 429 ? 'Too many changes right now. Try again shortly.' : 'That change did not save. Please try again.');
+      const result = await response.json() as { settings: PersonaSettings; progress: OnboardingProgress };
+      setSettings(result.settings);
+      setProgress(result.progress);
+      if (change.personality !== undefined) setCustomOpen(typeof change.personality !== 'string');
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'That change did not save.'); }
+    finally { setSavingSettings(false); }
+  }
+
   async function declineCall() {
     await fetch('/api/voice/offer', { method: 'DELETE' }).catch(() => undefined);
     await refresh().catch(() => undefined);
@@ -306,18 +342,53 @@ export default function Home() {
   return (
     <main className="app">
       <header className="topbar">
-        <div className="identity">
+        <button type="button" className="identity" onClick={toggleMenu} aria-label={`${assistantName}: name, personality and voice`}>
           <span className="orb" aria-hidden="true" />
           <span className="identity-text"><strong>{assistantName}</strong><small>{callPhase === 'active' ? `On a call · ${duration(callStartedAt)}` : assistantName === 'Persona' ? 'Your new assistant' : 'Your Persona assistant'}</small></span>
-        </div>
+        </button>
         <div className="topbar-actions">
           <button className={`call-button${onCall ? ' live' : ''}`} type="button" onClick={() => void startCall()} disabled={(!capabilities.voice && !onCall) || callPhase === 'connecting' || callPhase === 'ending'} title={capabilities.voice ? 'Start or end a browser call' : 'Voice needs a server API key'}>
             <span aria-hidden="true">✆</span> {callLabel}{!capabilities.voice && !onCall ? <span className="soon"> · setup needed</span> : null}
           </button>
-          <button className="menu-button" type="button" aria-label="Settings" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); setConfirmDelete(false); }}>⋯</button>
+          <button className="menu-button" type="button" aria-label="Settings" aria-expanded={menuOpen} onClick={toggleMenu}>⋯</button>
         </div>
         {menuOpen ? (
-          <section className="menu" aria-label="Connections and privacy">
+          <section className="menu" aria-label="Settings">
+            <div className="menu-section">
+              <strong>Your assistant</strong>
+              <p>Change these any time, or just tell {assistantName} in the chat.</p>
+              <form className="setting" onSubmit={(event) => { event.preventDefault(); void saveSettings({ assistantName: nameDraft }); }}>
+                <label className="setting-label" htmlFor="assistant-name">Name</label>
+                <div className="inline-field">
+                  <input id="assistant-name" value={nameDraft} maxLength={40} placeholder="Give me a name" autoComplete="off" onChange={(event) => setNameDraft(event.target.value)} />
+                  <button type="submit" disabled={savingSettings || !nameDraft.trim() || nameDraft.trim() === settings?.assistantName}>Save</button>
+                </div>
+              </form>
+              <div className="setting">
+                <span className="setting-label" id="personality-label">Personality</span>
+                <div className="chips" role="group" aria-labelledby="personality-label">
+                  {Object.entries(PERSONALITIES).map(([id, preset]) => (
+                    <button key={id} type="button" className={`chip${!customOpen && settings?.personality.id === id ? ' active' : ''}`} aria-pressed={!customOpen && settings?.personality.id === id} disabled={savingSettings} onClick={() => { setCustomOpen(false); if (settings?.personality.id !== id) void saveSettings({ personality: id }); }}>{preset.label}</button>
+                  ))}
+                  <button type="button" className={`chip${customOpen ? ' active' : ''}`} aria-pressed={customOpen} disabled={savingSettings} onClick={() => setCustomOpen(true)}>Your own</button>
+                </div>
+                {customOpen ? (
+                  <form className="inline-field" onSubmit={(event) => { event.preventDefault(); void saveSettings({ personality: { custom: customDraft } }); }}>
+                    <input aria-label="Describe the personality you want" value={customDraft} maxLength={160} placeholder="e.g. calm, dry humor, no exclamation marks" autoComplete="off" onChange={(event) => setCustomDraft(event.target.value)} />
+                    <button type="submit" disabled={savingSettings || customDraft.trim().length < 3 || (settings?.personality.id === 'custom' && customDraft.trim() === settings.personality.text)}>Save</button>
+                  </form>
+                ) : <small className="setting-hint">{settings && isPersonalityId(settings.personality.id) ? PERSONALITIES[settings.personality.id].hint : ''}</small>}
+              </div>
+              <div className="setting">
+                <span className="setting-label" id="voice-label">Call voice</span>
+                <div className="chips" role="group" aria-labelledby="voice-label">
+                  {Object.entries(VOICES).map(([id, voice]) => (
+                    <button key={id} type="button" className={`chip${settings?.voice === id ? ' active' : ''}`} aria-pressed={settings?.voice === id} disabled={savingSettings} onClick={() => { if (settings?.voice !== id) void saveSettings({ voice: id }); }}>{voice.label}</button>
+                  ))}
+                </div>
+                <small className="setting-hint">{[settings && isVoiceId(settings.voice) ? VOICES[settings.voice].hint : '', onCall ? 'Changes apply from your next call.' : ''].filter(Boolean).join('. ')}</small>
+              </div>
+            </div>
             <strong>Connections</strong>
             <p>Optional and read-only. Connect an account only when it helps.</p>
             {(['gmail', 'calendar'] as const).map((toolkit) => (

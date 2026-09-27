@@ -5,6 +5,7 @@ import { noteDeclineInput, rememberInput, showConnectionInput } from '../agent/a
 import { calendarReadInput, gmailSearchInput } from '../agent/account-tools';
 import { callLines, modelMessages } from '../agent/turn';
 import { estimateTokens } from './tokens';
+import { personalityLine, personaSettings } from '../domain/persona';
 
 export interface VoiceLimits {
   /** Quiet on both sides for this long: ask the model to check in once. */
@@ -42,7 +43,7 @@ const functionTool = (name: string, description: string, schema: z.ZodType) => {
 
 export function voiceTools(capabilities: { gmail: boolean; calendar: boolean }) {
   return [
-    functionTool('remember', "Save a name for the assistant, what to call the user, or what they want help with, in the user's words. Use declined when they would rather not say.", rememberInput),
+    functionTool('remember', "Save something new or changed: a name for the assistant, what to call the user, what they want help with, or how they want the assistant to come across, in the user's words. Use declined only when they refuse to share that exact thing.", rememberInput),
     functionTool('note_decline', 'Record that the user said no to connecting Gmail or Google Calendar, so it is not offered again.', noteDeclineInput),
     ...(capabilities.gmail || capabilities.calendar ? [functionTool('show_connection', "Put a Connect Gmail or Connect Google Calendar button on the user's screen.", showConnectionInput)] : []),
     ...(capabilities.gmail ? [functionTool('search_gmail', "Search the user's connected Gmail (sender, subject, preview) for the current request. Returns not_connected if Gmail isn't connected.", gmailSearchInput)] : []),
@@ -59,14 +60,14 @@ function names(state: SessionProjection) {
 export function voiceInstructions(state: SessionProjection, capabilities: { gmail: boolean; calendar: boolean }, delegate = true): string {
   const { assistant, user } = names(state);
   const tools = [
-    '- remember: save a name for you, what to call the user, or what they need help with, in their words.',
+    '- remember: save a name for you, what to call the user, what they need help with, or how they want you to come across, in their words.',
     '- note_decline: record that the user said no to connecting Gmail or their calendar.',
     ...(capabilities.gmail || capabilities.calendar ? ["- show_connection: put a Connect Gmail or Connect Google Calendar button on the user's screen."] : []),
     ...(capabilities.gmail ? ["- search_gmail: search the user's connected Gmail for the current request."] : []),
     ...(capabilities.calendar ? ["- read_calendar_window: read the user's connected calendar for a date range."] : []),
   ];
   return `You are ${assistant ?? "the user's new Persona assistant"}, on a live browser call with the user.${assistant ? ` The user chose the name ${assistant}.` : ' You do not have a name yet; if the user offers one, use remember.'}
-Speak warmly and naturally, at an unhurried pace. Be clear and direct, not overly cheerful. Keep each turn to one or two sentences, then listen.
+Speak naturally, at an unhurried pace, and be clear. Personality: ${personalityLine(personaSettings(state))}. Keep each turn to one or two sentences, then listen.
 This call continues the same conversation as the chat, and you know what was said there. ${user ? `The user's name is ${user}.` : "You don't know the user's name yet."}
 Help with whatever the user brings up first. When it fits, learn what to call them, what they would most like help with, and whether they want to connect Gmail so you can show them something useful right away. Ask one thing at a time and never re-ask something they declined or already told you. If they want to stop or switch to text, wrap up in one sentence and let them go.
 If an important name is unclear, ask about that part, for example "Is that Dana with one n?". Use their correction.
@@ -104,7 +105,7 @@ export function voiceGreeting(state: SessionProjection): string {
       : 'ask where they would like to start';
   const previous = state.calls.at(-1);
   const back = previous && (previous.reason === 'connection_lost' || previous.reason === 'lost') ? " Mention you're glad to be back after the line dropped." : '';
-  return `Greet the caller now in English${assistant ? `, as ${assistant}` : ''}. Say you're picking up from the chat, then ${ask}.${back} Keep it to one or two short sentences, then pause and listen.`;
+  return `Greet the caller now in the language they have been using (English if unsure)${assistant ? `, as ${assistant}` : ''}. Say you're picking up from the chat, then ${ask}.${back} Keep it to one or two short sentences, then pause and listen.`;
 }
 
 /** Seed history: app context as a developer message, then the most recent turns within budget. */
@@ -128,19 +129,20 @@ export function voiceInput(state: SessionProjection, facts: Array<{ key: string;
 
 export function buildLiveSession(state: SessionProjection, env: Record<string, string | undefined>, capabilities: { gmail: boolean; calendar: boolean }) {
   const facts = Object.entries(state.facts).map(([key, fact]) => ({ key, value: fact.value, evidence: fact.evidence, provenance: fact.provenance, sourceUrl: fact.sourceUrl }));
+  const settings = personaSettings(state, env.OPENAI_VOICE);
   const delegate = env.OPENAI_VOICE_DELEGATION !== 'off';
   const effort = env.OPENAI_REASONING_EFFORT === 'none' || env.OPENAI_REASONING_EFFORT === 'medium' ? env.OPENAI_REASONING_EFFORT : 'low';
   const session = {
     model: 'gpt-live-1',
     instructions: voiceInstructions(state, delegate ? capabilities : { gmail: false, calendar: false }, delegate),
     input: voiceInput(state, facts),
-    audio: { output: { voice: env.OPENAI_VOICE || 'marin' } },
+    audio: { output: { voice: settings.voice } },
     ...(delegate ? {
       delegation: {
         type: 'responses',
         responses: {
           model: env.OPENAI_VOICE_BACKEND_MODEL || 'gpt-6-luna',
-          instructions: buildSystemPrompt({ facts, capabilities: ['browser call', ...(capabilities.gmail ? ['Gmail'] : []), ...(capabilities.calendar ? ['Google Calendar'] : [])], onboarding: state.onboarding, calls: callLines(state), mode: 'voice_backend' }),
+          instructions: buildSystemPrompt({ facts, capabilities: ['browser call', ...(capabilities.gmail ? ['Gmail'] : []), ...(capabilities.calendar ? ['Google Calendar'] : [])], onboarding: state.onboarding, calls: callLines(state), mode: 'voice_backend', personality: personalityLine(settings) }),
           tools: voiceTools(capabilities),
           tool_choice: 'auto',
           parallel_tool_calls: false,

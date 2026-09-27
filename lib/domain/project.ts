@@ -27,7 +27,8 @@ export type TimelineItem =
   | { kind: 'connection_offer'; id: string; toolkit: Toolkit; status: 'pending' | 'connected' | 'declined' | 'failed'; reason?: string }
   | { kind: 'connection_notice'; id: string; toolkit: Toolkit; phase: 'connected' | 'failed' | 'disconnected'; at?: string }
   | { kind: 'automation'; id: string; automationId: string; title: string; schedule: string; instruction?: string; status: 'proposed' | 'active' | 'declined' | 'disabled'; nextRunAt?: string }
-  | { kind: 'automation_notice'; id: string; automationId: string; title: string; phase: 'failed' };
+  | { kind: 'automation_notice'; id: string; automationId: string; title: string; phase: 'failed' }
+  | { kind: 'settings_notice'; id: string; key: string; value: string };
 
 export interface OnboardingProgress {
   assistantName: { status: SlotStatus; value?: string };
@@ -105,6 +106,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         state.history.push(current);
         if (event.evidence === 'declined') delete state.facts[event.key];
         else state.facts[event.key] = current;
+        if (event.sourceEventId.startsWith('settings:')) state.timeline.push({ kind: 'settings_notice', id: event.id, key: event.key, value: event.value });
         break;
       }
       case 'call': {

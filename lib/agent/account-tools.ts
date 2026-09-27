@@ -29,27 +29,40 @@ export interface AccountReadClient {
   executeRead: (slug: 'GOOGLECALENDAR_EVENTS_LIST' | 'GMAIL_FETCH_EMAILS', accountId: string, userId: string, args: Record<string, unknown>) => Promise<unknown>;
 }
 
-export async function runCalendarRead(client: AccountReadClient, accountId: string, sessionId: string, input: { from: string; to: string }) {
-  try { return { status: 'ok', events: await readCalendarWindow(client.executeRead, accountId, sessionId, input.from, input.to) }; }
-  catch (error) { console.error('Calendar read failed', error); return { status: 'unavailable' }; }
+/** Records a successful read and how much it found (the funnel's "saw something real" signal). */
+export type ReadRecorder = (toolkit: Toolkit, items: number) => Promise<void>;
+
+async function recorded(record: ReadRecorder | undefined, toolkit: Toolkit, items: unknown) {
+  if (record) await record(toolkit, Array.isArray(items) ? items.length : 0).catch((error) => console.error('Read record failed', error));
 }
 
-export async function runGmailSearch(client: AccountReadClient, accountId: string, sessionId: string, input: { query: string }) {
-  try { return { status: 'ok', messages: await searchMailbox(client.executeRead, accountId, sessionId, input.query) }; }
-  catch (error) { console.error('Gmail read failed', error); return { status: 'unavailable' }; }
+export async function runCalendarRead(client: AccountReadClient, accountId: string, sessionId: string, input: { from: string; to: string }, record?: ReadRecorder) {
+  try {
+    const events = await readCalendarWindow(client.executeRead, accountId, sessionId, input.from, input.to);
+    await recorded(record, 'calendar', events);
+    return { status: 'ok', events };
+  } catch (error) { console.error('Calendar read failed', error); return { status: 'unavailable' }; }
+}
+
+export async function runGmailSearch(client: AccountReadClient, accountId: string, sessionId: string, input: { query: string }, record?: ReadRecorder) {
+  try {
+    const messages = await searchMailbox(client.executeRead, accountId, sessionId, input.query);
+    await recorded(record, 'gmail', messages);
+    return { status: 'ok', messages };
+  } catch (error) { console.error('Gmail read failed', error); return { status: 'unavailable' }; }
 }
 
 export const calendarReadInput = z.object({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) });
 export const gmailSearchInput = z.object({ query: z.string().min(1).max(120).describe('A Gmail search query, e.g. "in:inbox is:unread newer_than:7d".') });
 
-export function createAccountTools(client: AccountReadClient, sessionId: string, relevant: Toolkit[], accounts: Partial<Record<Toolkit, string>>): ToolSet {
+export function createAccountTools(client: AccountReadClient, sessionId: string, relevant: Toolkit[], accounts: Partial<Record<Toolkit, string>>, record?: ReadRecorder): ToolSet {
   const result: ToolSet = {};
   if (accounts.calendar && relevant.includes('calendar')) {
     const accountId = accounts.calendar;
     result.read_calendar_window = tool({
       description: 'Read at most ten events from the connected primary calendar within a 30-day window, only to answer the current calendar request. No writes.',
       inputSchema: calendarReadInput,
-      execute: (input) => runCalendarRead(client, accountId, sessionId, input),
+      execute: (input) => runCalendarRead(client, accountId, sessionId, input, record),
     });
   }
   if (accounts.gmail && relevant.includes('gmail')) {
@@ -57,7 +70,7 @@ export function createAccountTools(client: AccountReadClient, sessionId: string,
     result.search_gmail = tool({
       description: 'Search at most five connected Gmail message summaries (sender, subject, preview, unread) for the current email request. No message bodies, no writes.',
       inputSchema: gmailSearchInput,
-      execute: (input) => runGmailSearch(client, accountId, sessionId, input),
+      execute: (input) => runGmailSearch(client, accountId, sessionId, input, record),
     });
   }
   return result;

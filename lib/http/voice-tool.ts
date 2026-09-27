@@ -52,6 +52,7 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
       connected: { gmail: Boolean(accounts.gmail), calendar: Boolean(accounts.calendar) },
     };
     const relevant = relevantToolkits({ userTexts: words, lastAssistant: answeredQuestion(state) });
+    const record = (toolkit: Toolkit, items: number) => store.appendEvent(sessionId, { id: `read:${callId}:${callItemId}`, at: new Date().toISOString(), type: 'account_read', toolkit, items });
     const invalid = () => Response.json({ output: JSON.stringify({ status: 'invalid_arguments' }) });
     if (name === 'remember') {
       const parsed = rememberInput.safeParse(args);
@@ -73,9 +74,9 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
     if (!relevant.includes(toolkit)) return Response.json({ output: JSON.stringify({ status: 'not_relevant', note: 'Read the account only for a request the user made about it.' }) });
     if (name === 'search_gmail') {
       const parsed = gmailSearchInput.safeParse(args);
-      return parsed.success ? Response.json({ output: JSON.stringify(await runGmailSearch(composio, accountId, sessionId, parsed.data)) }) : invalid();
+      return parsed.success ? Response.json({ output: JSON.stringify(await runGmailSearch(composio, accountId, sessionId, parsed.data, record)) }) : invalid();
     }
     const parsed = calendarReadInput.safeParse(args);
-    return parsed.success ? Response.json({ output: JSON.stringify(await runCalendarRead(composio, accountId, sessionId, parsed.data)) }) : invalid();
+    return parsed.success ? Response.json({ output: JSON.stringify(await runCalendarRead(composio, accountId, sessionId, parsed.data, record)) }) : invalid();
   };
 }

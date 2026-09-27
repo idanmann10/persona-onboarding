@@ -7,6 +7,7 @@ import { buildSystemPrompt } from './prompts';
 import { noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
 import type { AutomationStore } from '../domain/automation';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
+import { personalityLine, personaSettings } from '../domain/persona';
 
 type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
 
@@ -132,7 +133,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
   const tools: ToolSet = {
     remember: tool({
-      description: 'Save a name for you, what to call the user, or what they want help with, in their words. Use declined when they would rather not say.',
+      description: 'Save something new or changed: a name for you (assistant_name), what to call the user (preferred_name), what they want help with (current_need), or how they want you to come across (personality). Use declined only when they refuse to share that exact thing.',
       inputSchema: rememberInput,
       execute: (input) => remember(context, input),
     }),
@@ -143,14 +144,14 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
     }),
     ...(capabilities.voice && channel === 'text' ? {
       offer_call: tool({
-        description: 'Show an Answer button in the chat for a short browser call, after the user agreed to talk. It does not start the call.',
+        description: 'Put an Answer button in the chat for a short browser call. The button is the invitation: the call starts only if they tap it.',
         inputSchema: offerCallInput,
         execute: () => offerCall(context),
       }),
     } : {}),
     ...(deps.store.proposeAutomation && channel === 'text' && !options.trigger?.id.startsWith('automation:') ? {
       propose_automation: tool({
-        description: 'Preview one recurring task (daily, weekdays or weekly at a local time) for the user to approve. It does not schedule anything by itself.',
+        description: 'Show a preview card for one recurring task (daily, weekdays or weekly at a local time) with an Approve button. Nothing is scheduled until they approve it.',
         inputSchema: proposeAutomationInput,
         execute: (input) => proposeAutomation(context, input),
       }),
@@ -162,7 +163,9 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
         execute: (input) => showConnection(context, input),
       }),
     } : {}),
-    ...(deps.composio ? createAccountTools(deps.composio, sessionId, relevant, accounts) : {}),
+    ...(deps.composio ? createAccountTools(deps.composio, sessionId, relevant, accounts, (toolkit, items) => deps.store.appendEvent(sessionId, {
+      id: `read:${options.turnId}:${toolkit}`, at: (deps.now?.() ?? new Date()).toISOString(), type: 'account_read', toolkit, items,
+    })) : {}),
     ...(deps.resolveIdentity && latestUser ? {
       resolve_identity: tool({
         description: 'Check a directly stated first-person full name and company against a public Context.dev candidate. The server rejects weak or inferred claims.',
@@ -182,7 +185,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   ];
   const facts = Object.entries(state.facts).map(([key, fact]) => ({ key, value: fact.value, provenance: fact.provenance, evidence: fact.evidence, sourceUrl: fact.sourceUrl }));
   const instructions = buildSystemPrompt({
-    currentTask: latestUser?.text, facts, capabilities: labels, onboarding: state.onboarding, calls: callLines(state),
+    facts, capabilities: labels, onboarding: state.onboarding, calls: callLines(state), personality: personalityLine(personaSettings(state)),
     now: (deps.now?.() ?? new Date()).toISOString(), mode: channel === 'voice' ? 'voice_backend' : 'text',
   });
   const messages = modelMessages(state);

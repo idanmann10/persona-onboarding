@@ -140,4 +140,20 @@ describe('propose_automation', () => {
     expect(await proposeAutomation(context({ automations }, active).ctx, input)).toMatchObject({ status: 'one_active' });
     expect(await proposeAutomation(context().ctx, input)).toMatchObject({ status: 'unavailable' });
   });
+
+});
+
+describe('remember personality', () => {
+  it('stores a named preset as the preset and a description in their words', async () => {
+    const preset = context({ userWords: ['can you be more direct'] });
+    expect(await remember(preset.ctx, { key: 'personality', value: 'Direct' })).toMatchObject({ status: 'saved', value: 'direct', evidence: 'confirmed' });
+    const custom = context({ userWords: ['talk to me like a friend, less formal'] });
+    expect(await remember(custom.ctx, { key: 'personality', value: 'like a friend, less formal' })).toMatchObject({ status: 'saved', value: 'like a friend, less formal' });
+  });
+
+  it('never records a personality as declined', async () => {
+    const { ctx, appended } = context({ userWords: ['no'] });
+    expect(await remember(ctx, { key: 'personality', declined: true })).toMatchObject({ status: 'rejected' });
+    expect(appended).toEqual([]);
+  });
 });

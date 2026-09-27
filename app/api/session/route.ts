@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 
 export async function GET(request: Request): Promise<Response> {
   try {
-    return await createSessionHandler(createStore(getDatabase()))(request);
+    return await createSessionHandler(createStore(getDatabase()), process.env)(request);
   } catch (error) {
     console.error('Session initialization failed', error);
     return new Response('Session service unavailable', { status: 503 });

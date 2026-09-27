@@ -15,4 +15,8 @@ export type SessionEvent =
   | { id: string; at: string; type: 'voice_fragment'; text: string; final: boolean; callId?: string; speaker?: 'user' | 'assistant'; startMs?: number; endMs?: number }
   | { id: string; at: string; type: 'connection'; toolkit: Toolkit; phase: 'offered' | 'declined' | 'connected' | 'failed' | 'disconnected'; reason?: string }
   | { id: string; at: string; type: 'decision'; trigger: string; outcome: 'messaged' | 'silent' }
-  | { id: string; at: string; type: 'automation'; automationId: string; phase: 'proposed' | 'approved' | 'declined' | 'disabled' | 'ran' | 'failed'; title: string; schedule: string; instruction?: string; nextRunAt?: string; runId?: string };
+  | { id: string; at: string; type: 'automation'; automationId: string; phase: 'proposed' | 'approved' | 'declined' | 'disabled' | 'ran' | 'failed'; title: string; schedule: string; instruction?: string; nextRunAt?: string; runId?: string }
+  /** A read of a connected account during a turn or call; `items` is how much it found. */
+  | { id: string; at: string; type: 'account_read'; toolkit: Toolkit; items: number }
+  /** The user came back to the conversation after a gap. */
+  | { id: string; at: string; type: 'visit' };

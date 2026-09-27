@@ -60,7 +60,7 @@ describe('turn context', () => {
     const deps = { store: { appendEvent: async () => undefined, getActiveConnection: async () => undefined }, env: { OPENAI_API_KEY: 'k', OPENAI_TEXT_MODEL: 'gpt-6-luna' } };
     const text = await prepareTurn(deps, 's1', history, { turnId: 'm1' });
     expect(Object.keys(text.tools).sort()).toEqual(['note_decline', 'offer_call', 'remember']);
-    expect(text.instructions).toContain('understand-user/v3');
+    expect(text.instructions).toContain('understand-user/v4');
     expect(text.instructions).toContain('Call at 12:01 UTC');
     expect(text.allowSystemInMessages).toBe(false);
     const triggered = await prepareTurn(deps, 's1', history, { turnId: 'followup:call:live_1', trigger: { id: 'followup:call:live_1', instruction: 'The call ended.' } });
