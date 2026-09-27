@@ -10,3 +10,4 @@ test-results/
 .worktrees/
 *.tsbuildinfo
 *.log
+evals/results/

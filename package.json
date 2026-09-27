@@ -1,0 +1,33 @@
+{
+  "name": "persona-onboarding",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "start": "next start",
+    "build": "next build",
+    "db:migrate": "bun scripts/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "eval:text": "bun evals/run-text.ts",
+    "eval:app": "bun evals/run-app.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "4.0.78",
+    "@ai-sdk/react": "4.0.121",
+    "ai": "7.0.118",
+    "next": "16.2.10",
+    "postgres": "3.4.9",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.0",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  },
+  "packageManager": "bun@1.3.11"
+}
