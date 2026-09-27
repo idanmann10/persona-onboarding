@@ -40,7 +40,7 @@ Build status for the private preview branch (`feat/foundation`, draft PR #1). Th
 
 Commands run against a real Postgres 18 (embedded) at the head of this branch:
 - `bun run db:migrate`
-- `bun run test`: 31 files, 134 tests passing. These include 24 Postgres integration tests covering:
+- `bun run test`: 32 files, 148 tests passing. These include 27 Postgres integration tests covering:
   - follow-ups running once, silence, and retry after a failed run;
   - lost calls, voice tool gates, typing during a call, and declines;
   - per-network limits;
@@ -48,6 +48,8 @@ Commands run against a real Postgres 18 (embedded) at the head of this branch:
   - a due run executing once across two racing requests, run now, disable, the failure path, and the cron secret.
 - `bun run typecheck`
 - `bun run build`
+
+An independent read-only review of every change on the branch (server; call client and UI) found no cross-session access. It confirmed the GPT-Live session payload against the docs, and raised 25 correctness issues, all fixed with tests: stuck follow-up reservations, relevance context, a transcript fold that could drop a user's "yeah", spoofable per-network keys, callback revisits, lost-call dating, empty automation runs, ended-call events, close() races, typed-text limits, and others (see the two `fix:` commits).
 
 App-level replay (`bun run eval:app`, see [the eval rubric](../evals/rubric.md)) is built and its harness is tested with a scripted model. Those tests confirm the gates, follow-ups, fixture reads, and that each hard invariant catches its failure class.
 

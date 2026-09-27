@@ -83,7 +83,10 @@ The 48-case corpus and its permutations cover these and more. The spec's release
   8. A documentation update.
   9. Per-network limits.
   10. One approved recurring task.
-  11. This documentation update.
+  11. A documentation update.
+  12. Server fixes from an independent review.
+  13. Call client and UI fixes from that review.
+  14. This documentation update.
 - Local clone used by Claude: `C:\Users\idan mann\Desktop\persona-onboarding` (Windows). Codex's Mac worktree was `/Users/idanmann/Projects/persona-onboarding/.worktrees/foundation`.
 
 ## Implemented
@@ -115,7 +118,7 @@ See [implementation status](implementation-status.md) for the full list. In shor
 
 On Windows with an embedded PostgreSQL 18.4, at this branch's head:
 - `bun run db:migrate`
-- `bun run test`: 31 files, 134 tests. These include 24 Postgres integration tests and the replay harness tests run against a scripted model.
+- `bun run test`: 32 files, 148 tests. These include 27 Postgres integration tests and the replay harness tests run against a scripted model. An independent two-part review of the branch's changes found 25 issues, all fixed with tests.
 - `bun run typecheck` (ignore stale `.next/types` from a running dev server)
 - `bun run build`
 
