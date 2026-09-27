@@ -39,7 +39,7 @@ export type AvatarId = keyof typeof AVATARS;
 export const DEFAULT_AVATAR = 'default';
 export const DEFAULT_LOOK = {
   label: 'Classic',
-  description: 'a warm, friendly young person with short tousled dark hair, kind eyes and a relaxed smile, in a soft cream knit sweater',
+  description: 'a warm, friendly adult in their early thirties with short tousled dark hair, kind eyes and a relaxed, confident smile, in a soft cream knit sweater',
   stops: ['#e4e0d8', '#a39d92', '#34322f'],
 } as const;
 /** The retired gradient orbs, read as the closest portrait so older sessions keep a look. */
