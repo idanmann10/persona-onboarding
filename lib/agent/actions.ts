@@ -4,6 +4,7 @@ import type { SessionProjection } from '../domain/project';
 import type { AutomationStore } from '../domain/automation';
 import { describeSchedule, isValidSchedule } from '../domain/schedule';
 import { AVATARS, CUSTOM_PERSONALITY_LIMIT, DEFAULT_AVATAR, DEFAULT_PERSONALITY, PERSONALITIES, VOICES, avatarFrom, personalityFrom, type VoiceId } from '../domain/persona';
+import type { AvatarResult } from '../avatars/generate';
 
 export interface ActionStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -26,6 +27,11 @@ export interface ActionContext {
   connected: Partial<Record<Toolkit, boolean>>;
   /** Present when recurring tasks are available (Postgres-backed). */
   automations?: Pick<AutomationStore, 'proposeAutomation'>;
+  /** Present when a described look can be painted (an OpenAI key and Postgres). */
+  avatars?: {
+    generate(input: { name: string; description: string }): Promise<AvatarResult>;
+    save(sessionId: string, avatar: { id: string; prompt: string; mime: string; bytes: Uint8Array }): Promise<void>;
+  };
   now?: () => Date;
 }
 
@@ -39,7 +45,7 @@ export const rememberInput = z.object({
 });
 export const customizeInput = z.object({
   name: z.string().max(80).optional().describe('A new name for YOU, as the user gave it (1-40 letters, numbers, spaces, . \' -).'),
-  avatar: z.string().max(40).optional().describe(`Your look: ${Object.keys(AVATARS).join(', ')}, or a custom #rrggbb color.`),
+  avatar: z.string().max(300).optional().describe(`Your look: a default look (${Object.keys(AVATARS).join(', ')}), or the look they asked for in their words, e.g. "a fox in a denim jacket", which is painted as your portrait in a few seconds.`),
   personality: z.string().max(300).optional().describe(`How to come across: ${Object.keys(PERSONALITIES).join(', ')} when one fits, otherwise their own words (up to ${CUSTOM_PERSONALITY_LIMIT} characters).`),
   voice: z.enum(Object.keys(VOICES) as [VoiceId, ...VoiceId[]]).optional().describe(`Call voice: ${Object.entries(VOICES).map(([id, voice]) => `${id} (${voice.label.toLowerCase()}, ${voice.hint.toLowerCase()})`).join(', ')}.`),
 });
@@ -103,6 +109,40 @@ export async function remember(ctx: ActionContext, input: z.infer<typeof remembe
 }
 
 const ASSISTANT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} .'-]*$/u;
+const AVATAR_DESCRIPTION_LIMIT = 200;
+const paintedThisTurn = new WeakMap<ActionContext, boolean>();
+
+/** A stable portrait id per session and turn, so a retried turn reuses its painting instead of paying for another. */
+async function portraitId(sessionId: string, turnId: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`avatar:${sessionId}:${turnId}`)));
+  digest[6] = (digest[6] & 0x0f) | 0x40;
+  digest[8] = (digest[8] & 0x3f) | 0x80;
+  const hex = [...digest.slice(0, 16)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Paint a described look and store it. Never throws: a failure comes back with a reason the model can relay. */
+async function paintAvatar(ctx: ActionContext, description: string, newName?: string): Promise<{ ok: true; id: string } | { ok: false; reason: string }> {
+  if (!ctx.avatars) return { ok: false, reason: 'Painting a new look is not available here.' };
+  if (paintedThisTurn.get(ctx)) return { ok: false, reason: 'One new look per message; ask again for another.' };
+  paintedThisTurn.set(ctx, true);
+  try {
+    const id = await portraitId(ctx.sessionId, ctx.turnId);
+    if (ctx.state.facts.avatar?.value === `img:${id}`) return { ok: true, id };
+    const saved = ctx.state.onboarding.assistantName;
+    const name = newName ?? (saved.status === 'confirmed' || saved.status === 'tentative' ? saved.value : undefined);
+    const image = await ctx.avatars.generate({ name: name || 'Persona', description });
+    if (!image.ok) {
+      console.error('Avatar painting failed', { error: image.error, status: image.status });
+      return { ok: false, reason: image.error === 'refused' ? 'The image safety filter refused that look.' : image.error === 'timeout' ? 'Painting took too long.' : 'The painting service had a problem.' };
+    }
+    await ctx.avatars.save(ctx.sessionId, { id, prompt: image.prompt, mime: image.mime, bytes: image.bytes });
+    return { ok: true, id };
+  } catch (error) {
+    console.error('Avatar painting failed', error);
+    return { ok: false, reason: 'The painting service had a problem.' };
+  }
+}
 const UNSAFE = /[\u0000-\u001f\u007f]|https?:\/\/|www\.|\b[\w-]+\.(?:com|net|org|io|ai|co|app|dev|me|ly)\b/i;
 type CustomizeKey = 'assistant_name' | 'avatar' | 'personality' | 'voice';
 const CUSTOMIZE_FIELDS = { name: 'assistant_name', avatar: 'avatar', personality: 'personality', voice: 'voice' } as const;
@@ -120,10 +160,15 @@ export async function customize(ctx: ActionContext, input: z.infer<typeof custom
     wanted.assistant_name = { value: name, words: [name] };
   }
   const avatarText = clean(input.avatar);
+  let paint: string | undefined;
   if (avatarText !== undefined) {
     const avatar = avatarFrom(avatarText);
-    if (!avatar) return { status: 'rejected' as const, reason: `Pick a look from ${Object.keys(AVATARS).join(', ')}, or a #rrggbb color.` };
-    wanted.avatar = { value: avatar, words: avatar.startsWith('#') ? [avatar] : [avatar, AVATARS[avatar as keyof typeof AVATARS].label] };
+    if (avatar) wanted.avatar = { value: avatar, words: avatar.startsWith('#') || avatar === DEFAULT_AVATAR ? [avatar] : [avatar, AVATARS[avatar as keyof typeof AVATARS].label] };
+    else if (avatarText.length < 3 || avatarText.length > AVATAR_DESCRIPTION_LIMIT || avatarText.startsWith('#') || /^img:/i.test(avatarText) || UNSAFE.test(avatarText)) {
+      return { status: 'rejected' as const, reason: `Describe the look in ${AVATAR_DESCRIPTION_LIMIT} characters or fewer, without links, or pick ${Object.keys(AVATARS).join(', ')}.` };
+    } else if (!ctx.avatars) {
+      return { status: 'rejected' as const, reason: `A new look can't be painted here. Pick one of ${Object.keys(AVATARS).join(', ')}${ctx.channel === 'voice' ? ', or offer to paint it in the chat after the call' : ''}.` };
+    } else paint = avatarText;
   }
   const personalityText = clean(input.personality);
   if (personalityText !== undefined) {
@@ -135,7 +180,15 @@ export async function customize(ctx: ActionContext, input: z.infer<typeof custom
     wanted.personality = preset.id === 'custom' ? { value: personalityText, words: [personalityText] } : { value: preset.id, words: [preset.id, PERSONALITIES[preset.id].label] };
   }
   if (input.voice !== undefined) wanted.voice = { value: input.voice, words: [input.voice, VOICES[input.voice].label] };
-  if (!Object.keys(wanted).length) return { status: 'rejected' as const, reason: 'Say what to change: name, avatar, personality or voice.' };
+  if (!Object.keys(wanted).length && !paint) return { status: 'rejected' as const, reason: 'Say what to change: name, avatar, personality or voice.' };
+
+  // Everything else checked out; now paint the described look. A failed painting still saves the other changes.
+  let paintFailure: string | undefined;
+  if (paint) {
+    const painted = await paintAvatar(ctx, paint, wanted.assistant_name?.value);
+    if (painted.ok) wanted.avatar = { value: `img:${painted.id}`, words: [paint] };
+    else paintFailure = painted.reason;
+  }
 
   const sourceEventId = `customize:${ctx.turnId}`;
   const changed: Partial<Record<keyof typeof CUSTOMIZE_FIELDS, string>> = {};
@@ -151,12 +204,16 @@ export async function customize(ctx: ActionContext, input: z.infer<typeof custom
     const evidence = said || key !== 'assistant_name' ? 'confirmed' as const : 'tentative' as const;
     const provenance = said ? 'user_said' as const : 'assistant_inferred' as const;
     await ctx.store.appendEvent(ctx.sessionId, { id: `customize:${key}:${ctx.turnId}`, at: timestamp(ctx), type: 'fact', key, value: next.value, evidence, provenance, sourceEventId });
-    changed[field] = next.value;
+    // A painted look is reported in the words it was painted from; its image id is only for the app.
+    changed[field] = key === 'avatar' && paint && next.value.startsWith('img:') ? paint : next.value;
   }
-  if (!Object.keys(changed).length) return { status: 'unchanged' as const, note: 'That is already how it is set.' };
+  if (!Object.keys(changed).length) {
+    if (paintFailure) return { status: 'failed' as const, reason: paintFailure, note: `Say you couldn't paint that look this time, in a few words. Offer to try again or to pick one of ${Object.keys(AVATARS).join(', ')}.` };
+    return { status: 'unchanged' as const, note: 'That is already how it is set.' };
+  }
   return {
-    status: 'saved' as const, changed,
-    note: `The app shows the change in the chat. Switch to it right away.${changed.voice && ctx.channel === 'voice' ? ' The new voice applies from the next call.' : ''}`,
+    status: 'saved' as const, changed, ...(paintFailure ? { failed: { avatar: paintFailure } } : {}),
+    note: `The app shows the change in the chat. Switch to it right away.${changed.voice && ctx.channel === 'voice' ? ' The new voice applies from the next call.' : ''}${paintFailure ? " The new look couldn't be painted this time; say so in a few words." : ''}`,
   };
 }
 

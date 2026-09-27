@@ -151,6 +151,16 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         WHERE session_id = ${sessionId} AND status IN ('pending', 'active') ORDER BY created_at, attempt_id`;
       return rows.map((row) => row.connected_account_id as string);
     },
+    /** A painted portrait of the assistant (see lib/avatars). The same id twice keeps the first. */
+    saveAvatar: async (sessionId: string, avatar: { id: string; prompt: string; mime: string; bytes: Uint8Array }): Promise<void> => {
+      await sql`INSERT INTO persona_avatars (id, session_id, prompt, mime, bytes)
+        VALUES (${avatar.id}, ${sessionId}, ${avatar.prompt}, ${avatar.mime}, ${Buffer.from(avatar.bytes)})
+        ON CONFLICT (id) DO NOTHING`;
+    },
+    getAvatar: async (id: string): Promise<{ mime: string; bytes: Uint8Array } | undefined> => {
+      const rows = await sql`SELECT mime, bytes FROM persona_avatars WHERE id = ${id} LIMIT 1`;
+      return rows[0] ? { mime: rows[0].mime as string, bytes: new Uint8Array(rows[0].bytes as Uint8Array) } : undefined;
+    },
     deleteSession: async (sessionId: string): Promise<void> => {
       await sql`DELETE FROM persona_sessions WHERE id = ${sessionId}`;
     },

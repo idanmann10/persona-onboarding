@@ -157,3 +157,13 @@ CREATE TABLE IF NOT EXISTS persona_users (
   main_session_id UUID NOT NULL UNIQUE REFERENCES persona_sessions(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS persona_avatars (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  prompt TEXT NOT NULL,
+  mime TEXT NOT NULL CHECK (mime IN ('image/webp', 'image/png', 'image/jpeg')),
+  bytes BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS persona_avatars_session ON persona_avatars (session_id);

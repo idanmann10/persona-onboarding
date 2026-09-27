@@ -393,14 +393,14 @@ describe('Postgres session store', () => {
     expect(JSON.parse((await search.json()).output)).toMatchObject({ status: 'not_connected' });
     const card = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_4', name: 'show_connection', arguments: JSON.stringify({ toolkit: 'gmail', reason: 'See who is waiting on you' }) }));
     expect(await card.json()).toMatchObject({ ui: { type: 'connection_offer', toolkit: 'gmail' } });
-    const look = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_5', name: 'customize', arguments: JSON.stringify({ avatar: 'lagoon', voice: 'willow' }) }));
+    const look = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_5', name: 'customize', arguments: JSON.stringify({ avatar: 'sage', voice: 'willow' }) }));
     const looked = await look.json();
     expect(looked).toMatchObject({ ui: { type: 'customize' } });
-    expect(JSON.parse(looked.output)).toMatchObject({ status: 'saved', changed: { avatar: 'lagoon', voice: 'willow' }, note: expect.stringContaining('next call') });
+    expect(JSON.parse(looked.output)).toMatchObject({ status: 'saved', changed: { avatar: 'sage', voice: 'willow' }, note: expect.stringContaining('next call') });
     const badLook = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_6', name: 'customize', arguments: JSON.stringify({ voice: 'robot' }) }));
     expect(JSON.parse((await badLook.json()).output)).toMatchObject({ status: 'invalid_arguments' });
     const state = projectSession(await store.readEvents(sessionId));
-    expect(state.facts.avatar).toMatchObject({ value: 'lagoon', sourceEventId: 'customize:live_tool:call_5' });
+    expect(state.facts.avatar).toMatchObject({ value: 'sage', sourceEventId: 'customize:live_tool:call_5' });
     expect(state.onboarding.preferredName).toEqual({ status: 'confirmed', value: 'Dana' });
     expect(state.onboarding.gmail).toBe('offered');
   });
@@ -580,7 +580,7 @@ describe('Postgres session store', () => {
     await sql`UPDATE persona_events SET payload = jsonb_set(payload, '{at}', to_jsonb((now() - interval '2 hours')::text)) WHERE session_id = ${sessionId}`;
     const handler = createSessionHandler(store, { OPENAI_VOICE: 'marin' });
     const load = async () => (await handler(new Request('http://localhost/api/session', { headers: { cookie: `persona_session=${sessionId}` } }))).json();
-    expect((await load()).settings).toEqual({ personality: { id: 'warm', label: 'Fun' }, voice: 'marin', avatar: 'pearl' });
+    expect((await load()).settings).toEqual({ personality: { id: 'warm', label: 'Fun' }, voice: 'marin', avatar: 'default', avatarUrl: '/avatars/default.webp' });
     await load();
     expect((await store.readEvents(sessionId)).filter((event) => event.type === 'visit')).toHaveLength(1);
   });

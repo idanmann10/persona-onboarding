@@ -9,6 +9,7 @@ import type { AutomationStore } from '../domain/automation';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
 import { personalityLine, personaSettings } from '../domain/persona';
 import { describeTurn, type TraceSink, type TurnTrace } from '../observability/trace';
+import { generateAvatar } from '../avatars/generate';
 
 type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
 
@@ -17,7 +18,7 @@ export interface TurnStore extends ActionStore {
 }
 
 export interface TurnDependencies {
-  store: TurnStore & Partial<Pick<AutomationStore, 'proposeAutomation'>>;
+  store: TurnStore & Partial<Pick<AutomationStore, 'proposeAutomation'>> & { saveAvatar?: NonNullable<ActionContext['avatars']>['save'] };
   env: Record<string, string | undefined>;
   composio?: AccountReadClient;
   resolveIdentity?: (sessionId: string, userEvent: MessageEvent, clue: { first: string; last: string; company: string }) => Promise<unknown>;
@@ -132,6 +133,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
     store: deps.store, sessionId, channel, turnId: options.turnId, state, userWords: words,
     capabilities: { voice: capabilities.voice, gmail: capabilities.gmail, calendar: capabilities.calendar }, connected, now: deps.now,
     ...(deps.store.proposeAutomation ? { automations: { proposeAutomation: deps.store.proposeAutomation } } : {}),
+    ...(deps.store.saveAvatar && deps.env.OPENAI_API_KEY ? { avatars: { generate: (input) => generateAvatar(input, { env: deps.env }), save: deps.store.saveAvatar } } : {}),
   };
   const relevant = relevantToolkits({ userTexts: words, lastAssistant: answeredQuestion(state), include: options.trigger?.include });
   const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
