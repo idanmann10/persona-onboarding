@@ -2,11 +2,70 @@
 
 Last updated: 2026-09-27. This is a continuation brief for the **private** `idanmann10/persona-onboarding` repository, not a release claim.
 
+## Exact goal
+
+> Build Persona's adaptive chat and browser voice onboarding in a new private GitHub repository, including confident Context.dev user research, need-led Gmail/Calendar paths, durable state and knowledge graph, and pre-release evaluations; keep the repository private until Idan approves making it public.
+
+This goal is currently **paused for handoff**. Continue only when Idan asks Claude to take it over. The repository and draft PR already exist; there is no need to create another repository.
+
 ## What Idan wants
 
 Build Persona as a ChatGPT-like chat with a Call button for a browser voice conversation. Text and voice share durable user state, a small knowledge graph, provenance labels, corrections, and recovery from interruptions. The agent should understand the user's present need and use psychology to be helpful without a rigid onboarding script or engagement traps. Gmail and Calendar are optional paths when useful. After a *confident* identity match, Persona may automatically research relevant public professional context through Context.dev; an uncertain match must not trigger enrichment. Idan asked to design scenarios and evals before release, to start in a new private GitHub repo, and to make it public only at the end with his approval.
 
 The [architecture review](superpowers/specs/2026-09-27-persona-architecture-review.md) is the product contract. It was written before implementation, so its proposal language is historical. The [roadmap](roadmap.md) and [implementation status](implementation-status.md) show the current build.
+
+## Architecture in one view
+
+```text
+Browser chat UI ───────────────► Next.js session/chat API ──────► Postgres
+       │                               │                            │
+       └── WebRTC audio ──► GPT-Live   └── backend agent           ├─ sessions
+                    │                  │                            ├─ append-only events
+                    └── voice events ──┘                            ├─ graph facts + evidence
+                                       │                            ├─ connection attempts
+                                       ├─ identity gate ─► Context.dev
+                                       ├─ relevant read ─► Composio Gmail/Calendar
+                                       └─ policy boundary ─► future approved actions
+```
+
+The browser and backend share one session. Postgres is the durable source for message events, call lifecycle, identity clues, graph facts, connection state, and action evidence. The graph is a small, task-relevant projection with source labels; it is not a separate graph database. A model may choose the next conversational move, while server code owns identity promotion, authorization, account binding, idempotency, and whether an action truly completed. Full architecture, product decisions, scenario matrix, and proposed release thresholds are in [the architecture review](superpowers/specs/2026-09-27-persona-architecture-review.md).
+
+### Repository skeleton
+
+| Path | Responsibility |
+| --- | --- |
+| `app/page.tsx`, `app/globals.css` | Responsive chat, call, connection, and recovery UI. |
+| `app/api/chat`, `lib/agent/*`, `lib/http/chat.ts` | Streaming text turn, versioned prompt, tool selection, persistence. |
+| `app/api/voice/*`, `lib/voice/*`, `lib/http/voice*.ts` | WebRTC setup, browser call events, transcript fragments, call lease and recovery. |
+| `lib/domain/*` | Event, knowledge, permission, capability, and projected-state contracts. |
+| `lib/db/schema.sql`, `lib/db/store.ts` | Postgres schema and durable event/graph/connection persistence. |
+| `lib/research/*` | Direct identity claim parsing, Context.dev candidate gate, narrow sourced Answers research. |
+| `lib/integrations/*`, `app/api/connections/*` | Composio OAuth, bounded Gmail/Calendar reads, connection and deletion lifecycle. |
+| `evals/cases/base.json`, `evals/rubric.md`, `evals/run-text.ts` | 48 scenario seeds, scoring rules, and unscored prompt trace runner. |
+| `tests/*`, `.github/workflows/ci.yml` | Unit/integration tests and CI. |
+| `docs/*` | Architecture, implementation status, roadmap, and this handoff. |
+
+### Key state and permission rules
+
+- Store `user_said`, `tool_observed`, `assistant_inferred`, and `user_confirmed` separately. Mark facts tentative, confirmed, declined, or superseded and preserve correction history. An inferred preference never grants tool permission.
+- A name or phone number alone does not prove identity. The implemented research trigger requires a direct first-person full name plus company claim and a corroborated high-confidence candidate. If uncertain, stop enrichment. Research is limited to relevant public professional context, with URLs and tentative labels.
+- Browser calls require the user's gesture and microphone permission. A model suggestion does not start a call. Voice/text share context, but a dropped call does not imply that speech or an action completed.
+- Gmail and Calendar are optional and currently read-only. A connected account is scoped to the owning session and toolkit. Never expose a send or write operation without a separate preview and explicit confirmation contract.
+- A tool result and durable event are needed before Persona says it created a draft, event, connection, or automation. Duplicate requests, tabs, callbacks, and scheduler attempts must not produce duplicate actions.
+
+### Cross-channel cases to preserve
+
+| Scenario | Expected behavior |
+| --- | --- |
+| Text → user taps Call → hangs up mid-sentence | Save transcript fragments and call end; resume in text without inventing the unfinished answer. |
+| Agent offers Call → user says yes → user answers | Obtain a separate browser click/microphone permission; continue the same conversation and finish the task. |
+| User types during a call | Add the text to the same ordered history; deliver as voice context at a safe turn or visibly queue it. |
+| Network drop or reload | Keep state and open work; offer retry in text; never reopen the microphone automatically. |
+| Identity collision or correction | Leave identity unresolved or invalidate stale public facts; do not keep researching the wrong person. |
+| Wrong Google account/callback | Reject the mismatch without binding it to the session. |
+| Natural goodbye | Close the call and persist state without manufacturing a needless follow-up. |
+
+The 48-case corpus and its permutations cover these and more. The spec's release thresholds are proposals; verify against actual provider traces and human voice listening before treating them as met.
 
 ## Git state and review
 
