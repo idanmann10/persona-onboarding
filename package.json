@@ -5,13 +5,14 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "db:migrate": "bun scripts/migrate.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.78",
     "@ai-sdk/react": "4.0.121",
-    "ai": "7.0.15",
+    "ai": "7.0.118",
     "next": "16.2.10",
     "postgres": "3.4.9",
     "react": "19.2.7",
