@@ -1,6 +1,7 @@
+import type { CSSProperties } from 'react';
 import type { CallEndReason } from '@/lib/domain/events';
 import type { TimelineItem } from '@/lib/domain/project';
-import { PERSONALITIES, VOICES, isPersonalityId, isVoiceId } from '@/lib/domain/persona';
+import { PERSONALITIES, VOICES, avatarPalette, isPersonalityId, isVoiceId } from '@/lib/domain/persona';
 
 export type Toolkit = 'gmail' | 'calendar';
 
@@ -25,14 +26,38 @@ export function duration(startedAt?: string, endedAt?: string): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-export function Bubble({ speaker, text, pending, label }: { speaker: 'user' | 'assistant'; text: string; pending?: boolean; label?: string }) {
+const isAssistantMessage = (item?: TimelineItem) => item?.kind === 'message' && item.speaker === 'assistant';
+
+/** Indexes of assistant messages that end a group: the small orb sits next to each one. */
+export function assistantGroupEnds(timeline: TimelineItem[], pendingReply = false): Set<number> {
+  const ends = new Set<number>();
+  timeline.forEach((item, index) => {
+    const last = index === timeline.length - 1;
+    if (isAssistantMessage(item) && !(last ? pendingReply : isAssistantMessage(timeline[index + 1]))) ends.add(index);
+  });
+  return ends;
+}
+
+/** The orb's gradient stops as CSS custom properties, for the header orb and the thread's small orbs. */
+export function orbStyle(avatar?: string): CSSProperties {
+  const [light, mid, deep] = avatarPalette(avatar).stops;
+  return { '--orb-1': light, '--orb-2': mid, '--orb-3': deep } as CSSProperties;
+}
+
+/** Assistant rows keep a slot for the small orb, shown next to the last bubble of a group when `orb` is set. */
+function OrbSlot({ orb }: { orb?: CSSProperties }) {
+  return orb ? <span className="orb tiny" style={orb} aria-hidden="true" /> : <span className="orb-slot" aria-hidden="true" />;
+}
+
+export function Bubble({ speaker, text, pending, label, orb }: { speaker: 'user' | 'assistant'; text: string; pending?: boolean; label?: string; orb?: CSSProperties }) {
   const parts = speaker === 'assistant' ? text.split(/\n{2,}/).filter((part) => part.trim()) : [text];
-  if (!parts.length) return <div className="row assistant"><div className="bubble typing" aria-label="Persona is typing"><span /><span /><span /></div></div>;
+  if (!parts.length) return <div className="row assistant"><OrbSlot orb={orb} /><div className="bubble typing" aria-label="Persona is typing"><span /><span /><span /></div></div>;
   return (
     <>
       {label ? <p className="bubble-label">{label}</p> : null}
       {parts.map((part, index) => (
         <div className={`row ${speaker}`} key={index}>
+          {speaker === 'assistant' ? <OrbSlot orb={index === parts.length - 1 ? orb : undefined} /> : null}
           <div className={`bubble${pending ? ' pending' : ''}`}>{part}</div>
         </div>
       ))}
@@ -45,7 +70,10 @@ interface ItemProps {
   assistantName: string;
   liveCallId?: string;
   busy: boolean;
-  connectable: Record<Toolkit, boolean>;
+  /** Set on the last assistant message of a group: the small orb goes next to it. */
+  orb?: CSSProperties;
+  /** The assistant's look, for cards that show its orb. */
+  look?: CSSProperties;
   onAnswer(): void;
   onDeclineCall(): void;
   onConnect(toolkit: Toolkit): void;
@@ -55,6 +83,7 @@ interface ItemProps {
 
 function settingsLine(key: string, value: string): string {
   if (key === 'assistant_name') return `Renamed to ${value}`;
+  if (key === 'avatar') return `New look: ${avatarPalette(value).label}`;
   if (key === 'personality') return `Personality: ${isPersonalityId(value) ? PERSONALITIES[value].label : 'your own description'}`;
   if (key === 'voice') return `Call voice: ${isVoiceId(value) ? VOICES[value].label : value}`;
   return 'Settings updated';
@@ -66,10 +95,10 @@ function nextRunLabel(iso?: string): string {
   return `Next: ${date.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
 }
 
-export function TimelineEntry({ item, assistantName, liveCallId, busy, connectable, onAnswer, onDeclineCall, onConnect, onDeclineConnection, onAutomation }: ItemProps) {
+export function TimelineEntry({ item, assistantName, liveCallId, busy, orb, look, onAnswer, onDeclineCall, onConnect, onDeclineConnection, onAutomation }: ItemProps) {
   switch (item.kind) {
     case 'message':
-      return <Bubble speaker={item.speaker} text={item.text} label={item.origin === 'automation' ? 'Recurring task' : undefined} />;
+      return <Bubble speaker={item.speaker} text={item.text} label={item.origin === 'automation' ? 'Recurring task' : undefined} orb={orb} />;
     case 'automation': {
       if (item.status === 'declined') return <p className="system-line">Skipped “{item.title}”</p>;
       if (item.status === 'disabled') return <p className="system-line">Turned off “{item.title}”</p>;
@@ -127,7 +156,7 @@ export function TimelineEntry({ item, assistantName, liveCallId, busy, connectab
       return (
         <div className="event-card offer-card">
           <div className="event-head">
-            <span className="orb small" aria-hidden="true" />
+            <span className="orb small" style={look} aria-hidden="true" />
             <span><strong>{assistantName} is ready to call</strong><small>A short call in your browser. Answering asks for your microphone.</small></span>
           </div>
           <div className="event-actions">
@@ -144,10 +173,10 @@ export function TimelineEntry({ item, assistantName, liveCallId, busy, connectab
         <div className="event-card offer-card">
           <div className="event-head">
             <span className="event-icon" aria-hidden="true">{item.toolkit === 'gmail' ? '✉' : '▦'}</span>
-            <span><strong>Connect {name}</strong><small>{item.reason || `So ${assistantName} can help with this.`} Read-only, and you can disconnect anytime.</small></span>
+            <span><strong>Connect {name}</strong><small>{item.reason || `So ${assistantName} can help with this.`} Read-only. Start over disconnects it.</small></span>
           </div>
           <div className="event-actions">
-            <button type="button" className="primary" onClick={() => onConnect(item.toolkit)} disabled={busy || !connectable[item.toolkit]}>{!connectable[item.toolkit] ? 'Setup needed' : item.status === 'failed' ? 'Try again' : `Connect ${name}`}</button>
+            <button type="button" className="primary" onClick={() => onConnect(item.toolkit)} disabled={busy}>{item.status === 'failed' ? 'Try again' : `Connect ${name}`}</button>
             <button type="button" className="quiet" onClick={() => onDeclineConnection(item.toolkit)} disabled={busy}>Not now</button>
           </div>
         </div>

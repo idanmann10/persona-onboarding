@@ -3,7 +3,7 @@ import type { SessionEvent, Toolkit } from '../domain/events';
 import type { SessionProjection } from '../domain/project';
 import type { AutomationStore } from '../domain/automation';
 import { describeSchedule, isValidSchedule } from '../domain/schedule';
-import { CUSTOM_PERSONALITY_LIMIT, personalityFrom } from '../domain/persona';
+import { AVATARS, CUSTOM_PERSONALITY_LIMIT, DEFAULT_AVATAR, DEFAULT_PERSONALITY, PERSONALITIES, VOICES, avatarFrom, personalityFrom, type VoiceId } from '../domain/persona';
 
 export interface ActionStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -29,13 +29,19 @@ export interface ActionContext {
   now?: () => Date;
 }
 
-export const REMEMBER_KEYS = ['assistant_name', 'preferred_name', 'current_need', 'personality'] as const;
+export const REMEMBER_KEYS = ['preferred_name', 'current_need'] as const;
 export type RememberKey = (typeof REMEMBER_KEYS)[number];
 
 export const rememberInput = z.object({
-  key: z.enum(REMEMBER_KEYS).describe("assistant_name: the name the user gives YOU. preferred_name: the user's own name, only when they say it is theirs. current_need: the task or problem they want handled, in their words. personality: how they want you to come across; use warm, direct, playful or polished when one fits, otherwise their words."),
+  key: z.enum(REMEMBER_KEYS).describe("preferred_name: the user's own name, only when they say it is theirs. current_need: the task or problem they want handled, in their words."),
   value: z.string().max(300).optional().describe('The value, as the user said it. Omit when declined is true.'),
   declined: z.boolean().optional().describe('True only when they refuse to share this exact thing. Saying no to a call or an account is note_decline, not this.'),
+});
+export const customizeInput = z.object({
+  name: z.string().max(80).optional().describe('A new name for YOU, as the user gave it (1-40 letters, numbers, spaces, . \' -).'),
+  avatar: z.string().max(40).optional().describe(`Your look: ${Object.keys(AVATARS).join(', ')}, or a custom #rrggbb color.`),
+  personality: z.string().max(300).optional().describe(`How to come across: ${Object.keys(PERSONALITIES).join(', ')} when one fits, otherwise their own words (up to ${CUSTOM_PERSONALITY_LIMIT} characters).`),
+  voice: z.enum(Object.keys(VOICES) as [VoiceId, ...VoiceId[]]).optional().describe(`Call voice: ${Object.entries(VOICES).map(([id, voice]) => `${id} (${voice.label.toLowerCase()}, ${voice.hint.toLowerCase()})`).join(', ')}.`),
 });
 export const offerCallInput = z.object({ reason: z.string().max(200).optional().describe('One line on why a call helps now.') });
 export const noteDeclineInput = z.object({ what: z.enum(['call', 'gmail', 'calendar']).describe('What the user said no to.') });
@@ -73,15 +79,12 @@ const timestamp = (ctx: ActionContext) => (ctx.now?.() ?? new Date()).toISOStrin
 
 export async function remember(ctx: ActionContext, input: z.infer<typeof rememberInput>) {
   const id = `fact:${input.key}:${ctx.turnId}`;
-  if (input.declined && input.key === 'personality') return { status: 'rejected' as const, reason: 'A personality cannot be declined; keep the current one.' };
   if (input.declined) {
     await ctx.store.appendEvent(ctx.sessionId, { id, at: timestamp(ctx), type: 'fact', key: input.key, value: 'declined', evidence: 'declined', provenance: 'user_said', sourceEventId: ctx.turnId });
     return { status: 'saved' as const, key: input.key, evidence: 'declined' as const };
   }
-  const raw = input.value?.replace(/\s+/g, ' ').trim() ?? '';
-  // A personality that names a preset is stored as the preset; anything else is kept in their words.
-  const value = input.key === 'personality' && raw ? (personalityFrom(raw).id === 'custom' ? raw : personalityFrom(raw).id) : raw;
-  const limit = input.key === 'current_need' ? 300 : input.key === 'personality' ? CUSTOM_PERSONALITY_LIMIT : 60;
+  const value = input.value?.replace(/\s+/g, ' ').trim() ?? '';
+  const limit = input.key === 'current_need' ? 300 : 60;
   if (!value || value.length > limit || /[\u0000-\u001f]|https?:\/\//i.test(value)) {
     return { status: 'rejected' as const, reason: `Provide a short ${input.key === 'current_need' ? 'description' : 'name'} without links.` };
   }
@@ -97,6 +100,64 @@ export async function remember(ctx: ActionContext, input: z.infer<typeof remembe
   const provenance = said ? 'user_said' as const : 'assistant_inferred' as const;
   await ctx.store.appendEvent(ctx.sessionId, { id, at: timestamp(ctx), type: 'fact', key: input.key, value, evidence, provenance, sourceEventId: ctx.turnId });
   return { status: 'saved' as const, key: input.key, value, evidence, provenance };
+}
+
+const ASSISTANT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} .'-]*$/u;
+const UNSAFE = /[\u0000-\u001f\u007f]|https?:\/\/|www\.|\b[\w-]+\.(?:com|net|org|io|ai|co|app|dev|me|ly)\b/i;
+type CustomizeKey = 'assistant_name' | 'avatar' | 'personality' | 'voice';
+const CUSTOMIZE_FIELDS = { name: 'assistant_name', avatar: 'avatar', personality: 'personality', voice: 'voice' } as const;
+
+/**
+ * Change the assistant's own name, look, personality or call voice when the user asks. Every field is
+ * checked before anything is saved; each change is a fact the next reply, the next call and the thread use.
+ */
+export async function customize(ctx: ActionContext, input: z.infer<typeof customizeInput>) {
+  const clean = (value?: string) => value?.replace(/\s+/g, ' ').trim();
+  const wanted: Partial<Record<CustomizeKey, { value: string; words: string[] }>> = {};
+  const name = clean(input.name);
+  if (name !== undefined) {
+    if (!name || name.length > 40 || !ASSISTANT_NAME.test(name)) return { status: 'rejected' as const, reason: "Use a name of 1 to 40 letters or numbers (spaces, . ' and - are fine)." };
+    wanted.assistant_name = { value: name, words: [name] };
+  }
+  const avatarText = clean(input.avatar);
+  if (avatarText !== undefined) {
+    const avatar = avatarFrom(avatarText);
+    if (!avatar) return { status: 'rejected' as const, reason: `Pick a look from ${Object.keys(AVATARS).join(', ')}, or a #rrggbb color.` };
+    wanted.avatar = { value: avatar, words: avatar.startsWith('#') ? [avatar] : [avatar, AVATARS[avatar as keyof typeof AVATARS].label] };
+  }
+  const personalityText = clean(input.personality);
+  if (personalityText !== undefined) {
+    const preset = personalityFrom(personalityText);
+    if (preset.id === 'custom' && (personalityText.length < 3 || personalityText.length > CUSTOM_PERSONALITY_LIMIT || UNSAFE.test(personalityText))) {
+      return { status: 'rejected' as const, reason: `Describe the personality in ${CUSTOM_PERSONALITY_LIMIT} characters or fewer, without links, or pick ${Object.keys(PERSONALITIES).join(', ')}.` };
+    }
+    // A preset is stored by id; anything else is kept in their words and quoted as a style, never as rules.
+    wanted.personality = preset.id === 'custom' ? { value: personalityText, words: [personalityText] } : { value: preset.id, words: [preset.id, PERSONALITIES[preset.id].label] };
+  }
+  if (input.voice !== undefined) wanted.voice = { value: input.voice, words: [input.voice, VOICES[input.voice].label] };
+  if (!Object.keys(wanted).length) return { status: 'rejected' as const, reason: 'Say what to change: name, avatar, personality or voice.' };
+
+  const sourceEventId = `customize:${ctx.turnId}`;
+  const changed: Partial<Record<keyof typeof CUSTOMIZE_FIELDS, string>> = {};
+  for (const [field, key] of Object.entries(CUSTOMIZE_FIELDS) as Array<[keyof typeof CUSTOMIZE_FIELDS, CustomizeKey]>) {
+    const next = wanted[key];
+    if (!next) continue;
+    const said = next.words.some((word) => saidByUser(word, ctx.userWords));
+    const existing = ctx.state.facts[key];
+    const current = existing?.value ?? (key === 'avatar' ? DEFAULT_AVATAR : key === 'personality' ? DEFAULT_PERSONALITY : undefined);
+    const same = current === next.value;
+    // A name the user said can upgrade the assistant's own tentative pick; otherwise an equal value is no change.
+    if (same && !(key === 'assistant_name' && said && existing?.evidence !== 'confirmed')) continue;
+    const evidence = said || key !== 'assistant_name' ? 'confirmed' as const : 'tentative' as const;
+    const provenance = said ? 'user_said' as const : 'assistant_inferred' as const;
+    await ctx.store.appendEvent(ctx.sessionId, { id: `customize:${key}:${ctx.turnId}`, at: timestamp(ctx), type: 'fact', key, value: next.value, evidence, provenance, sourceEventId });
+    changed[field] = next.value;
+  }
+  if (!Object.keys(changed).length) return { status: 'unchanged' as const, note: 'That is already how it is set.' };
+  return {
+    status: 'saved' as const, changed,
+    note: `The app shows the change in the chat. Switch to it right away.${changed.voice && ctx.channel === 'voice' ? ' The new voice applies from the next call.' : ''}`,
+  };
 }
 
 export async function offerCall(ctx: ActionContext) {
@@ -119,7 +180,7 @@ export async function noteDecline(ctx: ActionContext, input: z.infer<typeof note
     if (ctx.state.onboarding.call === 'declined') return { status: 'unchanged' as const };
     await ctx.store.appendEvent(ctx.sessionId, { id: `call-decline:${ctx.turnId}`, at: timestamp(ctx), type: 'call', phase: 'declined' });
   } else {
-    if (ctx.connected[input.what]) return { status: 'already_connected' as const, note: 'It is connected; they can disconnect it from the menu.' };
+    if (ctx.connected[input.what]) return { status: 'already_connected' as const, note: 'It is connected; Start over disconnects it.' };
     if (ctx.state.connections[input.what] === 'declined') return { status: 'unchanged' as const };
     await ctx.store.appendEvent(ctx.sessionId, { id: `connection-decline:${input.what}:${ctx.turnId}`, at: timestamp(ctx), type: 'connection', toolkit: input.what, phase: 'declined' });
   }

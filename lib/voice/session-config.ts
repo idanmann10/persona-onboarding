@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SessionProjection } from '../domain/project';
 import { buildSystemPrompt } from '../agent/prompts';
-import { noteDeclineInput, rememberInput, showConnectionInput } from '../agent/actions';
+import { customizeInput, noteDeclineInput, rememberInput, showConnectionInput } from '../agent/actions';
 import { calendarReadInput, gmailSearchInput } from '../agent/account-tools';
 import { callLines, modelMessages } from '../agent/turn';
 import { estimateTokens } from './tokens';
@@ -43,7 +43,8 @@ const functionTool = (name: string, description: string, schema: z.ZodType) => {
 
 export function voiceTools(capabilities: { gmail: boolean; calendar: boolean }) {
   return [
-    functionTool('remember', "Save something new or changed: a name for the assistant, what to call the user, what they want help with, or how they want the assistant to come across, in the user's words. Use declined only when they refuse to share that exact thing.", rememberInput),
+    functionTool('remember', "Save something new or changed: what to call the user or what they want help with, in the user's words. Use declined only when they refuse to share that exact thing.", rememberInput),
+    functionTool('customize', "Change the assistant's own name, look (avatar), personality or call voice when the user names it or asks for a change. Send only what changes.", customizeInput),
     functionTool('note_decline', 'Record that the user said no to connecting Gmail or Google Calendar, so it is not offered again.', noteDeclineInput),
     ...(capabilities.gmail || capabilities.calendar ? [functionTool('show_connection', "Put a Connect Gmail or Connect Google Calendar button on the user's screen.", showConnectionInput)] : []),
     ...(capabilities.gmail ? [functionTool('search_gmail', "Search the user's connected Gmail (sender, subject, preview) for the current request. Returns not_connected if Gmail isn't connected.", gmailSearchInput)] : []),
@@ -60,13 +61,14 @@ function names(state: SessionProjection) {
 export function voiceInstructions(state: SessionProjection, capabilities: { gmail: boolean; calendar: boolean }, delegate = true): string {
   const { assistant, user } = names(state);
   const tools = [
-    '- remember: save a name for you, what to call the user, what they need help with, or how they want you to come across, in their words.',
+    '- remember: save what to call the user or what they need help with, in their words.',
+    '- customize: change your name, look, personality or call voice when the user names you or asks for a change.',
     '- note_decline: record that the user said no to connecting Gmail or their calendar.',
     ...(capabilities.gmail || capabilities.calendar ? ["- show_connection: put a Connect Gmail or Connect Google Calendar button on the user's screen."] : []),
     ...(capabilities.gmail ? ["- search_gmail: search the user's connected Gmail for the current request."] : []),
     ...(capabilities.calendar ? ["- read_calendar_window: read the user's connected calendar for a date range."] : []),
   ];
-  return `You are ${assistant ?? "the user's new Persona assistant"}, on a live browser call with the user.${assistant ? ` The user chose the name ${assistant}.` : ' You do not have a name yet; if the user offers one, use remember.'}
+  return `You are ${assistant ?? "the user's new Persona assistant"}, on a live browser call with the user.${assistant ? ` The user chose the name ${assistant}.` : ' You do not have a name yet; if the user offers one, use customize.'}
 Speak naturally, at an unhurried pace, and be clear. Personality: ${personalityLine(personaSettings(state))}. Keep each turn to one or two sentences, then listen.
 This call continues the same conversation as the chat, and you know what was said there. ${user ? `The user's name is ${user}.` : "You don't know the user's name yet."}
 Help with whatever the user brings up first. When it fits, learn what to call them, what they would most like help with, and whether they want to connect Gmail so you can show them something useful right away. Ask one thing at a time and never re-ask something they declined or already told you. If they want to stop or switch to text, wrap up in one sentence and let them go.
@@ -81,7 +83,8 @@ ${delegate ? `Delegation policy:
 Backend tools:
 ${tools.join('\n')}
 Delegate to the backend when:
-- The user tells you what to call them, a name for you, or what they want help with.
+- The user tells you what to call them or what they want help with.
+- The user names you or asks to change your name, look, personality or call voice.
 - The user agrees or refuses to connect Gmail or their calendar.
 - The request needs their email or calendar.
 - A correction changes something they told you.
