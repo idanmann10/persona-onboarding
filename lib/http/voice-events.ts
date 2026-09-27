@@ -5,6 +5,8 @@ interface Store {
   sessionExists(id: string): Promise<boolean>;
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
+  releaseCallLease(id: string, callId: string): Promise<void>;
+  refreshCallLease(id: string, callId: string): Promise<boolean>;
 }
 
 export function createVoiceEventHandler(store: Store) {
@@ -19,6 +21,7 @@ export function createVoiceEventHandler(store: Store) {
     if (typeof body.callId !== 'string' || !/^live_[\w-]{1,100}$/.test(body.callId)) return new Response('Invalid call ID', { status: 400 });
     const history = await store.readEvents(sessionId);
     if (!history.some((event) => event.id === `call:${body.callId}:accepted`)) return new Response('Call not found', { status: 404 });
+    if (body.kind === 'heartbeat') return new Response(null, { status: await store.refreshCallLease(sessionId, body.callId) ? 204 : 409 });
     const at = new Date().toISOString();
     let event: SessionEvent;
     if (body.kind === 'started' || body.kind === 'ended' || body.kind === 'dropped') {
@@ -33,6 +36,7 @@ export function createVoiceEventHandler(store: Store) {
       event = { id: `voice:${body.callId}:${body.eventId}`, at, type: 'voice_fragment', callId: body.callId, speaker: body.speaker, text: body.text, startMs: body.startMs as number, endMs: body.endMs as number, final: false };
     } else return new Response('Invalid event kind', { status: 400 });
     await store.appendEvent(sessionId, event);
+    if (body.kind === 'ended' || body.kind === 'dropped') await store.releaseCallLease(sessionId, body.callId);
     return new Response(null, { status: 204 });
   };
 }

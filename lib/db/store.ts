@@ -51,5 +51,62 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         sourceUrl: (row.sourceUrl as string | null) || undefined,
       }));
     },
+    createConnectionAttempt: async (sessionId: string, attemptId: string, toolkit: 'gmail' | 'calendar', accountId: string, authConfigId: string, expiresAt: string) => {
+      await sql`INSERT INTO persona_connections (attempt_id, session_id, toolkit, connected_account_id, auth_config_id, expires_at)
+        VALUES (${attemptId}, ${sessionId}, ${toolkit}, ${accountId}, ${authConfigId}, ${expiresAt})`;
+    },
+    getConnectionAttempt: async (sessionId: string, attemptId: string) => {
+      const rows = await sql`SELECT toolkit, connected_account_id AS "accountId", auth_config_id AS "authConfigId", status
+        FROM persona_connections WHERE session_id = ${sessionId} AND attempt_id = ${attemptId}
+        AND expires_at > now() LIMIT 1`;
+      return rows[0] as { toolkit: 'gmail' | 'calendar'; accountId: string; authConfigId: string; status: string } | undefined;
+    },
+    activateConnection: async (sessionId: string, attemptId: string): Promise<boolean> => sql.begin(async (tx) => {
+      const rows = await tx`SELECT toolkit FROM persona_connections WHERE session_id = ${sessionId} AND attempt_id = ${attemptId}
+        AND status = 'pending' AND expires_at > now() FOR UPDATE`;
+      if (!rows.length) return false;
+      await tx`UPDATE persona_connections SET status = 'superseded' WHERE session_id = ${sessionId} AND toolkit = ${rows[0].toolkit} AND status = 'active'`;
+      await tx`UPDATE persona_connections SET status = 'active' WHERE session_id = ${sessionId} AND attempt_id = ${attemptId}`;
+      return true;
+    }),
+    getActiveConnection: async (sessionId: string, toolkit: 'gmail' | 'calendar'): Promise<string | undefined> => {
+      const rows = await sql`SELECT connected_account_id FROM persona_connections
+        WHERE session_id = ${sessionId} AND toolkit = ${toolkit} AND status = 'active' LIMIT 1`;
+      return rows[0]?.connected_account_id as string | undefined;
+    },
+    deactivateConnection: async (sessionId: string, toolkit: 'gmail' | 'calendar', accountId: string): Promise<boolean> => {
+      const rows = await sql`UPDATE persona_connections SET status = 'superseded'
+        WHERE session_id = ${sessionId} AND toolkit = ${toolkit} AND connected_account_id = ${accountId}
+        AND status = 'active' RETURNING attempt_id`;
+      return rows.length > 0;
+    },
+    listConnectionAccounts: async (sessionId: string): Promise<string[]> => {
+      const rows = await sql`SELECT connected_account_id FROM persona_connections
+        WHERE session_id = ${sessionId} AND status IN ('pending', 'active') ORDER BY created_at, attempt_id`;
+      return rows.map((row) => row.connected_account_id as string);
+    },
+    deleteSession: async (sessionId: string): Promise<void> => {
+      await sql`DELETE FROM persona_sessions WHERE id = ${sessionId}`;
+    },
+    acquireCallLease: async (sessionId: string, leaseId: string): Promise<boolean> => {
+      const rows = await sql`INSERT INTO persona_call_leases (session_id, lease_id, expires_at)
+        VALUES (${sessionId}, ${leaseId}, now() + interval '1 minute')
+        ON CONFLICT (session_id) DO UPDATE SET lease_id = EXCLUDED.lease_id, call_id = NULL, expires_at = EXCLUDED.expires_at
+        WHERE persona_call_leases.expires_at < now() RETURNING lease_id`;
+      return rows.length > 0;
+    },
+    bindCallLease: async (sessionId: string, leaseId: string, callId: string): Promise<boolean> => {
+      const rows = await sql`UPDATE persona_call_leases SET call_id = ${callId}, expires_at = now() + interval '5 minutes'
+        WHERE session_id = ${sessionId} AND lease_id = ${leaseId} AND call_id IS NULL RETURNING lease_id`;
+      return rows.length > 0;
+    },
+    refreshCallLease: async (sessionId: string, callId: string): Promise<boolean> => {
+      const rows = await sql`UPDATE persona_call_leases SET expires_at = now() + interval '5 minutes'
+        WHERE session_id = ${sessionId} AND call_id = ${callId} AND expires_at > now() RETURNING lease_id`;
+      return rows.length > 0;
+    },
+    releaseCallLease: async (sessionId: string, id: string): Promise<void> => {
+      await sql`DELETE FROM persona_call_leases WHERE session_id = ${sessionId} AND (lease_id = ${id} OR call_id = ${id})`;
+    },
   };
 }

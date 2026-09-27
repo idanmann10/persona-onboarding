@@ -14,6 +14,12 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [connectable, setConnectable] = useState({ calendar: false, gmail: false });
+  const [connections, setConnections] = useState({ calendar: false, gmail: false });
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [connecting, setConnecting] = useState<'calendar' | 'gmail' | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [callPhase, setCallPhase] = useState<'idle' | 'connecting' | 'active' | 'ending' | 'ended' | 'dropped'>('idle');
   const [voiceFragments, setVoiceFragments] = useState<VoiceFragment[]>([]);
   const voiceRef = useRef<VoiceController | null>(null);
@@ -26,7 +32,7 @@ export default function Home() {
         if (!response.ok) throw new Error('The conversation could not be loaded. Check the database setup.');
         return response.json() as Promise<{ messages: Message[]; voiceFragments: VoiceFragment[] }>;
       })
-      .then((snapshot) => { if (active) { setMessages(snapshot.messages); setVoiceFragments(snapshot.voiceFragments || []); } })
+      .then((snapshot) => { if (active) { setMessages(snapshot.messages); setVoiceFragments(snapshot.voiceFragments || []); void fetch('/api/connections', { cache: 'no-store' }).then((response) => response.ok ? response.json() as Promise<{ calendar: boolean; gmail: boolean }> : null).then((status) => { if (active && status) setConnections(status); }).catch(() => undefined); } })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'The conversation could not be loaded.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -34,8 +40,8 @@ export default function Home() {
 
   useEffect(() => {
     fetch('/api/capabilities', { cache: 'no-store' })
-      .then((response) => response.json() as Promise<{ voice: boolean }>)
-      .then((capabilities) => setVoiceEnabled(capabilities.voice))
+      .then((response) => response.json() as Promise<{ voice: boolean; calendar: boolean; gmail: boolean }>)
+      .then((capabilities) => { setVoiceEnabled(capabilities.voice); setConnectable({ calendar: capabilities.calendar, gmail: capabilities.gmail }); })
       .catch(() => setVoiceEnabled(false));
   }, []);
 
@@ -114,6 +120,45 @@ export default function Home() {
     }
   }
 
+  async function connectAccount(toolkit: 'calendar' | 'gmail') {
+    if (!connectable[toolkit] || connecting) return;
+    setConnecting(toolkit);
+    setError('');
+    try {
+      const response = await fetch('/api/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toolkit }) });
+      if (!response.ok) throw new Error('The connection could not be started.');
+      const data = await response.json() as { redirectUrl: string };
+      window.location.assign(data.redirectUrl);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The connection could not be started.');
+      setConnecting(null);
+    }
+  }
+
+  async function disconnectAccount(toolkit: 'calendar' | 'gmail') {
+    if (connecting) return;
+    setConnecting(toolkit);
+    setError('');
+    try {
+      const response = await fetch('/api/connections', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toolkit }) });
+      if (!response.ok) throw new Error('The account could not be disconnected.');
+      setConnections((current) => ({ ...current, [toolkit]: false }));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The account could not be disconnected.'); }
+    finally { setConnecting(null); }
+  }
+
+  async function deleteConversation() {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    if (callPhase === 'active' || callPhase === 'connecting' || callPhase === 'ending') return;
+    setDeleting(true);
+    setError('');
+    try {
+      const response = await fetch('/api/session', { method: 'DELETE' });
+      if (!response.ok) throw new Error('The conversation could not be deleted. Please try again.');
+      window.location.assign('/');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Deletion failed.'); setDeleting(false); }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Workspace">
@@ -125,8 +170,9 @@ export default function Home() {
         <header className="topbar">
           <div className="mobile-brand"><span className="brand-mark" aria-hidden="true">✳</span> Persona</div>
           <span className="topbar-label">A conversation that picks up where you left off</span>
-          <button className="call-button" type="button" onClick={() => void startOrEndCall()} disabled={!voiceEnabled || callPhase === 'connecting' || callPhase === 'ending'} title={voiceEnabled ? 'Start or end a browser voice call' : 'Voice needs a server API key'}><span aria-hidden="true">◉</span> {callPhase === 'active' ? 'Hang up' : callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending…' : 'Call'} {!voiceEnabled ? <span className="soon">setup needed</span> : null}</button>
+          <div className="topbar-actions"><button className="connections-button" type="button" aria-expanded={connectionsOpen} onClick={() => setConnectionsOpen((open) => !open)}>Connections</button><button className="call-button" type="button" onClick={() => void startOrEndCall()} disabled={!voiceEnabled || callPhase === 'connecting' || callPhase === 'ending'} title={voiceEnabled ? 'Start or end a browser voice call' : 'Voice needs a server API key'}><span aria-hidden="true">◉</span> {callPhase === 'active' ? 'Hang up' : callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending…' : 'Call'} {!voiceEnabled ? <span className="soon">setup needed</span> : null}</button></div>
         </header>
+        {connectionsOpen ? <section className="connections-panel" aria-label="Optional connections"><strong>Optional connections</strong><p>Connect an account only when it helps your conversation.</p>{(['calendar', 'gmail'] as const).map((toolkit) => <div className="connection-row" key={toolkit}><span>{toolkit === 'calendar' ? 'Google Calendar' : 'Gmail'}</span><button type="button" disabled={(!connections[toolkit] && !connectable[toolkit]) || Boolean(connecting)} onClick={() => void (connections[toolkit] ? disconnectAccount(toolkit) : connectAccount(toolkit))}>{connecting === toolkit ? 'Working…' : connections[toolkit] ? 'Disconnect' : !connectable[toolkit] ? 'Setup needed' : 'Connect'}</button></div>)}<div className="connection-row deletion-row"><span>{confirmDelete ? 'This also removes connected accounts.' : 'Delete this conversation'}</span><button type="button" disabled={deleting || callPhase === 'active' || callPhase === 'connecting' || callPhase === 'ending'} onClick={() => void deleteConversation()}>{deleting ? 'Deleting…' : confirmDelete ? 'Confirm delete' : 'Delete'}</button></div></section> : null}
         <div className="thread" aria-live="polite">
           {messages.length === 0 && !loading ? <div className="welcome"><div className="welcome-orb" aria-hidden="true">✳</div><span className="eyebrow">START WHERE YOU ARE</span><h1>Start a conversation.</h1><p>Ask for help with something on your mind, or just tell me what you are working through.</p></div> : null}
           {loading ? <p className="loading">Loading your conversation…</p> : null}

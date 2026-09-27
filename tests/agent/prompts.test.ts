@@ -8,7 +8,7 @@ describe('Persona prompt contract', () => {
       facts: [{ key: 'company', value: 'Northstar Analytics', provenance: 'user_said', evidence: 'confirmed', sourceUrl: 'https://example.org/company' }],
       capabilities: ['text', 'browser_call'],
     });
-    expect(prompt).toContain('understand-user/v1');
+    expect(prompt).toContain('understand-user/v2');
     expect(prompt).toContain('Prepare a board meeting brief');
     expect(prompt).toContain('user_said');
     expect(prompt).toContain('https://example.org/company');

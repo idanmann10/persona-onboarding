@@ -27,13 +27,17 @@ describe('browser voice call', () => {
     };
     const phases: string[] = [];
     const captions: string[] = [];
+    let releaseEnd: (() => void) | undefined;
     const controller = await startBrowserCall({ onPhase: (phase) => phases.push(phase), onCaption: (event) => captions.push(event.text) }, {
       createPeer: () => peer as unknown as RTCPeerConnection,
       getMicrophone: async () => ({ getAudioTracks: () => [track], getTracks: () => [track] }) as unknown as MediaStream,
       createAudio: () => ({ autoplay: false, play: async () => undefined }) as unknown as HTMLAudioElement,
-      fetchFn: async (input) => String(input).endsWith('/api/voice/session')
-        ? Response.json({ session: { id: 'live_one' }, transport: { type: 'webrtc', sdp: 'answer-sdp' } }, { status: 201 })
-        : new Response(null, { status: 204 }),
+      fetchFn: async (input, init) => {
+        if (String(input).endsWith('/api/voice/session')) return Response.json({ session: { id: 'live_one' }, transport: { type: 'webrtc', sdp: 'answer-sdp' } }, { status: 201 });
+        const body = JSON.parse(String(init?.body));
+        if (body.kind === 'ended') return new Promise<Response>((resolve) => { releaseEnd = () => resolve(new Response(null, { status: 204 })); });
+        return new Response(null, { status: 204 });
+      },
     });
     expect(controller.callId).toBe('live_one');
     expect(remoteSdp).toBe('answer-sdp');
@@ -45,6 +49,12 @@ describe('browser voice call', () => {
     expect(sent.some((value) => JSON.parse(value).type === 'session.close')).toBe(true);
     expect(stopped).toBe(false);
     listeners.get('message')?.({ data: JSON.stringify({ type: 'session.closed', reason: 'close_requested' }) });
+    let closeSettled = false;
+    void closing.then(() => { closeSettled = true; });
+    expect(releaseEnd).toBeTypeOf('function');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(closeSettled).toBe(false);
+    releaseEnd?.();
     await closing;
     expect(stopped).toBe(true);
     expect(phases.at(-1)).toBe('ended');

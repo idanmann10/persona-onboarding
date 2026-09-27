@@ -28,25 +28,38 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   let callId = '';
   let closed = false;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let resolveClose: (() => void) | undefined;
+  const pendingEvents = new Set<Promise<unknown>>();
   const channel = peer.createDataChannel('oai-events');
 
   function postEvent(body: Record<string, unknown>) {
     if (!callId) return;
-    void deps.fetchFn('/api/voice/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, ...body }) }).catch(() => undefined);
+    let pending: Promise<unknown>;
+    try { pending = deps.fetchFn('/api/voice/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, ...body }) }).catch(() => undefined); }
+    catch { return; }
+    pendingEvents.add(pending);
+    void pending.finally(() => pendingEvents.delete(pending));
   }
 
   function finish(phase: 'ended' | 'dropped') {
     if (closed) return;
     closed = true;
     if (closeTimer) clearTimeout(closeTimer);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     postEvent({ kind: phase });
     microphone?.getTracks().forEach((track) => track.stop());
     channel.close();
     peer.close();
     audio.srcObject = null;
-    callbacks.onPhase(phase);
-    resolveClose?.();
+    if (!callId) { callbacks.onPhase(phase); resolveClose?.(); return; }
+    let persistenceTimer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => { persistenceTimer = setTimeout(resolve, 5_000); });
+    void Promise.race([Promise.allSettled([...pendingEvents]).then(() => undefined), timeout]).then(() => {
+      if (persistenceTimer) clearTimeout(persistenceTimer);
+      callbacks.onPhase(phase);
+      resolveClose?.();
+    });
   }
 
   channel.addEventListener('message', ({ data }) => {
@@ -55,6 +68,12 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     if (!parsed || closed) return;
     if (parsed.kind === 'started') {
       postEvent({ kind: 'started' });
+      if (!heartbeatTimer) heartbeatTimer = setInterval(() => {
+        if (!callId || closed) return;
+        void deps.fetchFn('/api/voice/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, kind: 'heartbeat' }) })
+          .then((response) => { if (response.status === 409) finish('dropped'); })
+          .catch(() => undefined);
+      }, 30_000);
       callbacks.onPhase('active');
     } else if (parsed.kind === 'transcript') {
       postEvent({ ...parsed });

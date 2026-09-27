@@ -38,3 +38,22 @@ CREATE TABLE IF NOT EXISTS persona_action_confirmations (
   confirmed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (session_id, action_id)
 );
+
+CREATE TABLE IF NOT EXISTS persona_connections (
+  attempt_id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  toolkit TEXT NOT NULL CHECK (toolkit IN ('gmail', 'calendar')),
+  connected_account_id TEXT NOT NULL UNIQUE,
+  auth_config_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'superseded')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS persona_connections_one_active ON persona_connections (session_id, toolkit) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS persona_call_leases (
+  session_id UUID PRIMARY KEY REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  lease_id TEXT NOT NULL,
+  call_id TEXT,
+  expires_at TIMESTAMPTZ NOT NULL
+);

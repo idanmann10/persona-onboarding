@@ -7,6 +7,8 @@ import { createChatHandler } from '@/lib/http/chat';
 import { buildSystemPrompt } from '@/lib/agent/prompts';
 import { projectSession } from '@/lib/domain/project';
 import { resolveIdentityClaim } from '@/lib/research/service';
+import { createComposioClient } from '@/lib/integrations/composio';
+import { createAccountTools } from '@/lib/agent/account-tools';
 
 export const runtime = 'nodejs';
 
@@ -16,11 +18,15 @@ export async function POST(request: Request): Promise<Response> {
   }
   try {
     const store = createStore(getDatabase());
-    const handler = createChatHandler(store, (history, sessionId) => {
+    const handler = createChatHandler(store, async function* (history, sessionId) {
       const state = projectSession(history);
       const messages = state.messages.map((message) => ({ role: message.speaker, content: message.text }));
       const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
       const currentTask = latestUser?.text;
+      const accounts = process.env.COMPOSIO_API_KEY ? {
+        calendar: await store.getActiveConnection(sessionId, 'calendar'),
+        gmail: await store.getActiveConnection(sessionId, 'gmail'),
+      } : {};
       const facts = Object.entries(state.facts).filter(([key]) => key !== 'identity_lookup_status').map(([key, fact]) => ({ key, value: fact.value, provenance: fact.provenance, evidence: fact.evidence, sourceUrl: fact.sourceUrl }));
       const researchTools: ToolSet = process.env.CONTEXT_DEV_API_KEY ? {
         resolve_identity: tool({
@@ -33,13 +39,17 @@ export async function POST(request: Request): Promise<Response> {
           },
         }),
       } : {};
-      return streamText({
+      const accountTools = process.env.COMPOSIO_API_KEY && currentTask
+        ? createAccountTools(createComposioClient(process.env.COMPOSIO_API_KEY), sessionId, currentTask, accounts)
+        : {};
+      const result = streamText({
         model: openai(process.env.OPENAI_TEXT_MODEL!),
-        system: buildSystemPrompt({ currentTask, facts, capabilities: ['text'], voiceFragments: state.voiceFragments.map((fragment) => ({ speaker: fragment.speaker, text: fragment.text })) }),
+        system: buildSystemPrompt({ currentTask, facts, capabilities: ['text', ...(accounts.calendar ? ['connected calendar'] : []), ...(accounts.gmail ? ['connected Gmail'] : [])], voiceFragments: state.voiceFragments.map((fragment) => ({ speaker: fragment.speaker, text: fragment.text })) }),
         messages,
-        tools: researchTools,
+        tools: { ...researchTools, ...accountTools },
         stopWhen: stepCountIs(3),
-      }).textStream;
+      });
+      for await (const chunk of result.textStream) yield chunk;
     });
     return await handler(request);
   } catch (error) {
