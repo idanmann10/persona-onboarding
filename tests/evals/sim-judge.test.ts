@@ -7,6 +7,7 @@ const at = '2026-09-27T12:00:00.000Z';
 const events: SessionEvent[] = [
   greetingEvent(new Date(at)),
   { id: 'm1', at, type: 'message', speaker: 'user', channel: 'text', text: 'call yourself max.\nno calls please' },
+  { id: 'customize:assistant_name:m1', at, type: 'fact', key: 'assistant_name', value: 'Max', evidence: 'confirmed', provenance: 'user_said', sourceEventId: 'customize:m1' },
   { id: 'call-offer:m1', at, type: 'call', phase: 'offered' },
   { id: 'connection-offer:gmail:m1', at, type: 'connection', toolkit: 'gmail', phase: 'offered', reason: 'See who is waiting on you.' },
   { id: 'answer:m1', at, type: 'message', speaker: 'assistant', channel: 'text', text: 'Max it is. Want a quick call?' },
@@ -18,6 +19,7 @@ const events: SessionEvent[] = [
   { id: 'voice:live_1:2', at, type: 'voice_fragment', callId: 'live_1', speaker: 'user', text: ' the thing is', startMs: 900, endMs: 1_500, final: false },
   { id: 'call:live_1:ended', at, type: 'call', phase: 'ended', callId: 'live_1', reason: 'user_hangup' },
   { id: 'automation-proposal:m2', at, type: 'automation', automationId: 'a1', phase: 'proposed', title: 'Inbox rundown', schedule: 'every weekday at 8:00 AM' },
+  { id: 'onboarding:graduated', at, type: 'onboarding', phase: 'graduated', reason: 'just let me in' },
 ];
 const persona = { summary: 'Founder of a small startup who reads on their phone.' };
 
@@ -42,10 +44,11 @@ const answers = {
 };
 
 describe('judge transcript', () => {
-  it('lists typed and spoken lines and what became of each card, without app internals', () => {
+  it('lists typed and spoken lines, what became of each card, and the thread\'s status lines, without app internals', () => {
     expect(transcriptLines(events)).toEqual([
-      "Assistant: Hi, I'm your new assistant. I don't have a name yet, so what would you like to call me? / If something's already on your mind, start there instead. Names can wait.",
+      "Assistant: Hi! I'm your new Persona assistant 👋 I'm here to take stuff off your plate: email, calendar, even phone calls. / First up: what should I go by? Or skip that and tell me what's on your mind.",
       'User: call yourself max. / no calls please',
+      '[card] Renamed to Max',
       'Assistant: Max it is. Want a quick call?',
       '[card] Call offer with an Answer button: the user tapped Not now',
       '[card] Connect Gmail button ("See who is waiting on you."): the user connected it',
@@ -55,6 +58,7 @@ describe('judge transcript', () => {
       'User: (on the call) the thing is',
       '[call] The call ended: the user hung up',
       '[card] Recurring task preview "Inbox rundown", every weekday at 8:00 AM: not answered',
+      '[card] Skipped the rest of setup',
     ]);
   });
 

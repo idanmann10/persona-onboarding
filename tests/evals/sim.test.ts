@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { VOICE_LIMITS } from '../../lib/voice/session-config';
+import { GREETING_ID, GREETING_TEXT } from '../../lib/agent/session';
 import { loadPersonas, type Persona } from '../../evals/sim/personas';
 import { cutMidSentence, fragmentChunks, simulate, withTimeout } from '../../evals/sim/run';
 import { createScriptedUser, type SimAction } from '../../evals/sim/user';
@@ -40,7 +41,7 @@ const leave = (feeling: Extract<SimAction, { type: 'leave' }>['feeling'] = 'sati
 describe('simulated conversation', () => {
   it('names the assistant, answers the call card, hangs up mid-sentence, and gets a follow-up about it', async () => {
     const script = scripted([
-      { call: { name: 'remember', input: { key: 'assistant_name', value: 'Max' } } },
+      { call: { name: 'customize', input: { name: 'Max' } } },
       { text: "Max it is. Want to hop on a quick call? It's faster than typing." },
       { call: { name: 'offer_call', input: {} } },
       { text: "Tap Answer when you're ready." },
@@ -55,15 +56,21 @@ describe('simulated conversation', () => {
 
     expect(trace).toMatchObject({ status: 'left', leave: { feeling: 'satisfied' } });
     expect(script.remaining()).toBe(0);
-    // The session starts like the app's, and the call card offers the Answer control.
-    expect(trace.events[0]).toMatchObject({ type: 'message', origin: 'greeting' });
+    // The session starts like the app's. The name goes through the real customize gate (it is in the
+    // user's words), and the thread shows the change the way the app does.
+    expect(trace.events[0]).toMatchObject({ id: GREETING_ID, type: 'message', origin: 'greeting' });
+    expect(user.seen[0].screen).toContain(`Persona: ${GREETING_TEXT.split('\n')[0]}`);
+    expect(trace.steps[0].turns[0].tools[0]).toMatchObject({ name: 'customize', output: { status: 'saved', changed: { name: 'Max' } } });
+    expect(trace.events).toContainEqual(expect.objectContaining({ type: 'fact', key: 'assistant_name', value: 'Max', evidence: 'confirmed', sourceEventId: 'customize:sim-0' }));
+    expect(user.seen[1].screen).toContain("You: Call yourself Max\n(Renamed to Max)\nMax: Max it is. Want to hop on a quick call? It's faster than typing.");
+    // The call card offers the Answer control.
     expect(user.seen[2].screen).toContain('[Card] Max is ready to call');
     expect(user.seen[2].screen).toContain('Buttons you can tap: answer_call, not_now_call');
 
     // Answering starts the call, and the app's greeting instruction produces the first spoken line.
     const answer = trace.steps[2];
     expect(answer.turns[0]).toMatchObject({ kind: 'voice_greeting', channel: 'voice', trigger: 'voice-greeting:live_sim_1' });
-    expect(script.prompts[4]).toContain('Greet the caller now in English, as Max');
+    expect(script.prompts[4]).toContain('Greet the caller now in the language they have been using (English if unsure), as Max.');
     expect(answer.outputs).toEqual(["Hey, it's Max, picking up from the chat. What should I call you?"]);
     expect(user.seen[3]).toMatchObject({ onCall: true });
     expect(user.seen[3].screen).toContain("--- Live call with Max ---\nMax: Hey, it's Max, picking up from the chat. What should I call you?");
@@ -102,7 +109,7 @@ describe('simulated conversation', () => {
     const user = createScriptedUser([say('inbox is chaos, ppl waiting on me'), tap('connect_gmail'), leave()]);
     const trace = await simulate(persona('busy_founder'), { user, model: script.model });
 
-    expect(user.seen[1].screen).toContain('[Card] Connect Gmail — See who is waiting on a reply from you. Read-only, and you can disconnect anytime. — buttons: Connect Gmail (connect_gmail) / Not now (not_now_gmail)');
+    expect(user.seen[1].screen).toContain('[Card] Connect Gmail — See who is waiting on a reply from you. Read-only. Start over disconnects it. — buttons: Connect Gmail (connect_gmail) / Not now (not_now_gmail)');
     const connect = trace.steps[1];
     expect(connect).toMatchObject({ followUp: 'message', connected: ['gmail'] });
     expect(connect.turns[0]).toMatchObject({ kind: 'follow_up', trigger: 'followup:connection:gmail:sim-1:connected' });
@@ -329,7 +336,7 @@ describe('simulated conversation', () => {
   it('keeps concurrent conversations apart', async () => {
     const run = (name: string) => simulate(persona('busy_founder'), {
       user: createScriptedUser([say(`call yourself ${name}`), leave()]),
-      model: scripted([{ call: { name: 'remember', input: { key: 'assistant_name', value: name } } }, { text: `${name} it is.` }]).model,
+      model: scripted([{ call: { name: 'customize', input: { name } } }, { text: `${name} it is.` }]).model,
     });
     const [max, nova] = await Promise.all([run('Max'), run('Nova')]);
     expect(max.finalProgress.assistantName).toEqual({ status: 'confirmed', value: 'Max' });
