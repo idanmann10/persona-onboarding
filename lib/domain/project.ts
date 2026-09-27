@@ -47,6 +47,8 @@ export interface SessionProjection {
   calls: CallRecord[];
   voiceFragments: Extract<SessionEvent, { type: 'voice_fragment' }>[];
   connections: Record<Toolkit, ConnectionPhase | 'none'>;
+  /** Apps other than Gmail and Calendar, by slug, from the Apps sheet. */
+  apps: Record<string, { name: string; phase: Extract<SessionEvent, { type: 'app_connection' }>['phase'] }>;
   decisions: Record<string, 'messaged' | 'silent'>;
   automations: Array<Extract<TimelineItem, { kind: 'automation' }>>;
   timeline: TimelineItem[];
@@ -58,7 +60,7 @@ const ENDED: CallPhase[] = ['ended', 'dropped'];
 export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
-    connections: { gmail: 'none', calendar: 'none' }, decisions: {}, automations: [], timeline: [],
+    connections: { gmail: 'none', calendar: 'none' }, apps: {}, decisions: {}, automations: [], timeline: [],
     onboarding: {
       assistantName: { status: 'unknown' }, preferredName: { status: 'unknown' }, need: { status: 'unknown' },
       gmail: 'not_offered', call: 'not_offered', automation: { status: 'none' },
@@ -152,6 +154,11 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         if (event.phase !== 'declined') state.timeline.push({ kind: 'connection_notice', id: event.id, toolkit: event.toolkit, phase: event.phase, at: event.at });
         break;
       }
+      case 'app_connection':
+        // A failed reconnect leaves the earlier connection in place.
+        if (event.phase === 'failed' && state.apps[event.app]?.phase === 'connected') break;
+        state.apps[event.app] = { name: event.name, phase: event.phase };
+        break;
       case 'decision':
         state.decisions[event.trigger] = event.outcome;
         break;

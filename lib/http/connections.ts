@@ -1,26 +1,40 @@
 import { readSessionCookie } from './session';
 import { signInWithGmail } from '../auth/identity';
-import type { Toolkit } from '../integrations/connections';
+import { withinIpLimit, type IpQuotaStore } from './client-key';
+import { fallbackAppName, isAppSlug, isBuiltinApp, listApps, type AppEntry, type BuiltinApp } from '../domain/apps';
 import type { SessionEvent } from '../domain/events';
 
-interface Store {
+interface Store extends IpQuotaStore {
   sessionExists(id: string): Promise<boolean>;
-  getActiveConnection(id: string, toolkit: Toolkit): Promise<string | undefined>;
-  getConnectionAttempt(sessionId: string, attemptId: string): Promise<{ toolkit: Toolkit; status?: string } | undefined>;
+  getActiveConnection(id: string, toolkit: string): Promise<string | undefined>;
+  getConnectionAttempt(sessionId: string, attemptId: string): Promise<{ toolkit: string; status?: string } | undefined>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
+  /** Every active toolkit for the session; without it only Gmail and Calendar are checked. */
+  listActiveConnectionToolkits?(id: string): Promise<string[]>;
 }
 interface Service {
-  start(id: string, toolkit: Toolkit): Promise<{ attemptId: string; redirectUrl: string }>;
-  finish(id: string, attemptId: string): Promise<Toolkit>;
-  disconnect(id: string, toolkit: Toolkit): Promise<void>;
+  start(id: string, toolkit: string): Promise<{ attemptId: string; redirectUrl: string }>;
+  finish(id: string, attemptId: string): Promise<string>;
+  disconnect(id: string, toolkit: string): Promise<void>;
 }
+interface Catalog {
+  list(): Promise<AppEntry[]>;
+  find(slug: string): Promise<AppEntry | undefined>;
+}
+
+/** What the Apps sheet shows when Composio's catalog can't be reached. */
+const BUILTIN_APPS: AppEntry[] = [
+  { slug: 'gmail', name: 'Gmail', logo: 'https://logos.composio.dev/api/gmail', category: 'Email' },
+  { slug: 'calendar', name: 'Google Calendar', logo: 'https://logos.composio.dev/api/googlecalendar', category: 'Scheduling' },
+];
 
 /**
  * The OAuth callback page. Opened as a popup (the normal path, so a live call survives), it tells the
- * chat window and closes itself; opened as a full-page redirect, it returns to the chat.
+ * chat window and closes itself; opened as a full-page redirect, it returns to the chat. `toolkit` is
+ * the slug the UI sent ('gmail', 'calendar', or any other app slug).
  */
-export function callbackPage(appBaseUrl: string, toolkit: Toolkit | undefined, status: 'connected' | 'failed'): Response {
-  const target = new URL(`/?connection=${status === 'connected' && toolkit ? toolkit : 'failed'}`, appBaseUrl);
+export function callbackPage(appBaseUrl: string, toolkit: string | undefined, status: 'connected' | 'failed'): Response {
+  const target = new URL(`/?connection=${status === 'connected' && toolkit ? encodeURIComponent(toolkit) : 'failed'}`, appBaseUrl);
   const message = JSON.stringify({ type: 'persona-connection', toolkit: toolkit ?? null, status });
   const text = status === 'connected' ? 'Connected. You can close this window.' : "The connection didn't finish. You can close this window.";
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Persona</title>
@@ -37,32 +51,82 @@ export function callbackPage(appBaseUrl: string, toolkit: Toolkit | undefined, s
   return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
 }
 
-export function createConnectionHandlers(store: Store, service: Service, appBaseUrl: string) {
+export function createConnectionHandlers(store: Store, service: Service, appBaseUrl: string, catalog?: Catalog) {
   const ownedSession = async (request: Request) => {
     const id = readSessionCookie(request);
     return id && await store.sessionExists(id) ? id : undefined;
   };
-  const toolkitFrom = async (request: Request): Promise<Toolkit | undefined> => {
-    try {
-      const body = await request.json() as { toolkit?: unknown };
-      return body.toolkit === 'calendar' || body.toolkit === 'gmail' ? body.toolkit : undefined;
-    } catch { return undefined; }
+  const bodyToolkit = async (request: Request): Promise<unknown> => {
+    try { return ((await request.json()) as { toolkit?: unknown }).toolkit; } catch { return undefined; }
+  };
+  /** Gmail or Calendar only: the in-chat Connect cards. */
+  const builtinFrom = async (request: Request): Promise<BuiltinApp | undefined> => {
+    const toolkit = await bodyToolkit(request);
+    return toolkit === 'calendar' || toolkit === 'gmail' ? toolkit : undefined;
+  };
+  /** Any app slug; Composio's 'googlecalendar' is our 'calendar'. */
+  const slugFrom = async (request: Request): Promise<string | undefined> => {
+    const toolkit = await bodyToolkit(request);
+    if (!isAppSlug(toolkit)) return undefined;
+    return toolkit === 'googlecalendar' ? 'calendar' : toolkit;
+  };
+  const nameFor = async (slug: string): Promise<string> => {
+    try { return (await catalog?.find(slug))?.name ?? fallbackAppName(slug); } catch { return fallbackAppName(slug); }
+  };
+  const connectedToolkits = async (id: string): Promise<string[]> => {
+    if (store.listActiveConnectionToolkits) return store.listActiveConnectionToolkits(id);
+    const builtins: BuiltinApp[] = ['gmail', 'calendar'];
+    const active = await Promise.all(builtins.map(async (toolkit) => (await store.getActiveConnection(id, toolkit)) ? toolkit : undefined));
+    return active.filter((toolkit): toolkit is BuiltinApp => Boolean(toolkit));
+  };
+  const appEvent = async (id: string, app: string, phase: 'connected' | 'disconnected' | 'failed', eventId: string) => {
+    await store.appendEvent(id, { id: eventId, at: new Date().toISOString(), type: 'app_connection', app, name: await nameFor(app), phase });
+  };
+  /**
+   * Success path of the OAuth callback: the account is verified and active for this session. Runs once
+   * per attempt (a reload of a finished callback skips it).
+   */
+  const onConnected = async (id: string, toolkit: string, attemptId: string): Promise<void> => {
+    if (isBuiltinApp(toolkit)) {
+      await store.appendEvent(id, { id: `connection:${toolkit}:${attemptId}:connected`, at: new Date().toISOString(), type: 'connection', toolkit, phase: 'connected' });
+    } else {
+      await appEvent(id, toolkit, 'connected', `app:${toolkit}:${attemptId}:connected`);
+    }
   };
   return {
+    /** GET /api/connections[?q=]: the Apps sheet. `gmail`/`calendar` booleans stay for older clients. */
     status: async (request: Request): Promise<Response> => {
       const id = await ownedSession(request);
       if (!id) return new Response('Session required', { status: 401 });
+      const connected = await connectedToolkits(id);
+      let entries = BUILTIN_APPS;
+      if (catalog) {
+        try { entries = await catalog.list(); }
+        catch (error) { console.error('App catalog unavailable', error); }
+      }
+      for (const builtin of BUILTIN_APPS) if (!entries.some((app) => app.slug === builtin.slug)) entries = [builtin, ...entries];
+      const query = new URL(request.url).searchParams.get('q')?.slice(0, 100);
       return Response.json({
-        calendar: Boolean(await store.getActiveConnection(id, 'calendar')),
-        gmail: Boolean(await store.getActiveConnection(id, 'gmail')),
+        calendar: connected.includes('calendar'),
+        gmail: connected.includes('gmail'),
+        apps: listApps(entries, connected, query),
       }, { headers: { 'Cache-Control': 'no-store' } });
     },
+    /** POST /api/connections {toolkit}: a Composio sign-in link for any catalog app. */
     start: async (request: Request): Promise<Response> => {
       const id = await ownedSession(request);
       if (!id) return new Response('Session required', { status: 401 });
       if (request.headers.get('origin') !== new URL(appBaseUrl).origin) return new Response('Origin mismatch', { status: 403 });
-      const toolkit = await toolkitFrom(request);
+      const toolkit = await slugFrom(request);
       if (!toolkit) return new Response('Unsupported connection', { status: 400 });
+      if (!isBuiltinApp(toolkit)) {
+        let app: AppEntry | undefined;
+        try { app = await catalog?.find(toolkit); }
+        catch (error) { console.error('App catalog unavailable', error); return new Response('Connection unavailable', { status: 503 }); }
+        if (!app) return new Response('Unsupported connection', { status: 400 });
+        if (app.noAuth) return new Response('This app needs no connection', { status: 400 });
+      }
+      if (!(await withinIpLimit(store, request, 'tool'))) return new Response('Too many connection attempts; try again later', { status: 429 });
       try {
         const link = await service.start(id, toolkit);
         return Response.json({ redirectUrl: link.redirectUrl }, { headers: { 'Cache-Control': 'no-store' } });
@@ -71,24 +135,30 @@ export function createConnectionHandlers(store: Store, service: Service, appBase
         return new Response('Connection unavailable', { status: 503 });
       }
     },
+    /** DELETE /api/connections {toolkit}: revokes the session's account for that app. */
     disconnect: async (request: Request): Promise<Response> => {
       const id = await ownedSession(request);
       if (!id) return new Response('Session required', { status: 401 });
       if (request.headers.get('origin') !== new URL(appBaseUrl).origin) return new Response('Origin mismatch', { status: 403 });
-      const toolkit = await toolkitFrom(request);
+      const toolkit = await slugFrom(request);
       if (!toolkit) return new Response('Unsupported connection', { status: 400 });
       try {
+        const wasConnected = Boolean(await store.getActiveConnection(id, toolkit));
         await service.disconnect(id, toolkit);
-        await store.appendEvent(id, { id: `connection:${toolkit}:disconnected:${crypto.randomUUID()}`, at: new Date().toISOString(), type: 'connection', toolkit, phase: 'disconnected' });
+        if (isBuiltinApp(toolkit)) {
+          await store.appendEvent(id, { id: `connection:${toolkit}:disconnected:${crypto.randomUUID()}`, at: new Date().toISOString(), type: 'connection', toolkit, phase: 'disconnected' });
+        } else if (wasConnected) {
+          await appEvent(id, toolkit, 'disconnected', `app:${toolkit}:disconnected:${crypto.randomUUID()}`);
+        }
         return new Response(null, { status: 204 });
       } catch (error) { console.error('Connection deletion failed', error); return new Response('Connection deletion failed', { status: 503 }); }
     },
-    /** "Not now" on an in-chat Connect card. */
+    /** "Not now" on an in-chat Connect card (Gmail or Calendar). */
     decline: async (request: Request): Promise<Response> => {
       const id = await ownedSession(request);
       if (!id) return new Response('Session required', { status: 401 });
       if (request.headers.get('origin') !== new URL(appBaseUrl).origin) return new Response('Origin mismatch', { status: 403 });
-      const toolkit = await toolkitFrom(request);
+      const toolkit = await builtinFrom(request);
       if (!toolkit) return new Response('Unsupported connection', { status: 400 });
       if (await store.getActiveConnection(id, toolkit)) return new Response(null, { status: 204 });
       await store.appendEvent(id, { id: `connection:${toolkit}:declined:${crypto.randomUUID()}`, at: new Date().toISOString(), type: 'connection', toolkit, phase: 'declined' });
@@ -102,16 +172,25 @@ export function createConnectionHandlers(store: Store, service: Service, appBase
       const attempt = await store.getConnectionAttempt(id, attemptId);
       // A reload or second visit of a callback that already succeeded is not a failure.
       if (attempt?.status === 'active') return callbackPage(appBaseUrl, attempt.toolkit, 'connected');
+      let toolkit: string;
       try {
-        const toolkit = await service.finish(id, attemptId);
-        await store.appendEvent(id, { id: `connection:${toolkit}:${attemptId}:connected`, at: new Date().toISOString(), type: 'connection', toolkit, phase: 'connected' });
-        if (toolkit === 'gmail') return await signInWithGmail(request, id, attemptId, callbackPage(appBaseUrl, toolkit, 'connected'));
-        return callbackPage(appBaseUrl, toolkit, 'connected');
+        toolkit = await service.finish(id, attemptId);
       } catch (error) {
         console.error('Connection callback failed', error);
-        if (attempt?.status === 'pending') await store.appendEvent(id, { id: `connection:${attempt.toolkit}:${attemptId}:failed`, at: new Date().toISOString(), type: 'connection', toolkit: attempt.toolkit, phase: 'failed' });
+        if (attempt?.status === 'pending') {
+          try {
+            if (isBuiltinApp(attempt.toolkit)) await store.appendEvent(id, { id: `connection:${attempt.toolkit}:${attemptId}:failed`, at: new Date().toISOString(), type: 'connection', toolkit: attempt.toolkit, phase: 'failed' });
+            else await appEvent(id, attempt.toolkit, 'failed', `app:${attempt.toolkit}:${attemptId}:failed`);
+          } catch (eventError) { console.error('Connection failure event failed', eventError); }
+        }
         return callbackPage(appBaseUrl, attempt?.toolkit, 'failed');
       }
+      // ---- Success path: the account is connected; everything that reacts to it lives in onConnected. ----
+      try { await onConnected(id, toolkit, attemptId); }
+      catch (error) { console.error('Connection success follow-up failed', error); }
+      const page = callbackPage(appBaseUrl, toolkit, 'connected');
+      // A verified Gmail address makes this session the person's main session (never throws).
+      return toolkit === 'gmail' ? signInWithGmail(request, id, attemptId, page) : page;
     },
   };
 }
