@@ -5,6 +5,7 @@ import { prepareTurn } from '@/lib/agent/turn';
 import { generateTurn, turnDependencies } from '@/lib/agent/runtime';
 
 export const runtime = 'nodejs';
+export const maxDuration = 120;
 
 export async function POST(request: Request): Promise<Response> {
   try {

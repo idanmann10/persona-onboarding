@@ -49,5 +49,6 @@ describe('Persona prompt contract', () => {
     expect(prompt).toMatch(/spoken aloud/);
     expect(prompt).toContain('You are on that call now.');
     expect(prompt).not.toContain('use offer_call');
+    expect(prompt).not.toContain('propose_automation');
   });
 });

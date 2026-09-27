@@ -5,7 +5,7 @@ import { readSessionCookie } from './session';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { noteDecline, noteDeclineInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext } from '../agent/actions';
 import { calendarReadInput, gmailSearchInput, relevantToolkits, runCalendarRead, runGmailSearch, type AccountReadClient } from '../agent/account-tools';
-import { userWords } from '../agent/turn';
+import { answeredQuestion, userWords } from '../agent/turn';
 
 interface Store extends IpQuotaStore {
   sessionExists(id: string): Promise<boolean>;
@@ -51,8 +51,7 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
       capabilities: { voice: capabilities.voice, gmail: capabilities.gmail, calendar: capabilities.calendar },
       connected: { gmail: Boolean(accounts.gmail), calendar: Boolean(accounts.calendar) },
     };
-    const lastAssistant = [...state.calls].reverse().flatMap((call) => call.utterances).filter((utterance) => utterance.speaker === 'assistant').at(-1)?.text;
-    const relevant = relevantToolkits({ userTexts: words, lastAssistant });
+    const relevant = relevantToolkits({ userTexts: words, lastAssistant: answeredQuestion(state) });
     const invalid = () => Response.json({ output: JSON.stringify({ status: 'invalid_arguments' }) });
     if (name === 'remember') {
       const parsed = rememberInput.safeParse(args);

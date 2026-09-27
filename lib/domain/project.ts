@@ -15,6 +15,8 @@ export interface CallRecord {
   reason?: CallEndReason;
   startedAt?: string;
   endedAt?: string;
+  /** The latest time the server heard anything from this call (lifecycle or transcript). */
+  lastActivityAt?: string;
   utterances: Utterance[];
 }
 
@@ -23,7 +25,7 @@ export type TimelineItem =
   | { kind: 'call'; id: string; call: CallRecord }
   | { kind: 'call_offer'; id: string; status: 'pending' | 'answered' | 'declined' }
   | { kind: 'connection_offer'; id: string; toolkit: Toolkit; status: 'pending' | 'connected' | 'declined' | 'failed'; reason?: string }
-  | { kind: 'connection_notice'; id: string; toolkit: Toolkit; phase: 'connected' | 'failed' | 'disconnected' }
+  | { kind: 'connection_notice'; id: string; toolkit: Toolkit; phase: 'connected' | 'failed' | 'disconnected'; at?: string }
   | { kind: 'automation'; id: string; automationId: string; title: string; schedule: string; instruction?: string; status: 'proposed' | 'active' | 'declined' | 'disabled'; nextRunAt?: string }
   | { kind: 'automation_notice'; id: string; automationId: string; title: string; phase: 'failed' };
 
@@ -116,6 +118,8 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         } else if (event.callId) {
           if (callOffer?.status === 'pending') callOffer.status = 'answered';
           const record = callFor(event.callId, event.id);
+          if (!ENDED.includes(event.phase)) record.lastActivityAt = event.at;
+          else if (ENDED.includes(record.phase)) break;
           record.phase = event.phase;
           if (event.phase === 'started') record.startedAt ??= event.at;
           if (ENDED.includes(event.phase)) { record.endedAt ??= event.at; record.reason ??= event.reason; }
@@ -124,7 +128,10 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
       }
       case 'voice_fragment':
         state.voiceFragments.push(event);
-        if (event.callId) callFor(event.callId, `call:${event.callId}:fragments`);
+        if (event.callId) {
+          const record = callFor(event.callId, `call:${event.callId}:fragments`);
+          if (!ENDED.includes(record.phase)) record.lastActivityAt = event.at;
+        }
         break;
       case 'connection': {
         state.connections[event.toolkit] = event.phase;
@@ -137,7 +144,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         }
         const offer = connectionOffers[event.toolkit];
         if (offer?.status === 'pending' && event.phase !== 'disconnected') offer.status = event.phase;
-        if (event.phase !== 'declined') state.timeline.push({ kind: 'connection_notice', id: event.id, toolkit: event.toolkit, phase: event.phase });
+        if (event.phase !== 'declined') state.timeline.push({ kind: 'connection_notice', id: event.id, toolkit: event.toolkit, phase: event.phase, at: event.at });
         break;
       }
       case 'decision':
@@ -154,12 +161,12 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         } else if (card) {
           if (event.phase === 'approved') { card.status = 'active'; card.nextRunAt = event.nextRunAt; }
           else if (event.phase === 'declined' || event.phase === 'disabled') { card.status = event.phase; delete card.nextRunAt; }
-          else if (event.phase === 'ran') {
-            // A run only happens for an approved task, whatever the approval path.
+          else if (event.phase === 'ran' || event.phase === 'failed') {
+            // A run only happens for an approved task, whatever the approval path; a disabled card keeps no schedule.
             if (card.status === 'proposed') card.status = 'active';
-            if (event.nextRunAt) card.nextRunAt = event.nextRunAt;
+            if (card.status === 'active' && event.nextRunAt) card.nextRunAt = event.nextRunAt;
+            if (event.phase === 'failed') state.timeline.push({ kind: 'automation_notice', id: event.id, automationId: event.automationId, title: event.title, phase: 'failed' });
           }
-          else if (event.phase === 'failed') state.timeline.push({ kind: 'automation_notice', id: event.id, automationId: event.automationId, title: event.title, phase: 'failed' });
         }
         break;
       }

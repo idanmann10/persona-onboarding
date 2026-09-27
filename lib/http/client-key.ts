@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 
-export type IpScope = 'session' | 'chat' | 'voice' | 'tool' | 'follow_up';
+export type IpScope = 'session' | 'chat' | 'voice' | 'tool' | 'follow_up' | 'voice_event';
 
 /**
  * Per-client limits across all guest sessions, so churning cookies cannot mint unlimited sessions or
@@ -12,13 +12,26 @@ export const IP_LIMITS: Record<IpScope, [number, number]> = {
   voice: [12, 3_600],
   tool: [300, 3_600],
   follow_up: [60, 3_600],
+  voice_event: [4_000, 3_600],
 };
 
-/** A salted hash of the caller's address; the raw IP is never stored. */
-export function clientKey(request: Request, salt = process.env.IP_HASH_SALT || 'persona-preview'): string {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  const address = forwarded || request.headers.get('x-real-ip')?.trim() || 'unknown';
-  return createHash('sha256').update(`${salt}:${address}`).digest('hex').slice(0, 32);
+/**
+ * The caller's address, as set by the platform: Vercel's own header first, then the right-most
+ * X-Forwarded-For entry (appended by the nearest proxy; left-most entries are caller-controlled),
+ * then X-Real-IP.
+ */
+export function clientAddress(request: Request): string {
+  const vercel = request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
+  const forwarded = request.headers.get('x-forwarded-for')?.split(',').map((part) => part.trim()).filter(Boolean).at(-1);
+  return vercel || forwarded || request.headers.get('x-real-ip')?.trim() || 'unknown';
+}
+
+/**
+ * A keyed hash of the caller's address; the raw IP is never stored. The key is IP_HASH_SALT, or else a
+ * server secret, so a stored hash cannot be brute-forced back to an IPv4 address from public code.
+ */
+export function clientKey(request: Request, secret = process.env.IP_HASH_SALT || process.env.OPENAI_API_KEY || process.env.DATABASE_URL || 'persona-preview'): string {
+  return createHmac('sha256', secret).update(clientAddress(request)).digest('hex').slice(0, 32);
 }
 
 export interface IpQuotaStore {

@@ -5,7 +5,7 @@ import type { SessionEvent } from '../domain/events';
 interface Store {
   sessionExists(id: string): Promise<boolean>;
   getActiveConnection(id: string, toolkit: Toolkit): Promise<string | undefined>;
-  getConnectionAttempt(sessionId: string, attemptId: string): Promise<{ toolkit: Toolkit } | undefined>;
+  getConnectionAttempt(sessionId: string, attemptId: string): Promise<{ toolkit: Toolkit; status?: string } | undefined>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
 }
 interface Service {
@@ -99,13 +99,15 @@ export function createConnectionHandlers(store: Store, service: Service, appBase
       const attemptId = new URL(request.url).searchParams.get('attempt');
       if (!attemptId || !/^[0-9a-f-]{36}$/i.test(attemptId)) return new Response('Invalid connection attempt', { status: 400 });
       const attempt = await store.getConnectionAttempt(id, attemptId);
+      // A reload or second visit of a callback that already succeeded is not a failure.
+      if (attempt?.status === 'active') return callbackPage(appBaseUrl, attempt.toolkit, 'connected');
       try {
         const toolkit = await service.finish(id, attemptId);
         await store.appendEvent(id, { id: `connection:${toolkit}:${attemptId}:connected`, at: new Date().toISOString(), type: 'connection', toolkit, phase: 'connected' });
         return callbackPage(appBaseUrl, toolkit, 'connected');
       } catch (error) {
         console.error('Connection callback failed', error);
-        if (attempt) await store.appendEvent(id, { id: `connection:${attempt.toolkit}:${attemptId}:failed`, at: new Date().toISOString(), type: 'connection', toolkit: attempt.toolkit, phase: 'failed' });
+        if (attempt?.status === 'pending') await store.appendEvent(id, { id: `connection:${attempt.toolkit}:${attemptId}:failed`, at: new Date().toISOString(), type: 'connection', toolkit: attempt.toolkit, phase: 'failed' });
         return callbackPage(appBaseUrl, attempt?.toolkit, 'failed');
       }
     },

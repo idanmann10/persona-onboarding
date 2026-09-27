@@ -16,7 +16,8 @@ describe('follow-up triggers', () => {
     const trigger = describeTrigger(projectSession(call('user_hangup', 'honestly the investor updates, every month I have to')), { kind: 'call_ended', callId: 'live_1' });
     expect(trigger?.id).toBe('followup:call:live_1');
     expect(trigger?.instruction).toContain('ended because the user hung up, after 2 min 14s');
-    expect(trigger?.instruction).toContain('cut off mid-sentence: "honestly the investor updates, every month I have to"');
+    expect(trigger?.instruction).toContain('may have been cut off mid-sentence');
+    expect(trigger?.instruction).not.toContain('investor');
     expect(trigger?.instruction).toMatch(/Do not invent what they were about to say/);
     expect(trigger?.instruction).toMatch(/don't push another call/);
   });

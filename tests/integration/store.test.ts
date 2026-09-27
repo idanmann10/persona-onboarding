@@ -336,7 +336,8 @@ describe('Postgres session store', () => {
     expect(await first.json()).toMatchObject({ status: 'messaged', message: { id: 'answer:followup:call:live_call', role: 'assistant' } });
     expect(run).toHaveLength(1);
     expect(run[0].instruction).toContain('the user hung up');
-    expect(run[0].instruction).toContain('every month I');
+    expect(run[0].instruction).toContain('may have been cut off mid-sentence');
+    expect(run[0].instruction).not.toContain('every month I');
     const retry = await followUp(request('http://localhost/api/agent/follow-up', sessionId, { kind: 'call_ended', callId: 'live_call' }));
     expect(await retry.json()).toMatchObject({ status: 'messaged' });
     expect(run).toHaveLength(1);
@@ -368,8 +369,10 @@ describe('Postgres session store', () => {
     const store = createStore(sql);
     const sessionId = await liveCall(store, 'live_lost');
     await store.releaseCallLease(sessionId, 'live_lost');
+    const accepted = (await store.readEvents(sessionId)).find((event) => event.id === 'call:live_lost:accepted')!;
+    await new Promise((resolve) => setTimeout(resolve, 15));
     const snapshot = await (await createSessionHandler(store)(request('http://localhost/api/session', sessionId, undefined, 'http://localhost', 'GET'))).json();
-    expect(snapshot.timeline.find((item: { kind: string }) => item.kind === 'call').call).toMatchObject({ phase: 'dropped', reason: 'lost' });
+    expect(snapshot.timeline.find((item: { kind: string }) => item.kind === 'call').call).toMatchObject({ phase: 'dropped', reason: 'lost', endedAt: accepted.at });
     expect(snapshot.pendingFollowUps).toEqual([{ kind: 'call_ended', callId: 'live_lost' }]);
   });
 
@@ -413,7 +416,8 @@ describe('Postgres session store', () => {
 
   it('caps new conversations and calls per client address across cookies, storing only a hash', async () => {
     const store = createStore(sql);
-    const fresh = (ip: string) => new Request('http://localhost/api/session', { headers: { 'x-forwarded-for': `${ip}, 10.0.0.1` } });
+    // The client can put anything first; the proxy appends the real address last.
+    const fresh = (ip: string) => new Request('http://localhost/api/session', { headers: { 'x-forwarded-for': `spoofed-${crypto.randomUUID()}, ${ip}` } });
     const handler = createSessionHandler(store);
     const statuses: number[] = [];
     let cookie = '';
@@ -472,7 +476,7 @@ describe('Postgres session store', () => {
     const handler = createAutomationHandler(store, async (_history, _id, trigger) => {
       generated += 1;
       expect(trigger.include).toEqual(['gmail']);
-      expect(trigger.instruction).toContain('Do exactly this now: List the emails waiting on my reply, newest first.');
+      expect(trigger.instruction).toContain('"List the emails waiting on my reply, newest first."');
       await new Promise((resolve) => setTimeout(resolve, 20));
       return 'Two threads need you: Dana on the lease (Friday) and Sam about Thursday.';
     });
@@ -514,5 +518,42 @@ describe('Postgres session store', () => {
     const [run] = await sql`SELECT status, error FROM persona_automation_runs WHERE automation_id = ${id}`;
     expect(run).toEqual({ status: 'failed', error: 'model down' });
     expect(Date.parse((await store.getAutomation(sessionId, id))!.nextRunAt!)).toBeGreaterThan(Date.now());
+  });
+
+  it('lets a crashed follow-up be retried once its lease expires', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    expect(await store.reserve(sessionId, 'followup:x')).toBe(true);
+    expect(await store.reserve(sessionId, 'followup:x')).toBe(false);
+    await sql`UPDATE persona_reservations SET created_at = now() - interval '10 minutes' WHERE session_id = ${sessionId}`;
+    expect(await store.reserve(sessionId, 'followup:x')).toBe(true);
+    expect(await store.reserve(sessionId, 'followup:x')).toBe(false);
+  });
+
+  it('keeps ended calls ended: no late start, no typing, no stale transcripts', async () => {
+    const store = createStore(sql);
+    const sessionId = await liveCall(store, 'live_done');
+    const events = createVoiceEventHandler(store);
+    const post = (body: Record<string, unknown>) => events(request('http://localhost/api/voice/event', sessionId, { callId: 'live_done', ...body }));
+    expect((await post({ kind: 'ended', reason: 'user_hangup' })).status).toBe(204);
+    expect((await post({ kind: 'started' })).status).toBe(204);
+    expect(projectSession(await store.readEvents(sessionId)).calls[0]).toMatchObject({ phase: 'ended', reason: 'user_hangup' });
+    expect((await post({ kind: 'typed', messageId: 'late', text: 'hello?' })).status).toBe(409);
+    expect((await post({ kind: 'transcripts', fragments: [{ eventId: 'tail', speaker: 'user', text: 'bye', startMs: 10, endMs: 20 }] })).status).toBe(204);
+    await sql`UPDATE persona_events SET payload = jsonb_set(payload, '{at}', to_jsonb((now() - interval '5 minutes')::text)) WHERE session_id = ${sessionId} AND event_id = 'call:live_done:ended'`;
+    expect((await post({ kind: 'transcripts', fragments: [{ eventId: 'stale', speaker: 'user', text: 'spam', startMs: 30, endMs: 40 }] })).status).toBe(409);
+  });
+
+  it('records an automation run with no answer as failed rather than "nothing new"', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    const id = await proposed(store, sessionId);
+    await store.approveAutomation(sessionId, id, 'America/New_York', new Date(Date.now() - 60_000));
+    const handler = createAutomationHandler(store, async () => '   ');
+    expect(await (await handler(automationRequest(sessionId, { action: 'run_due' }))).json()).toMatchObject({ ran: 0 });
+    const state = projectSession(await store.readEvents(sessionId));
+    expect(state.messages.some((message) => message.origin === 'automation')).toBe(false);
+    expect(state.timeline.some((item) => item.kind === 'automation_notice')).toBe(true);
+    expect(state.timeline.find((item) => item.kind === 'automation')).toMatchObject({ status: 'active', nextRunAt: expect.any(String) });
   });
 });

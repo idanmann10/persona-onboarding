@@ -12,11 +12,15 @@ export interface Utterance {
 
 const BACKCHANNEL = /^(?:m+-?hm+|uh-?huh|yeah|yep|right|okay|ok|sure|got it|i see)[.!]?$/i;
 
+/** Joins two runs merged across a folded backchannel: a space only where two words would touch. */
+const join = (left: string, right: string) => (/\s$/.test(left) || /^[\s,.!?;:]/.test(right) || !left || !right ? left + right : `${left} ${right}`);
+
 /**
  * Group one call's transcript fragments into speaker turns. GPT-Live deltas carry no turn marker, so
- * a turn is a run of one speaker in timeline order. A short acknowledgement sandwiched inside the other
- * speaker's run ("mm-hmm" while the caller keeps talking) is folded away so the caller's thought stays
- * one bubble. The original fragments remain the evidence; this is a derived view.
+ * a turn is a run of one speaker in timeline order. The assistant's own short acknowledgement inside
+ * the caller's run ("mm-hmm" while they keep talking) is folded away so the caller's thought stays one
+ * bubble. A caller's short word between two assistant turns ("Yeah.", "Sure.") is an answer, often
+ * consent, and is always kept. The original fragments remain the evidence; this is a derived view.
  */
 export function groupUtterances(fragments: Fragment[]): Utterance[] {
   const byCall = new Map<string, Array<{ fragment: Fragment; order: number }>>();
@@ -42,8 +46,8 @@ export function groupUtterances(fragments: Fragment[]): Utterance[] {
     }
     for (let i = 1; i < runs.length - 1; i++) {
       const [before, middle, after] = [runs[i - 1], runs[i], runs[i + 1]];
-      if (before.speaker === after.speaker && middle.speaker !== before.speaker && BACKCHANNEL.test(middle.text.trim())) {
-        before.text += after.text;
+      if (before.speaker === 'user' && after.speaker === 'user' && middle.speaker === 'assistant' && BACKCHANNEL.test(middle.text.trim())) {
+        before.text = join(before.text, after.text);
         before.endMs = Math.max(before.endMs, after.endMs);
         runs.splice(i, 2);
         i -= 1;

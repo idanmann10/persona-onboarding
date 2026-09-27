@@ -43,14 +43,21 @@ function offsetMinutes(date: Date, timeZone: string): number {
   return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60_000);
 }
 
-/** The instant a local wall time occurs in a zone. Re-checks the offset so a DST change is honoured. */
+/**
+ * The instant a local wall time occurs in a zone. Around a daylight-saving change there are two
+ * candidate offsets: when both give the wall time (the repeated hour in autumn) the earlier wins; when
+ * neither does (the skipped hour in spring) the later one wins, so a task never runs before its time.
+ */
 export function zonedTimeToUtc(year: number, month: number, day: number, hour: number, minute: number, timeZone: string): Date {
   const guess = Date.UTC(year, month - 1, day, hour, minute);
-  const first = offsetMinutes(new Date(guess), timeZone);
-  let result = guess - first * 60_000;
-  const second = offsetMinutes(new Date(result), timeZone);
-  if (second !== first) result = guess - second * 60_000;
-  return new Date(result);
+  const first = guess - offsetMinutes(new Date(guess), timeZone) * 60_000;
+  const second = guess - offsetMinutes(new Date(first), timeZone) * 60_000;
+  const matches = (instant: number) => {
+    const wall = wallClock(new Date(instant), timeZone);
+    return wall.year === year && wall.month === month && wall.day === day && wall.hour === hour && wall.minute === minute;
+  };
+  const valid = [first, second].filter(matches);
+  return new Date(valid.length ? Math.min(...valid) : Math.max(first, second));
 }
 
 /** The first run strictly after `after`, in the user's time zone. */

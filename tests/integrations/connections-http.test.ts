@@ -6,10 +6,11 @@ describe('connection HTTP contracts', () => {
   const store = {
     sessionExists: async (id: string) => id === 'owner',
     getActiveConnection: async (_id: string, toolkit: string) => toolkit === 'calendar' ? 'ca_one' : undefined,
-    getConnectionAttempt: async () => ({ toolkit: 'calendar' as const }),
+    getConnectionAttempt: async (_id: string, attempt: string) => ({ toolkit: 'calendar' as const, status: attempt === doneAttempt ? 'active' : 'pending' }),
     appendEvent: async (_id: string, event: { id: string; type: string; phase?: string; toolkit?: string }) => { events.push(event); },
   };
   const attemptId = '123e4567-e89b-42d3-a456-426614174000';
+  const doneAttempt = '123e4567-e89b-42d3-a456-426614174999';
   let disconnected = false;
   const service = { start: async () => ({ attemptId, redirectUrl: 'https://connect.composio.dev/start' }), finish: async () => 'calendar' as const, disconnect: async () => { disconnected = true; } };
   const handlers = createConnectionHandlers(store, service, 'https://persona.example');
@@ -59,5 +60,13 @@ describe('connection HTTP contracts', () => {
     expect(disconnected).toBe(false);
     expect((await handlers.disconnect(request('owner', 'https://persona.example'))).status).toBe(204);
     expect(disconnected).toBe(true);
+  });
+
+  it('treats a second visit to a successful callback as connected, not failed', async () => {
+    const before = events.length;
+    const failing = createConnectionHandlers(store, { ...service, finish: async () => { throw new Error('not pending'); } }, 'https://persona.example');
+    const page = await failing.callback(new Request(`https://persona.example/api/connections/callback?attempt=${doneAttempt}`, { headers: { cookie: 'persona_session=owner' } }));
+    expect(await page.text()).toContain('"status":"connected"');
+    expect(events.length).toBe(before);
   });
 });

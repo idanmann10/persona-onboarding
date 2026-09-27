@@ -40,6 +40,18 @@ describe('call transcript grouping', () => {
     expect(utterances).toEqual([expect.objectContaining({ speaker: 'user', text: 'So every month I have to write the investor update' })]);
   });
 
+  it("keeps a caller's one-word answer between two assistant turns", () => {
+    const utterances = groupUtterances([
+      fragment('assistant', 'Gmail is connected. Want me to look?', 0), fragment('user', 'Yeah.', 2_000), fragment('assistant', 'One sec.', 2_600),
+    ]);
+    expect(utterances.map((utterance) => [utterance.speaker, utterance.text])).toEqual([['assistant', 'Gmail is connected. Want me to look?'], ['user', 'Yeah.'], ['assistant', 'One sec.']]);
+  });
+
+  it('adds a space only where merged fragments would run words together', () => {
+    const utterances = groupUtterances([fragment('user', 'every month', 0), fragment('assistant', 'mhm', 500), fragment('user', 'I have to', 900)]);
+    expect(utterances[0].text).toBe('every month I have to');
+  });
+
   it('keeps a real reply between two caller turns', () => {
     const utterances = groupUtterances([
       fragment('user', 'Can you check my inbox?', 0), fragment('assistant', 'Sure, one moment.', 900), fragment('user', 'Thanks', 3_000),

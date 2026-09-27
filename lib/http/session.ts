@@ -32,7 +32,8 @@ export function pendingFollowUps(state: SessionProjection, now = Date.now()): Fo
   }
   for (const toolkit of ['gmail', 'calendar'] as const) {
     const notice = [...state.timeline].reverse().find((item) => item.kind === 'connection_notice' && item.toolkit === toolkit);
-    if (notice && notice.kind === 'connection_notice' && notice.phase !== 'disconnected' && !state.decisions[`followup:${notice.id}`]) pending.push({ kind: 'connection', toolkit });
+    if (notice && notice.kind === 'connection_notice' && notice.phase !== 'disconnected' && !state.decisions[`followup:${notice.id}`] &&
+        (!notice.at || now - Date.parse(notice.at) < FOLLOW_UP_WINDOW_MS)) pending.push({ kind: 'connection', toolkit });
   }
   return pending;
 }
@@ -49,7 +50,9 @@ export function createSessionHandler(store: Store) {
     if (live && store.getCallLease) {
       const lease = await store.getCallLease(session.id);
       if (!lease?.active || lease.callId !== live.callId) {
-        await store.appendEvent(session.id, { id: `call:${live.callId}:dropped`, at: new Date().toISOString(), type: 'call', phase: 'dropped', callId: live.callId, reason: 'lost' });
+        // Date the loss at the call's last sign of life, not at this page load, which may be days later.
+        const at = live.lastActivityAt ?? live.startedAt ?? new Date().toISOString();
+        await store.appendEvent(session.id, { id: `call:${live.callId}:dropped`, at, type: 'call', phase: 'dropped', callId: live.callId, reason: 'lost' });
         events = await store.readEvents(session.id);
       }
     }

@@ -77,7 +77,7 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     getConnectionAttempt: async (sessionId: string, attemptId: string) => {
       const rows = await sql`SELECT toolkit, connected_account_id AS "accountId", auth_config_id AS "authConfigId", status
         FROM persona_connections WHERE session_id = ${sessionId} AND attempt_id = ${attemptId}
-        AND expires_at > now() LIMIT 1`;
+        AND (expires_at > now() OR status = 'active') LIMIT 1`;
       return rows[0] as { toolkit: 'gmail' | 'calendar'; accountId: string; authConfigId: string; status: string } | undefined;
     },
     activateConnection: async (sessionId: string, attemptId: string): Promise<boolean> => sql.begin(async (tx) => {
@@ -199,10 +199,18 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     advanceAutomation: async (id: string, nextRunAt: Date | null): Promise<void> => {
       await sql`UPDATE persona_automations SET next_run_at = ${nextRunAt}, claimed_until = NULL WHERE id = ${id}`;
     },
-    reserve: async (sessionId: string, key: string): Promise<boolean> => {
+    /** A lease: a reservation older than the lease can be taken over, so a crashed run is retried. */
+    reserve: async (sessionId: string, key: string, leaseSeconds = 180): Promise<boolean> => {
       const rows = await sql`INSERT INTO persona_reservations (session_id, reservation_key)
-        VALUES (${sessionId}, ${key}) ON CONFLICT DO NOTHING RETURNING reservation_key`;
+        VALUES (${sessionId}, ${key})
+        ON CONFLICT (session_id, reservation_key) DO UPDATE SET created_at = now()
+        WHERE persona_reservations.created_at < now() - make_interval(secs => ${leaseSeconds})
+        RETURNING reservation_key`;
       return rows.length > 0;
+    },
+    getEvent: async (id: string, eventId: string): Promise<SessionEvent | undefined> => {
+      const rows = await sql`SELECT payload FROM persona_events WHERE session_id = ${id} AND event_id = ${eventId} LIMIT 1`;
+      return rows[0]?.payload as SessionEvent | undefined;
     },
     releaseReservation: async (sessionId: string, key: string): Promise<void> => {
       await sql`DELETE FROM persona_reservations WHERE session_id = ${sessionId} AND reservation_key = ${key}`;

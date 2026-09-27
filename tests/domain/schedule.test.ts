@@ -31,4 +31,12 @@ describe('recurring schedule', () => {
     const exactly = new Date('2026-09-28T12:00:00Z');
     expect(nextRun({ cadence: 'weekdays', time: '08:00' }, 'America/New_York', exactly).toISOString()).toBe('2026-09-29T12:00:00.000Z');
   });
+
+  it('never runs before the chosen time on a daylight-saving change', () => {
+    // 2027-03-14 02:30 does not exist in New York (clocks jump 2:00 -> 3:00); run at 3:30 EDT, not 1:30 EST.
+    expect(zonedTimeToUtc(2027, 3, 14, 2, 30, 'America/New_York').toISOString()).toBe('2027-03-14T07:30:00.000Z');
+    expect(zonedTimeToUtc(2027, 3, 28, 2, 30, 'Europe/Berlin').toISOString()).toBe('2027-03-28T01:30:00.000Z');
+    // 2026-11-01 01:30 happens twice in New York; the first one (EDT) wins.
+    expect(zonedTimeToUtc(2026, 11, 1, 1, 30, 'America/New_York').toISOString()).toBe('2026-11-01T05:30:00.000Z');
+  });
 });

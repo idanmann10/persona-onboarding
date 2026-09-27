@@ -49,7 +49,7 @@ describe('conversation timeline and onboarding progress', () => {
     expect(state.timeline).toEqual([
       { kind: 'call_offer', id: 'o1', status: 'declined' },
       { kind: 'connection_offer', id: 'c1', toolkit: 'gmail', status: 'connected', reason: 'See who is waiting on you' },
-      { kind: 'connection_notice', id: 'c2', toolkit: 'gmail', phase: 'connected' },
+      { kind: 'connection_notice', id: 'c2', toolkit: 'gmail', phase: 'connected', at: at(4) },
     ]);
   });
 

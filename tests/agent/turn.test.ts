@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { callLines, modelMessages, prepareTurn, userWords } from '../../lib/agent/turn';
+import { answeredQuestion, callLines, modelMessages, prepareTurn, userWords } from '../../lib/agent/turn';
 import { relevantToolkits } from '../../lib/agent/account-tools';
 import { projectSession } from '../../lib/domain/project';
 import type { SessionEvent } from '../../lib/domain/events';
@@ -24,6 +24,21 @@ describe('turn context', () => {
     ]);
     expect(userWords(projectSession(history))).toEqual(['Call yourself Max', "I'm Dana"]);
     expect(callLines(projectSession(history))).toEqual(['Call at 12:01 UTC, 30s, ended: the user hung up.']);
+  });
+
+  it("finds the assistant question the user's latest words answer, across calls", () => {
+    const events: SessionEvent[] = [
+      { id: 'call:live_a:started', at: 'x', type: 'call', phase: 'started', callId: 'live_a' },
+      { id: 'voice:live_a:1', at: 'x', type: 'voice_fragment', callId: 'live_a', speaker: 'assistant', text: 'Let me look at your inbox.', startMs: 0, endMs: 900, final: false },
+      { id: 'call:live_a:dropped', at: 'x', type: 'call', phase: 'dropped', callId: 'live_a', reason: 'connection_lost' },
+      { id: 'call:live_b:started', at: 'x', type: 'call', phase: 'started', callId: 'live_b' },
+      { id: 'voice:live_b:1', at: 'x', type: 'voice_fragment', callId: 'live_b', speaker: 'assistant', text: 'Want me to check tomorrow on your calendar?', startMs: 0, endMs: 900, final: false },
+      { id: 'voice:live_b:2', at: 'x', type: 'voice_fragment', callId: 'live_b', speaker: 'user', text: 'Sure.', startMs: 1_500, endMs: 1_900, final: false },
+      { id: 'voice:live_b:3', at: 'x', type: 'voice_fragment', callId: 'live_b', speaker: 'assistant', text: 'One moment.', startMs: 2_200, endMs: 2_600, final: false },
+    ];
+    const state = projectSession(events);
+    expect(answeredQuestion(state)).toBe('Want me to check tomorrow on your calendar?');
+    expect(relevantToolkits({ userTexts: userWords(state), lastAssistant: answeredQuestion(state) })).toEqual(['calendar']);
   });
 
   it('keeps the newest turns within the message budget', () => {

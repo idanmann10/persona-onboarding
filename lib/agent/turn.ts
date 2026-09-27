@@ -58,6 +58,24 @@ export function modelMessages(state: SessionProjection): ModelMessage[] {
   return kept;
 }
 
+/** Every line of the conversation in order, typed or spoken, without channel markers. */
+export function conversationLines(state: SessionProjection): Array<{ speaker: 'user' | 'assistant'; text: string }> {
+  const lines: Array<{ speaker: 'user' | 'assistant'; text: string }> = [];
+  for (const item of state.timeline) {
+    if (item.kind === 'message') lines.push({ speaker: item.speaker, text: item.text });
+    if (item.kind === 'call') for (const utterance of item.call.utterances) lines.push({ speaker: utterance.speaker, text: utterance.text });
+  }
+  return lines;
+}
+
+/** The assistant line the user's latest words answer (its question before their "yes"), if any. */
+export function answeredQuestion(state: SessionProjection): string | undefined {
+  const lines = conversationLines(state);
+  const lastUser = lines.map((line) => line.speaker).lastIndexOf('user');
+  for (let index = lastUser - 1; index >= 0; index--) if (lines[index].speaker === 'assistant') return lines[index].text;
+  return undefined;
+}
+
 /** The user's own recent words, typed or spoken, newest last. */
 export function userWords(state: SessionProjection, limit = 6): string[] {
   const words: string[] = [];
@@ -110,8 +128,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
     capabilities: { voice: capabilities.voice, gmail: capabilities.gmail, calendar: capabilities.calendar }, connected, now: deps.now,
     ...(deps.store.proposeAutomation ? { automations: { proposeAutomation: deps.store.proposeAutomation } } : {}),
   };
-  const lastAssistant = state.messages.filter((message) => message.speaker === 'assistant').at(-1)?.text;
-  const relevant = relevantToolkits({ userTexts: words, lastAssistant, include: options.trigger?.include });
+  const relevant = relevantToolkits({ userTexts: words, lastAssistant: answeredQuestion(state), include: options.trigger?.include });
   const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
   const tools: ToolSet = {
     remember: tool({

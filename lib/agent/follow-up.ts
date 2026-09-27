@@ -29,7 +29,7 @@ export function describeTrigger(state: SessionProjection, request: FollowUpReque
     const duration = callDuration(call.startedAt, call.endedAt);
     const lines = [
       `Something just happened: the browser call ended because ${END_REASONS[reason]}${duration ? `, after ${duration}` : ''}.`,
-      cutOff ? `Their last words may have been cut off mid-sentence: "${last!.text.slice(-200)}".` : '',
+      cutOff ? 'Their last line in the call transcript above may have been cut off mid-sentence.' : '',
       'Decide what a thoughtful person would do next, then either send one short text or stay silent.',
       '- If something was left unfinished (they hung up or the line dropped mid-thought), send one short message that picks up right where you left off and names what they were talking about. Do not invent what they were about to say.',
       DROPPED.has(reason) ? '- The line dropped, so you may offer to call back or to keep going here.' : '',

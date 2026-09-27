@@ -23,6 +23,15 @@ describe('GPT-Live session configuration', () => {
     expect(instructions).not.toContain('read_calendar_window');
   });
 
+  it('mentions a dropped line only when the last call dropped', () => {
+    const call = (id: string, reason: string): SessionEvent[] => [
+      { id: `call:${id}:started`, at: 'x', type: 'call', phase: 'started', callId: id },
+      { id: `call:${id}:end`, at: 'x', type: 'call', phase: reason === 'connection_lost' ? 'dropped' : 'ended', callId: id, reason: reason as 'connection_lost' },
+    ];
+    expect(voiceGreeting(projectSession(call('live_1', 'connection_lost')))).toMatch(/line dropped/);
+    expect(voiceGreeting(projectSession([...call('live_1', 'connection_lost'), ...call('live_2', 'user_hangup')]))).not.toMatch(/line dropped/);
+  });
+
   it('greets first and asks for the next missing thing', () => {
     expect(voiceGreeting(projectSession([]))).toMatch(/^Greet the caller now in English\. .*ask what you should call them/);
     expect(voiceGreeting(projectSession(named))).toMatch(/as Max\..*ask what they would most like a hand with/);
@@ -52,5 +61,7 @@ describe('GPT-Live session configuration', () => {
     expect(off.delegation).toBe(false);
     expect(off.session).not.toHaveProperty('delegation');
     expect(off.session.instructions).not.toContain('search_gmail');
+    expect(off.session.instructions).not.toContain('remember:');
+    expect(off.session.instructions).toContain('There is no backend on this call.');
   });
 });

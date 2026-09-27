@@ -7,7 +7,7 @@ import { createStore } from '../lib/db/store';
 import type { SessionEvent } from '../lib/domain/events';
 
 const url = process.env.DATABASE_URL;
-if (!url || !/@(localhost|127\.0\.0\.1)[:/]/.test(url)) throw new Error('seed-demo only runs against a local DATABASE_URL');
+if (!url || !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname)) throw new Error('seed-demo only runs against a local DATABASE_URL');
 const sql = postgres(url, { max: 1 });
 try {
   const [latest] = await sql`SELECT id FROM persona_sessions ORDER BY created_at DESC LIMIT 1`;
