@@ -108,5 +108,18 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     releaseCallLease: async (sessionId: string, id: string): Promise<void> => {
       await sql`DELETE FROM persona_call_leases WHERE session_id = ${sessionId} AND (lease_id = ${id} OR call_id = ${id})`;
     },
+    consumeQuota: async (sessionId: string, scope: 'chat' | 'voice' | 'research', limit: number, windowSeconds: number): Promise<boolean> => {
+      const windowStart = new Date(Math.floor(Date.now() / (windowSeconds * 1000)) * windowSeconds * 1000).toISOString();
+      const rows = await sql`INSERT INTO persona_rate_limits (session_id, scope, window_start, count)
+        VALUES (${sessionId}, ${scope}, ${windowStart}, 1)
+        ON CONFLICT (session_id, scope, window_start) DO UPDATE SET count = persona_rate_limits.count + 1
+        WHERE persona_rate_limits.count < ${limit} RETURNING count`;
+      return rows.length > 0;
+    },
+    reserveIdentityClaim: async (sessionId: string, userEventId: string): Promise<boolean> => {
+      const rows = await sql`INSERT INTO persona_identity_reservations (session_id, user_event_id)
+        VALUES (${sessionId}, ${userEventId}) ON CONFLICT DO NOTHING RETURNING user_event_id`;
+      return rows.length > 0;
+    },
   };
 }

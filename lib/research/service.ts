@@ -7,6 +7,8 @@ import { projectSession } from '../domain/project';
 interface Store {
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
+  consumeQuota(id: string, scope: 'research', limit: number, windowSeconds: number): Promise<boolean>;
+  reserveIdentityClaim(id: string, userEventId: string): Promise<boolean>;
 }
 
 type Clue = { first: string; last: string; company: string };
@@ -21,13 +23,14 @@ export async function resolveIdentityClaim(
   key: string,
   lookup: Lookup = lookupPersonCandidate,
   research: Research = researchMatchedPerson,
-): Promise<(PersonCandidate & { research?: ProfessionalContext | null }) | { status: 'insufficient_evidence' | 'already_checked' | 'not_found' }> {
+): Promise<(PersonCandidate & { research?: ProfessionalContext | null }) | { status: 'insufficient_evidence' | 'already_checked' | 'not_found' | 'rate_limited' }> {
   if (userEvent.type !== 'message' || userEvent.speaker !== 'user' || !isDirectIdentityClaim(userEvent.text, clue)) {
     return { status: 'insufficient_evidence' };
   }
   const checkedId = `identity:${userEvent.id}:lookup`;
   const events = await store.readEvents(sessionId);
   if (events.some((event) => event.id === checkedId)) return { status: 'already_checked' };
+  if (!(await store.reserveIdentityClaim(sessionId, userEvent.id))) return { status: 'already_checked' };
   const at = new Date().toISOString();
   const previous = projectSession(events).facts;
   const newName = `${clue.first} ${clue.last}`;
@@ -40,6 +43,10 @@ export async function resolveIdentityClaim(
   }
   await store.appendEvent(sessionId, { id: `identity:${userEvent.id}:name`, at, type: 'fact', key: 'name', value: `${clue.first} ${clue.last}`, evidence: 'confirmed', provenance: 'user_said', sourceEventId: userEvent.id });
   await store.appendEvent(sessionId, { id: `identity:${userEvent.id}:company`, at, type: 'fact', key: 'company', value: clue.company, evidence: 'confirmed', provenance: 'user_said', sourceEventId: userEvent.id });
+  if (!(await store.consumeQuota(sessionId, 'research', 5, 86_400))) {
+    await store.appendEvent(sessionId, { id: checkedId, at: new Date().toISOString(), type: 'fact', key: 'identity_lookup_status', value: 'rate_limited', evidence: 'tentative', provenance: 'tool_observed', sourceEventId: userEvent.id });
+    return { status: 'rate_limited' };
+  }
   const candidate = await lookup({ ...clue, provenance: 'user_said' }, key);
   await store.appendEvent(sessionId, { id: checkedId, at: new Date().toISOString(), type: 'fact', key: 'identity_lookup_status', value: candidate?.status || 'not_found', evidence: 'tentative', provenance: 'tool_observed', sourceEventId: userEvent.id });
   if (candidate?.status === 'matched_for_research') {

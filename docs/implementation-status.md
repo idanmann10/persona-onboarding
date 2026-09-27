@@ -11,6 +11,9 @@ This is the build status for the private preview branch. The architecture review
 - Optional Gmail and Calendar Composio connection flow. The callback checks the stored attempt, owning session, connected account ID, auth config, toolkit, and active status. Agent tools expose at most ten primary-calendar event summaries in a 30-day window or five Gmail message summaries for a relevant current request. No send or calendar write tool is exposed.
 - Disconnect and delete-conversation controls. Provider account deletion with upstream revocation is requested before local state removal. SQL cascades messages, graph facts, and connection records.
 - 48 synthetic scenario seeds, hard-boundary tests, a prompt-only trace runner, Postgres integration tests, and CI configuration.
+- Per-session caps on text turns, browser call starts, and person research lookups. These are preview safeguards; anonymous-session churn still requires an edge-level limit before public access.
+
+Local tests, typecheck, and production build pass. GitHub Actions currently does not start its job because GitHub reports an account billing or spending-limit issue; no runner steps execute.
 
 ## Unverified or incomplete
 
@@ -18,6 +21,6 @@ This is the build status for the private preview branch. The architecture review
 - Context.dev and Composio live contracts, OAuth scopes, and callback behavior with evaluator accounts, because keys and auth configs are not configured here.
 - Live sourced Answers quality, source-to-field checking, and a retention policy for researched facts.
 - Full scenario replay with provider fixtures, human scoring, voice listening, and wrong-account collision evals. The prompt-only runner is unscored and cannot establish release readiness.
-- Durable approved automation, hosted Postgres, deployment preview, account-level sign-in, abuse limits, retention policy, observability, and privacy/legal review for automatic personal research.
+- Durable approved automation, hosted Postgres, deployment preview, account-level sign-in, edge-level abuse limits, retention policy, observability, and privacy/legal review for automatic personal research.
 
 The repository remains private. The draft PR is for architecture and code review, not a release approval.

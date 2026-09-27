@@ -57,3 +57,18 @@ CREATE TABLE IF NOT EXISTS persona_call_leases (
   call_id TEXT,
   expires_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS persona_rate_limits (
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL,
+  window_start TIMESTAMPTZ NOT NULL,
+  count INTEGER NOT NULL CHECK (count > 0),
+  PRIMARY KEY (session_id, scope, window_start)
+);
+
+CREATE TABLE IF NOT EXISTS persona_identity_reservations (
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  user_event_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (session_id, user_event_id)
+);

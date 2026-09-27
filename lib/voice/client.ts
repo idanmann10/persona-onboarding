@@ -103,7 +103,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     const sdp = peer.localDescription?.sdp;
     if (!sdp) throw new Error('The browser did not create an audio offer.');
     const response = await deps.fetchFn('/api/voice/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sdp }) });
-    if (!response.ok) throw new Error(response.status === 503 ? 'Voice is not configured yet.' : 'The call could not connect.');
+    if (!response.ok) throw new Error(response.status === 503 ? 'Voice is not configured yet.' : response.status === 429 ? 'Call limit reached. Please try again later.' : response.status === 409 ? 'A call is already active in this conversation.' : 'The call could not connect.');
     const result = await response.json() as { session?: { id?: string }; transport?: { sdp?: string } };
     if (!result.session?.id || !result.transport?.sdp) throw new Error('The voice connection returned an invalid answer.');
     callId = result.session.id;

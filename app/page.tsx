@@ -59,7 +59,7 @@ export default function Home() {
     setMessages((current) => [...current, { id, role: 'user', text }, { id: answerId, role: 'assistant', text: '' }]);
     try {
       const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, text }) });
-      if (!response.ok) throw new Error(response.status === 503 ? 'The text model is not configured yet.' : 'The reply could not be started.');
+      if (!response.ok) throw new Error(response.status === 503 ? 'The text model is not configured yet.' : response.status === 429 ? 'Too many messages right now. Please try again shortly.' : 'The reply could not be started.');
       voiceRef.current?.addTextContext(text);
       if (!response.body) throw new Error('The reply stream is unavailable.');
       const reader = response.body.getReader();

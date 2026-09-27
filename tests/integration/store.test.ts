@@ -84,7 +84,9 @@ describe('Postgres session store', () => {
     const chatHandler = createChatHandler(store, async function* () { yield 'I can help with that.'; });
     const rejected = await chatHandler(new Request('http://localhost/api/chat', { method: 'POST', body: JSON.stringify({ id: 'm3', text: 'hello' }) }));
     expect(rejected.status).toBe(401);
-    const reply = await chatHandler(new Request('http://localhost/api/chat', { method: 'POST', headers: { cookie: cookieHeader }, body: JSON.stringify({ id: 'm3', text: 'hello' }) }));
+    const forbidden = await chatHandler(new Request('http://localhost/api/chat', { method: 'POST', headers: { cookie: cookieHeader, origin: 'http://evil.example' }, body: JSON.stringify({ id: 'm3', text: 'hello' }) }));
+    expect(forbidden.status).toBe(403);
+    const reply = await chatHandler(new Request('http://localhost/api/chat', { method: 'POST', headers: { cookie: cookieHeader, origin: 'http://localhost' }, body: JSON.stringify({ id: 'm3', text: 'hello' }) }));
     expect(reply.status).toBe(200);
     expect(await reply.text()).toBe('I can help with that.');
     const reloaded = await sessionHandler(new Request('http://localhost/api/session', { headers: { cookie: cookieHeader } }));
@@ -93,6 +95,10 @@ describe('Postgres session store', () => {
       { id: 'm3', role: 'user', text: 'hello' },
       { id: 'answer:m3', role: 'assistant', text: 'I can help with that.' },
     ]);
+    const sessionId = cookieHeader.split('=')[1];
+    for (let i = 0; i < 12; i++) await store.consumeQuota(sessionId, 'chat', 12, 60);
+    const limited = await chatHandler(new Request('http://localhost/api/chat', { method: 'POST', headers: { cookie: cookieHeader, origin: 'http://localhost' }, body: JSON.stringify({ id: 'm4', text: 'again' }) }));
+    expect(limited.status).toBe(429);
   });
 
   it('creates a browser voice session with prior text and evidence-labelled state only for the owning cookie', async () => {
@@ -112,6 +118,9 @@ describe('Postgres session store', () => {
     const result = await handler(request(session.id));
     expect(result.status).toBe(201);
     expect((await handler(request(session.id))).status).toBe(409);
+    await store.releaseCallLease(session.id, 'live_test');
+    for (let i = 0; i < 3; i++) await store.consumeQuota(session.id, 'voice', 3, 600);
+    expect((await handler(request(session.id))).status).toBe(429);
     expect(await result.json()).toEqual({ session: { id: 'live_test' }, transport: { type: 'webrtc', sdp: 'answer-sdp' } });
     expect(JSON.stringify(sent)).toContain('I need help preparing for Friday');
     expect(JSON.stringify(sent)).toContain('preferred_pace');
@@ -157,6 +166,16 @@ describe('Postgres session store', () => {
     expect(await store.acquireCallLease(id, 'lease-three')).toBe(false);
     await store.releaseCallLease(id, 'live_one');
     expect(await store.acquireCallLease(id, 'lease-three')).toBe(true);
+  });
+
+  it('atomically caps paid operations by session and window', async () => {
+    const store = createStore(sql);
+    const id = crypto.randomUUID();
+    await store.createSession(id);
+    const results = await Promise.all([store.consumeQuota(id, 'chat', 2, 60), store.consumeQuota(id, 'chat', 2, 60), store.consumeQuota(id, 'chat', 2, 60)]);
+    expect(results.filter(Boolean)).toHaveLength(2);
+    expect(await store.consumeQuota(id, 'voice', 1, 600)).toBe(true);
+    expect(await store.consumeQuota(id, 'voice', 1, 600)).toBe(false);
   });
 
   it('projects sourced graph facts and supersedes a correction in SQL', async () => {
@@ -209,6 +228,33 @@ describe('Postgres session store', () => {
     expect(state.facts.name.value).toBe('Sam Lee');
     expect(state.facts.public_identity_candidate).toBeUndefined();
     expect(state.facts.public_role).toBeUndefined();
+  });
+
+  it('does not call person enrichment after a session reaches its research quota', async () => {
+    const store = createStore(sql);
+    const id = crypto.randomUUID();
+    await store.createSession(id);
+    for (let i = 0; i < 5; i++) await store.consumeQuota(id, 'research', 5, 86_400);
+    const event: SessionEvent = { id: 'rate-identity', at: new Date().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: "I'm Jordan Lee, founder of Northstar Analytics." };
+    await store.appendEvent(id, event);
+    let lookupCalls = 0;
+    const result = await resolveIdentityClaim(store, id, event, { first: 'Jordan', last: 'Lee', company: 'Northstar Analytics' }, 'key', async () => { lookupCalls++; return null; }, async () => null);
+    expect(result.status).toBe('rate_limited');
+    expect(lookupCalls).toBe(0);
+  });
+
+  it('reserves an identity claim once across concurrent attempts', async () => {
+    const store = createStore(sql);
+    const id = crypto.randomUUID();
+    await store.createSession(id);
+    const event: SessionEvent = { id: 'concurrent-identity', at: new Date().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: "I'm Jordan Lee, founder of Northstar Analytics." };
+    await store.appendEvent(id, event);
+    let lookups = 0;
+    const lookup = async () => { lookups++; await new Promise((resolve) => setTimeout(resolve, 10)); return null; };
+    const clue = { first: 'Jordan', last: 'Lee', company: 'Northstar Analytics' };
+    const results = await Promise.all([resolveIdentityClaim(store, id, event, clue, 'key', lookup, async () => null), resolveIdentityClaim(store, id, event, clue, 'key', lookup, async () => null)]);
+    expect(lookups).toBe(1);
+    expect(results.map((result) => result.status).sort()).toEqual(['already_checked', 'not_found']);
   });
 
   it('binds a connected account attempt to its owning session and only activates it after verification', async () => {

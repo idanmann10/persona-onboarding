@@ -9,6 +9,7 @@ interface Store {
   acquireCallLease(id: string, leaseId: string): Promise<boolean>;
   bindCallLease(id: string, leaseId: string, callId: string): Promise<boolean>;
   releaseCallLease(id: string, leaseOrCallId: string): Promise<void>;
+  consumeQuota(id: string, scope: 'voice', limit: number, windowSeconds: number): Promise<boolean>;
 }
 
 export function createVoiceSessionHandler(store: Store, key: string, upstream: typeof fetch) {
@@ -22,6 +23,10 @@ export function createVoiceSessionHandler(store: Store, key: string, upstream: t
     if (typeof sdp !== 'string' || !sdp.trim() || sdp.length > 65_536) return new Response('Invalid SDP offer', { status: 400 });
     const leaseId = crypto.randomUUID();
     if (!(await store.acquireCallLease(sessionId, leaseId))) return new Response('A call is already active', { status: 409 });
+    if (!(await store.consumeQuota(sessionId, 'voice', 3, 600))) {
+      await store.releaseCallLease(sessionId, leaseId);
+      return new Response('Call limit reached; try again later', { status: 429 });
+    }
     const state = projectSession(await store.readEvents(sessionId));
     const history = state.messages.slice(-20);
     const facts = Object.values(state.facts).slice(-15).map((fact) => ({ key: fact.key, value: fact.value.slice(0, 200), evidence: fact.evidence, provenance: fact.provenance, sourceUrl: fact.sourceUrl }));
