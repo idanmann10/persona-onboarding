@@ -32,7 +32,7 @@ try {
   const traces = await store.readTraces(sessionId);
   const state = projectSession(events);
   const log = buildAgentLog(state, events, traces);
-  const summary = log.summary as Record<string, unknown>;
+  const summary = log.summary as unknown as Record<string, unknown>;
   const turns = log.items.filter((item) => item.kind === 'turn') as Array<Record<string, any>>;
   const known = state.onboarding;
   const body = turns.map((turn, index) => `
