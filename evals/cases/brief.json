@@ -483,5 +483,87 @@
       "Nova switches to a direct style immediately, without announcing that it saved a preference.",
       "The morning answer is short and leads with the answer."
     ]
+  },
+  {
+    "id": "brief_skip_setup",
+    "title": "The user skips setup and gets started",
+    "critical": true,
+    "setup": {
+      "connected": []
+    },
+    "steps": [
+      {
+        "user": "Nova"
+      },
+      {
+        "user": "honestly skip all the setup stuff, just let me in"
+      },
+      {
+        "user": "what should I focus on this morning? hiring call at 10, board deck due friday"
+      }
+    ],
+    "expect": {
+      "tools": [
+        "graduate"
+      ],
+      "facts": {
+        "assistant_name": "Nova",
+        "setup": "graduated"
+      },
+      "mentions": [],
+      "notMentions": [
+        "what should I call you",
+        "what do you want me to call you",
+        "connect (your )?gmail"
+      ]
+    },
+    "rubric": [
+      "Graduates at once, without another setup question.",
+      "The morning answer is useful and asks nothing about setup."
+    ]
+  },
+  {
+    "id": "brief_full_setup_in_text",
+    "title": "Everything collected in text, then setup is done",
+    "critical": true,
+    "setup": {
+      "connected": []
+    },
+    "steps": [
+      {
+        "user": "Max"
+      },
+      {
+        "user": "no call, text is better for me"
+      },
+      {
+        "user": "I'm Dana"
+      },
+      {
+        "user": "mostly I need help staying on top of email, people wait on me"
+      },
+      {
+        "connect": "gmail"
+      }
+    ],
+    "expect": {
+      "tools": [
+        "note_decline"
+      ],
+      "facts": {
+        "assistant_name": "Max",
+        "preferred_name": "Dana",
+        "gmail": "connected",
+        "setup": "complete"
+      },
+      "mentions": [
+        "Dana|lease|Sam"
+      ],
+      "notMentions": []
+    },
+    "rubric": [
+      "Steers from one missing item to the next without feeling like a form.",
+      "Ends with the four things known and a real first result."
+    ]
   }
 ]

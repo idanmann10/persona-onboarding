@@ -231,6 +231,23 @@ export async function offerCall(ctx: ActionContext) {
 }
 
 /** The user said no in their own words ("just text me", "I won't connect my calendar"); don't offer it again. */
+export const graduateInput = z.object({
+  reason: z.string().max(160).optional().describe('Briefly, in their words, why they want to skip ahead (e.g. "just let me in").'),
+});
+
+/**
+ * The user chose to skip the rest of setup and get started. From here the assistant stops asking setup
+ * questions and just helps; the thread shows one line so the choice is visible.
+ */
+export async function graduate(ctx: ActionContext, input: z.infer<typeof graduateInput>) {
+  if (ctx.state.setup.stage === 'graduated') return { status: 'unchanged' as const, note: 'Setup is already skipped. Just help.' };
+  await ctx.store.appendEvent(ctx.sessionId, {
+    id: 'onboarding:graduated', at: timestamp(ctx), type: 'onboarding', phase: 'graduated',
+    ...(input.reason?.trim() ? { reason: input.reason.trim().slice(0, 160) } : {}),
+  });
+  return { status: 'saved' as const, note: 'Setup skipped. No more setup questions; help with whatever they want now.' };
+}
+
 export async function noteDecline(ctx: ActionContext, input: z.infer<typeof noteDeclineInput>) {
   if (input.what === 'call') {
     if (ctx.channel === 'voice') return { status: 'already_on_call' as const };

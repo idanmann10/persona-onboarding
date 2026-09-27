@@ -8,7 +8,7 @@ import { projectSession } from './project';
  */
 export const FUNNEL_STAGES = [
   'replied', 'stayed', 'named', 'knowsUser', 'needKnown', 'callOffered', 'callHappened',
-  'gmailConnected', 'firstValue', 'taskProposed', 'activated', 'returned',
+  'gmailConnected', 'setupDone', 'firstValue', 'taskProposed', 'activated', 'returned',
 ] as const;
 export type FunnelStage = (typeof FUNNEL_STAGES)[number];
 
@@ -21,6 +21,7 @@ export const STAGE_LABELS: Record<FunnelStage, string> = {
   callOffered: 'Was offered a call',
   callHappened: 'Talked on a call',
   gmailConnected: 'Connected Gmail',
+  setupDone: 'Finished setup (all four known) or chose to skip ahead',
   firstValue: 'Saw something real from their accounts',
   taskProposed: 'Was offered a recurring task',
   activated: 'Approved a recurring task',
@@ -42,6 +43,7 @@ export function sessionStages(events: SessionEvent[]): Record<FunnelStage, boole
     callOffered: callHappened || progress.call !== 'not_offered',
     callHappened,
     gmailConnected: events.some((event) => event.type === 'connection' && event.toolkit === 'gmail' && event.phase === 'connected'),
+    setupDone: state.setup.stage !== 'active',
     firstValue: events.some((event) => (event.type === 'account_read' && event.items > 0) || (event.type === 'automation' && event.phase === 'ran')),
     taskProposed: state.automations.length > 0,
     activated: events.some((event) => event.type === 'automation' && event.phase === 'approved'),

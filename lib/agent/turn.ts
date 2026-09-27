@@ -4,10 +4,11 @@ import type { CallEndReason, SessionEvent, Toolkit } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { buildSystemPrompt } from './prompts';
-import { customize, customizeInput, noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
+import { customize, customizeInput, noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore, graduate, graduateInput } from './actions';
 import type { AutomationStore } from '../domain/automation';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
 import { personalityLine, personaSettings } from '../domain/persona';
+import { setupStatus } from '../domain/onboarding';
 import { describeTurn, type TraceSink, type TurnTrace } from '../observability/trace';
 import { generateAvatar } from '../avatars/generate';
 
@@ -153,6 +154,13 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
       inputSchema: noteDeclineInput,
       execute: (input) => noteDecline(context, input),
     }),
+    ...(state.setup.stage === 'active' ? {
+      graduate: tool({
+        description: 'The user wants to skip the rest of setup and just get started ("skip", "just let me in", "enough questions"). After this, no more setup questions.',
+        inputSchema: graduateInput,
+        execute: (input) => graduate(context, input),
+      }),
+    } : {}),
     ...(capabilities.voice && channel === 'text' ? {
       offer_call: tool({
         description: 'Put an Answer button in the chat for a short browser call. The button is the invitation: the call starts only if they tap it.',
@@ -198,6 +206,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   const facts = Object.entries(state.facts).map(([key, fact]) => ({ key, value: fact.value, provenance: fact.provenance, evidence: fact.evidence, sourceUrl: fact.sourceUrl }));
   const instructions = buildSystemPrompt({
     facts, capabilities: labels, onboarding: state.onboarding, calls: callLines(state), personality: personalityLine(personaSettings(state)),
+    setup: setupStatus(state.onboarding, { graduated: state.setup.stage === 'graduated', voice: capabilities.voice }),
     now: (deps.now?.() ?? new Date()).toISOString(), mode: channel === 'voice' ? 'voice_backend' : 'text',
   });
   const messages = modelMessages(state);

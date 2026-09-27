@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SessionProjection } from '../domain/project';
 import { buildSystemPrompt } from '../agent/prompts';
-import { customizeInput, noteDeclineInput, rememberInput, showConnectionInput } from '../agent/actions';
+import { customizeInput, noteDeclineInput, rememberInput, showConnectionInput, graduateInput } from '../agent/actions';
 import { calendarReadInput, gmailSearchInput } from '../agent/account-tools';
 import { callLines, modelMessages } from '../agent/turn';
 import { estimateTokens } from './tokens';
@@ -46,6 +46,7 @@ export function voiceTools(capabilities: { gmail: boolean; calendar: boolean }) 
     functionTool('remember', "Save something new or changed: what to call the user or what they want help with, in the user's words. Use declined only when they refuse to share that exact thing.", rememberInput),
     functionTool('customize', "Change the assistant's own name, look (avatar), personality or call voice when the user names it or asks for a change. Send only what changes.", customizeInput),
     functionTool('note_decline', 'Record that the user said no to connecting Gmail or Google Calendar, so it is not offered again.', noteDeclineInput),
+    functionTool('graduate', 'The user wants to skip the rest of setup and just get started. After this, no more setup questions.', graduateInput),
     ...(capabilities.gmail || capabilities.calendar ? [functionTool('show_connection', "Put a Connect Gmail or Connect Google Calendar button on the user's screen.", showConnectionInput)] : []),
     ...(capabilities.gmail ? [functionTool('search_gmail', "Search the user's connected Gmail (sender, subject, preview) for the current request. Returns not_connected if Gmail isn't connected.", gmailSearchInput)] : []),
     ...(capabilities.calendar ? [functionTool('read_calendar_window', "Read up to ten events from the user's connected primary calendar within a 30-day window.", calendarReadInput)] : []),
@@ -64,6 +65,7 @@ export function voiceInstructions(state: SessionProjection, capabilities: { gmai
     '- remember: save what to call the user or what they need help with, in their words.',
     '- customize: change your name, look, personality or call voice when the user names you or asks for a change.',
     '- note_decline: record that the user said no to connecting Gmail or their calendar.',
+    '- graduate: the user wants to skip the setup questions and just get started.',
     ...(capabilities.gmail || capabilities.calendar ? ["- show_connection: put a Connect Gmail or Connect Google Calendar button on the user's screen."] : []),
     ...(capabilities.gmail ? ["- search_gmail: search the user's connected Gmail for the current request."] : []),
     ...(capabilities.calendar ? ["- read_calendar_window: read the user's connected calendar for a date range."] : []),

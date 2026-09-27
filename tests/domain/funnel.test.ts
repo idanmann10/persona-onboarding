@@ -21,7 +21,7 @@ describe('onboarding funnel', () => {
   it('marks every stage a fully activated session reached', () => {
     expect(sessionStages(activated)).toEqual({
       replied: true, stayed: true, named: true, knowsUser: true, needKnown: true, callOffered: true, callHappened: false,
-      gmailConnected: true, firstValue: true, taskProposed: true, activated: true, returned: true,
+      gmailConnected: true, setupDone: true, firstValue: true, taskProposed: true, activated: true, returned: true,
     });
   });
 

@@ -21,4 +21,6 @@ export type SessionEvent =
   /** An app other than Gmail or Calendar was connected from the Apps sheet; the assistant can't act in it yet. */
   | { id: string; at: string; type: 'app_connection'; app: string; name: string; phase: 'connected' | 'disconnected' | 'failed' }
   /** The user came back to the conversation after a gap. */
-  | { id: string; at: string; type: 'visit' };
+  | { id: string; at: string; type: 'visit' }
+  /** The user chose to skip the rest of setup and get started. */
+  | { id: string; at: string; type: 'onboarding'; phase: 'graduated'; reason?: string };

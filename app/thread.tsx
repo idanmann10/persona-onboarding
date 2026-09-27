@@ -128,6 +128,8 @@ export function TimelineEntry({ item, assistantName, liveCallId, busy, orb, look
       return <p className="system-line">“{item.title}” couldn't run this time</p>;
     case 'settings_notice':
       return <p className="system-line">{settingsLine(item.key, item.value)}</p>;
+    case 'setup_notice':
+      return <p className="system-line">{item.phase === 'completed' ? "You're all set up" : 'Skipped the rest of setup'}</p>;
     case 'call': {
       const call = item.call;
       if (call.callId === liveCallId) return null;

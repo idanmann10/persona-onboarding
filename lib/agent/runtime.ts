@@ -33,7 +33,7 @@ function timeoutFor(env: Env) {
 const isTimeout = (error: unknown) => error instanceof Error && /time(d)? ?out/i.test(`${error.name} ${error.message}`);
 
 /** Tools whose only effect is a saved fact or a card on screen: a reply beside them needs no further step. */
-const CARD_TOOLS = new Set(['remember', 'customize', 'note_decline', 'offer_call', 'show_connection', 'propose_automation']);
+const CARD_TOOLS = new Set(['remember', 'customize', 'note_decline', 'graduate', 'offer_call', 'show_connection', 'propose_automation']);
 const CARD_DONE = new Set(['saved', 'unchanged', 'offered', 'already_offered', 'shown', 'already_shown', 'proposed', 'already_proposed', 'already_connected', 'already_on_call']);
 
 /**

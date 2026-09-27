@@ -1,4 +1,5 @@
 import type { OnboardingProgress } from '../domain/project';
+import { SETUP_LABELS, type SetupItem, type SetupStatus } from '../domain/onboarding';
 import { AVATARS } from '../domain/persona';
 
 export const PROMPT_VERSION = 'understand-user/v4';
@@ -16,6 +17,8 @@ interface PromptInput {
   mode?: 'text' | 'voice_backend';
   /** How the user wants the assistant to come across (see lib/domain/persona.ts). */
   personality?: string;
+  /** Where the brief's goal stands: what's still open and the one next move (see lib/domain/onboarding.ts). */
+  setup?: SetupStatus;
 }
 
 const HIDDEN_FACTS = new Set(['identity_lookup_status', 'assistant_name', 'preferred_name', 'current_need', 'personality', 'voice', 'avatar']);
@@ -27,7 +30,7 @@ function statusLine(label: string, slot: OnboardingProgress['assistantName'], un
   return `- ${label}: ${slot.value}${slot.status === 'confirmed' ? ' (saved)' : ' (your wording; not confirmed)'}`;
 }
 
-function progressBlock(progress: OnboardingProgress): string {
+function progressBlock(progress: OnboardingProgress, setup?: string): string {
   const gmail = {
     connected: 'connected.',
     offered: 'a Connect button is already in the chat.',
@@ -50,6 +53,7 @@ function progressBlock(progress: OnboardingProgress): string {
   }[progress.automation.status];
   return [
     'Where things stand (from the app, not guesses):',
+    ...(setup ? [`- ${setup}`] : []),
     statusLine('Your name', progress.assistantName, "not chosen yet. The opening message already asked; don't ask again right away."),
     statusLine('Their name', progress.preferredName, 'unknown.'),
     statusLine('What they want help with', progress.need, 'unknown.'),
@@ -58,6 +62,31 @@ function progressBlock(progress: OnboardingProgress): string {
     `- Recurring task: ${automation}`,
     'Never ask again for something they already told you or declined.',
   ].join('\n');
+}
+
+const NEXT_UP: Record<SetupItem, { text: string; voice: string }> = {
+  assistant_name: {
+    text: "a name for you. The opening message asked; if they skipped it, after you've helped, suggest one fun name once (\"Want to call me Nova?\").",
+    voice: 'a name for you: ask what they want to call you.',
+  },
+  call: {
+    text: 'offer the call: put the Answer button up with offer_call ("Easier to talk? Tap Answer and I\'ll pick up, or just keep typing."). It\'s the quickest way to cover the rest.',
+    voice: 'n/a',
+  },
+  preferred_name: { text: 'ask what to call them, casually, in a few words.', voice: 'ask what to call them.' },
+  need: { text: "ask what they'd most like off their plate right now.", voice: "ask what they'd most like off their plate." },
+  gmail: {
+    text: 'offer Gmail with show_connection, tied to what they need, with the benefit in one line.',
+    voice: 'put the Connect Gmail button on their screen with show_connection, tied to what they need, and tell them to tap it.',
+  },
+};
+
+function setupLine(setup: SetupStatus, voice: boolean): string {
+  if (setup.stage === 'graduated') return "Setup: they chose to skip the rest and get started. Don't ask setup questions; just help, and offer Gmail only if a request needs it.";
+  if (setup.stage === 'complete') return 'Setup: done, everything is known. No more setup questions; just help.';
+  const open = setup.open.map((item) => SETUP_LABELS[item]).join(', ');
+  const next = setup.next ? (voice ? NEXT_UP[setup.next].voice : NEXT_UP[setup.next].text) : "what's left is already on their screen; don't ask again, wait for them.";
+  return `Setup: still open: ${open}. Next up: ${next}`;
 }
 
 export function buildSystemPrompt(input: PromptInput): string {
@@ -90,7 +119,8 @@ Names: a name on its own answers the question it follows. The opening message as
 ${voice
     ? 'You are on a live call with them now, and your words are spoken aloud.'
     : 'The call: a short call is the quickest way to cover the rest. Offer it once, when nothing else is waiting on you: right after they name you (if they didn\'t also ask for something), or when typing is slowing things down. Put the Answer button up in the same message with offer_call; the button is the invitation, so they can tap it or keep typing. For example: "Max it is. Easier to talk? Tap Answer and I\'ll pick up, or just keep typing." If they asked for something, help with that instead and leave the call for later, or never. If they say no or ignore it, stay in text and don\'t offer again unless they ask.'}
-Tasks come first: if they arrive with a task, help right away and let the four things come up later, or never. They can skip ahead to real work at any time; when they do, stop onboarding and just help.
+Tasks come first: if they arrive with a task, help right away. Once you've helped, come back to the one "Next up" item below, one per message and never in the middle of a task, until setup is done.
+Skipping ahead: if they want to skip this and just get started ("skip", "just let me in", "enough questions"), use graduate and then help with whatever they want. After that, no more setup questions.
 Steer gently: when you need something to do the job (Gmail for an inbox question), ask once, with the reason. If they dodge, answer what they said and move on.
 
 The first win
@@ -101,7 +131,7 @@ ${voice
     ? "- If they want something recurring, say you'll set it up in the chat right after the call; you can't schedule it from the call."
     : '- When you have just shown them a real result from their accounts, offer to make it recurring in the same message and show the preview with propose_automation, for example "Want this every weekday at 8? Approve it below and it\'s set." Build it from their words and what you just did. The card is the question, and nothing runs until they approve. Offer this once; if they pass, don\'t offer again unless they ask. Without connected accounts, a recurring check-in built from their need, such as "Mondays at 9: plan my week", works too.'}
 - When they ask what you can do, answer in one or two sentences with the single most useful thing for them right now, and put up the matching button. No capability lists.${voice ? '' : '\n- One button per message: at most one of offer_call, show_connection and propose_automation in a reply, the one that serves what they just asked for. Two asks at once feels like a form.'}
-${progress ? `\n${progressBlock(progress)}\n` : ''}
+${progress ? `\n${progressBlock(progress, input.setup ? setupLine(input.setup, voice) : undefined)}\n` : ''}
 Memory
 Use remember only for something new or changed about them: what to call them and what they need. What's already saved is listed above; don't save it again, and don't announce that you saved anything.
 - current_need is the task or problem in their words ("inbox is out of control, missing what people need from me"), not a question they asked you.

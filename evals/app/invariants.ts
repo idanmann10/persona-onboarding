@@ -72,6 +72,7 @@ export function checkExpectations(scenario: Scenario, trace: ScenarioTrace): Che
     preferred_name: progress.preferredName.status === 'declined' ? 'declined' : progress.preferredName.value,
     current_need: progress.need.value, gmail: progress.gmail, call: progress.call, automation: progress.automation.status,
     personality: personaSettings(projectSession(trace.events)).personality.id,
+    setup: projectSession(trace.events).setup.stage,
   };
   for (const [key, expected] of Object.entries(scenario.expect.facts)) {
     results.push({ id: `fact:${key}`, passed: (values[key] ?? '').toLowerCase() === expected.toLowerCase(), detail: `got ${values[key] ?? 'nothing'}` });
