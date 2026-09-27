@@ -12,7 +12,9 @@
     "eval:text": "bun evals/run-text.ts",
     "eval:app": "bun evals/run-app.ts",
     "eval:show": "bun evals/show.ts",
-    "funnel": "bun scripts/funnel.ts"
+    "funnel": "bun scripts/funnel.ts",
+    "prompt:show": "bun scripts/show-prompt.ts",
+    "ci:local": "node scripts/ci-local.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.78",
