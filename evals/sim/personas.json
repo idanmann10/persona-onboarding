@@ -1,0 +1,280 @@
+[
+  {
+    "id": "busy_founder",
+    "summary": "Co-founder and CEO of a 14-person B2B software startup, three weeks out from a fundraise. Reads the app on their phone between meetings.",
+    "goal": "Stop dropping threads: find out who in the inbox is waiting on them (investors, customers, the team) and get those handled.",
+    "style": "Terse lowercase fragments, no greetings, the odd typo, often two thoughts in one line (\"max. inbox is chaos, ppl waiting on me\").",
+    "behaviors": [
+      "Reads only the first line or two of a long reply",
+      "Names the assistant fast and moves on",
+      "Says yes to a quick call if it saves typing",
+      "Connects Gmail as soon as there is a concrete reason",
+      "Wants whatever worked once to happen every morning"
+    ],
+    "patience": 3,
+    "gmail": "connects",
+    "calendar": "connects",
+    "call": "accepts",
+    "recurring": "open"
+  },
+  {
+    "id": "privacy_skeptic",
+    "summary": "In-house privacy counsel at a healthcare company who has read too many terms of service. Curious about AI assistants but guarded with personal data.",
+    "goal": "Find out whether the assistant can help draft email replies faster without handing it the run of the inbox.",
+    "style": "Complete, polite sentences with pointed questions; asks what happens to their data before agreeing to anything.",
+    "behaviors": [
+      "Asks who can see their data and what exactly gets read before connecting anything",
+      "Prefers typing and turns down calls",
+      "Connects Gmail only after a specific, read-only explanation tied to what they asked for",
+      "Pushes back on vague reassurance like \"your data is safe with us\"",
+      "Distrusts anything that runs on its own"
+    ],
+    "patience": 4,
+    "gmail": "connects_if_convinced",
+    "calendar": "never",
+    "call": "declines",
+    "recurring": "skeptical"
+  },
+  {
+    "id": "name_refuser",
+    "summary": "Freelance wedding photographer who keeps personal details off apps and goes by a handle online. Friendly, just private.",
+    "goal": "Keep client inquiries and shoot dates from slipping through the cracks during the busy season.",
+    "style": "Casual and warm, short sentences, deflects personal questions with a joke.",
+    "behaviors": [
+      "Happily picks a name for the assistant",
+      "Won't give their own name: \"rather not say\" or \"doesn't matter\"",
+      "Gets irritated if asked for their name again, in text or on a call",
+      "Talks freely about their work and clients",
+      "Answers a call if one is offered"
+    ],
+    "patience": 4,
+    "gmail": "connects_if_convinced",
+    "calendar": "never",
+    "call": "accepts",
+    "recurring": "open"
+  },
+  {
+    "id": "task_first",
+    "summary": "Renter in Chicago who just got an email from their landlord, Dana, asking whether they will renew the lease, with an answer due Friday. Mildly stressed and wants it off their plate today.",
+    "goal": "Reply to the landlord today: yes to renewing, but ask for a two-week extension on the Friday deadline to sort out the terms.",
+    "style": "Clear, direct, full sentences. Leads with the task and skips small talk.",
+    "behaviors": [
+      "Ignores the naming question and opens with the landlord task",
+      "Expects a usable draft within a reply or two",
+      "Gives details when asked (the landlord is Dana, the deadline is Friday)",
+      "Connects Gmail if it helps pull up the landlord's email",
+      "Would rather type than talk"
+    ],
+    "patience": 3,
+    "gmail": "connects",
+    "calendar": "never",
+    "call": "declines",
+    "recurring": "skeptical"
+  },
+  {
+    "id": "hangs_up_mid_sentence",
+    "summary": "Operations manager at a regional logistics company who is always half-interrupted by phones, coworkers and the warehouse floor.",
+    "goal": "Get help with the Friday vendor status update, which means chasing five people for numbers every single week.",
+    "style": "Casual, medium-length messages; talks more freely out loud than in text.",
+    "behaviors": [
+      "Answers a call when one is offered",
+      "Starts explaining the real problem on the call and gets pulled away mid-sentence",
+      "Comes back in text if the follow-up picks up exactly where they left off",
+      "Annoyed if the assistant pretends to know what they were about to say"
+    ],
+    "patience": 4,
+    "gmail": "connects_if_convinced",
+    "calendar": "never",
+    "call": "hangs_up_mid_sentence",
+    "recurring": "open"
+  },
+  {
+    "id": "dropped_call",
+    "summary": "Residential real-estate agent who spends the day driving between showings on patchy mobile data.",
+    "goal": "Keep track of which buyers need a follow-up after this week's showings.",
+    "style": "Friendly and quick, run-on sentences, a few voice-to-text slips in typed messages.",
+    "behaviors": [
+      "Prefers talking to typing",
+      "Accepts a call when one is offered",
+      "Keeps going in text if the call drops and the assistant picks up the thread",
+      "Would like a regular reminder about follow-ups"
+    ],
+    "patience": 4,
+    "gmail": "connects",
+    "calendar": "connects",
+    "call": "drops",
+    "recurring": "open"
+  },
+  {
+    "id": "call_hater",
+    "summary": "Backend engineer who finds voice features gimmicky and avoids phone calls, but is happy to try a text assistant.",
+    "goal": "Get a handle on the week: a couple of important emails and a list of side-project tasks.",
+    "style": "Precise, lowercase, dry humor, short messages.",
+    "behaviors": [
+      "Says \"no calls, just text\" the first time a call comes up",
+      "Gets annoyed if a call is offered again",
+      "Otherwise cooperative: gives a name and a need when asked naturally",
+      "Connects Gmail if the benefit is concrete"
+    ],
+    "patience": 3,
+    "gmail": "connects",
+    "calendar": "never",
+    "call": "declines",
+    "recurring": "open"
+  },
+  {
+    "id": "explorer",
+    "summary": "Product designer who saw Persona mentioned online and opened it to see what the fuss is about. No particular problem in mind.",
+    "goal": "Figure out what this is and whether it is worth coming back to.",
+    "style": "Curious and casual, open questions like \"what is this?\" and \"what can you actually do?\"",
+    "behaviors": [
+      "Asks what the assistant can do before sharing anything",
+      "Leaves if the answers are generic or buzzwordy",
+      "Warms up when shown something concrete and specific",
+      "Low commitment: doesn't connect accounts on the first ask"
+    ],
+    "patience": 3,
+    "gmail": "connects_if_convinced",
+    "calendar": "never",
+    "call": "declines",
+    "recurring": "skeptical"
+  },
+  {
+    "id": "one_word",
+    "summary": "Warehouse shift supervisor who isn't a big texter and is trying the app because a friend swore by it.",
+    "goal": "Simple help: not missing emails from HR and their manager, and remembering shift swaps.",
+    "style": "Replies in one to three words, no punctuation, never rude (\"ok\", \"sure\", \"emails mostly\").",
+    "behaviors": [
+      "Answers questions in one to three words",
+      "Never volunteers extra detail unless asked something specific",
+      "Taps buttons rather than typing when it can",
+      "Leaves quietly if asked too many open-ended questions"
+    ],
+    "patience": 4,
+    "gmail": "connects",
+    "calendar": "never",
+    "call": "accepts",
+    "recurring": "open"
+  },
+  {
+    "id": "chatty_overshare",
+    "summary": "Event planner and mother of two, warm and talkative, who treats the assistant like a new coworker on their first day.",
+    "goal": "Get her inbox and the family's school and activity logistics under control.",
+    "style": "Long, friendly paragraphs. Her first message gives everything at once: her name (Rosa), a name for the assistant (Juniper), and her whole situation.",
+    "behaviors": [
+      "First message includes her name, a name for the assistant, and what she needs",
+      "Mildly annoyed when asked for something she already said",
+      "Accepts a call happily",
+      "Connects Gmail and Calendar when it makes sense",
+      "Loves the idea of a daily digest"
+    ],
+    "patience": 5,
+    "gmail": "connects",
+    "calendar": "connects",
+    "call": "accepts",
+    "recurring": "open"
+  },
+  {
+    "id": "rule_breaker",
+    "summary": "Computer-science student who likes to poke at AI products to see where they break.",
+    "goal": "See what the assistant will and won't do; half-seriously wants a cheap flight to Austin booked for spring break.",
+    "style": "Playful, provocative, short messages, lots of \"ok but what if\".",
+    "behaviors": [
+      "Asks it to ignore its instructions or reveal its system prompt",
+      "Asks for things it can't do, like booking a flight or sending an email on their behalf",
+      "Renames the assistant twice (for example Blaze, then Nova)",
+      "Respects honest limits; gets bored by canned refusals"
+    ],
+    "patience": 4,
+    "gmail": "never",
+    "calendar": "never",
+    "call": "accepts",
+    "recurring": "never"
+  },
+  {
+    "id": "spanish_speaker",
+    "summary": "Owner of a small Cuban restaurant in Miami who is far more comfortable writing in Spanish than in English.",
+    "goal": "Stay on top of supplier emails (orders, invoices, delivery changes) and plan the week.",
+    "style": "Writes only in Spanish, informal and short, sometimes without accents.",
+    "behaviors": [
+      "Writes only in Spanish, even when the assistant answers in English",
+      "Gets confused or annoyed if the assistant keeps replying in English",
+      "Connects Gmail if it is explained clearly",
+      "Open to a weekly summary"
+    ],
+    "patience": 4,
+    "gmail": "connects_if_convinced",
+    "calendar": "never",
+    "call": "accepts",
+    "recurring": "open",
+    "language": "es"
+  },
+  {
+    "id": "calendar_person",
+    "summary": "Engineering manager with back-to-back meetings all week; the pain is the schedule, not the inbox.",
+    "goal": "Understand the week ahead and carve out time to prepare for this week's board meeting.",
+    "style": "Organized, brief and precise; thinks in time blocks.",
+    "behaviors": [
+      "Talks about meetings, 1:1s and prep time",
+      "Connects Google Calendar when it is offered",
+      "Won't connect Gmail (\"email is fine, meetings are the problem\")",
+      "Open to a Monday-morning rundown of the week"
+    ],
+    "patience": 4,
+    "gmail": "never",
+    "calendar": "connects",
+    "call": "accepts",
+    "recurring": "open"
+  },
+  {
+    "id": "burned_before",
+    "summary": "Management consultant who has tried several AI assistants and found them useless. Very little tolerance for fluff.",
+    "goal": "See one concrete, useful thing fast, like what actually needs attention today.",
+    "style": "Blunt and short, a little cynical (\"ok. prove it.\").",
+    "behaviors": [
+      "Leaves after two vague, salesy or question-only replies",
+      "Dislikes answering questions before seeing any value",
+      "Connects Gmail if that is the fastest way to see something real",
+      "No calls"
+    ],
+    "patience": 2,
+    "gmail": "connects_if_convinced",
+    "calendar": "never",
+    "call": "declines",
+    "recurring": "skeptical"
+  },
+  {
+    "id": "gmail_decliner",
+    "summary": "Nurse manager at a hospital. Hospital policy forbids connecting work email to outside apps, and she takes that seriously.",
+    "goal": "Plan the week around shifts, staffing and errands, ideally with a weekly check-in to plan ahead.",
+    "style": "Friendly, practical, medium-length messages.",
+    "behaviors": [
+      "Says plainly that she can't connect Gmail because of hospital policy",
+      "Still expects real help without it",
+      "Gets annoyed if pushed to connect Gmail again",
+      "Would like a weekly Sunday-evening planning check-in"
+    ],
+    "patience": 4,
+    "gmail": "never",
+    "calendar": "never",
+    "call": "declines",
+    "recurring": "open"
+  },
+  {
+    "id": "executive_assistant",
+    "summary": "Executive assistant to a VP of Sales who manages her boss's inbox and calendar all day.",
+    "goal": "A daily digest of what in her boss's inbox needs action, so nothing slips.",
+    "style": "Professional, efficient, complete sentences.",
+    "behaviors": [
+      "Explains up front that she manages her boss's inbox",
+      "Connects Gmail right away when it is offered",
+      "Asks for a daily digest at a specific time (7:30 on weekdays)",
+      "Wants specifics, not generalities"
+    ],
+    "patience": 5,
+    "gmail": "connects",
+    "calendar": "connects",
+    "call": "accepts",
+    "recurring": "open"
+  }
+]
