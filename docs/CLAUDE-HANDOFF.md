@@ -1,12 +1,12 @@
 # Handoff for Claude Code
 
-Last updated: 2026-09-27. This is a continuation brief for the **private** `idanmann10/persona-onboarding` repository, not a release claim.
+Last updated: 2026-09-27 (Claude Code session on Windows, after the Codex foundation). This is a continuation brief for the **private** `idanmann10/persona-onboarding` repository, not a release claim.
 
 ## Exact goal
 
 > Build Persona's adaptive chat and browser voice onboarding in a new private GitHub repository, including confident Context.dev user research, need-led Gmail/Calendar paths, durable state and knowledge graph, and pre-release evaluations; keep the repository private until Idan approves making it public.
 
-This goal is currently **paused for handoff**. Continue only when Idan asks Claude to take it over. The repository and draft PR already exist; there is no need to create another repository.
+Claude Code took this over on 2026-09-27 at Idan's request and continued draft PR #1. The repository and draft PR already exist; there is no need to create another repository.
 
 ## What Idan wants
 
@@ -34,14 +34,15 @@ The browser and backend share one session. Postgres is the durable source for me
 
 | Path | Responsibility |
 | --- | --- |
-| `app/page.tsx`, `app/globals.css` | Responsive chat, call, connection, and recovery UI. |
-| `app/api/chat`, `lib/agent/*`, `lib/http/chat.ts` | Streaming text turn, versioned prompt, tool selection, persistence. |
-| `app/api/voice/*`, `lib/voice/*`, `lib/http/voice*.ts` | WebRTC setup, browser call events, transcript fragments, call lease and recovery. |
+| `app/page.tsx`, `app/thread.tsx`, `app/globals.css` | Persona-styled thread: bubbles, call/offer/connect cards, live call bar, popup OAuth, follow-up requests. |
+| `app/api/chat`, `lib/agent/*`, `lib/http/chat.ts` | Streaming text turn, prompt `understand-user/v3`, server-checked tools (`actions.ts`), shared turn builder (`turn.ts`), model runtime. |
+| `app/api/agent/follow-up`, `lib/agent/follow-up.ts`, `lib/http/follow-up.ts` | One assistant turn after a call ends or an account connects, derived from server state, exactly once, may stay silent. |
+| `app/api/voice/*`, `lib/voice/*`, `lib/http/voice*.ts`, `lib/http/call-offer.ts` | GPT-Live session config and greeting, browser call client, transcript batches, voice tool calls, end reasons, call lease, call-offer decline. |
 | `lib/domain/*` | Event, knowledge, permission, capability, and projected-state contracts. |
 | `lib/db/schema.sql`, `lib/db/store.ts` | Postgres schema and durable event/graph/connection persistence. |
 | `lib/research/*` | Direct identity claim parsing, Context.dev candidate gate, narrow sourced Answers research. |
 | `lib/integrations/*`, `app/api/connections/*` | Composio OAuth, bounded Gmail/Calendar reads, connection and deletion lifecycle. |
-| `evals/cases/base.json`, `evals/rubric.md`, `evals/run-text.ts` | 48 scenario seeds, scoring rules, and unscored prompt trace runner. |
+| `evals/cases/*.json`, `evals/app/*`, `evals/run-app.ts`, `evals/rubric.md` | 48 seed cases plus 12 brief scenarios, app-level replay with fixtures and automatic invariants, prompt-only runner, scoring rules. |
 | `tests/*`, `.github/workflows/ci.yml` | Unit/integration tests and CI. |
 | `docs/*` | Architecture, implementation status, roadmap, and this handoff. |
 
@@ -70,27 +71,50 @@ The 48-case corpus and its permutations cover these and more. The spec's release
 ## Git state and review
 
 - Repository: `https://github.com/idanmann10/persona-onboarding` (**private**).
-- Branch: `feat/foundation`, currently pushed at `39131b0` before this handoff commit.
-- Draft PR: `https://github.com/idanmann10/persona-onboarding/pull/1` against `main`. Continue the draft; do not merge or publish as a release yet.
-- Local worktree used by Codex: `/Users/idanmann/Projects/persona-onboarding/.worktrees/foundation`. A different machine can clone the repo and check out `feat/foundation` with a GitHub account that has access.
-- Earlier Claude session shared by Idan: `https://claude.ai/code/session_01XfABv38Vu99PgjNSbFhAcn`. This handoff and the repo are sufficient to continue even if that session is unavailable.
+- Branch: `feat/foundation`; draft PR: `https://github.com/idanmann10/persona-onboarding/pull/1` against `main`. Continue the draft; do not merge or publish as a release yet.
+- Commits after the Codex foundation (2026-09-27), in order:
+  1. The Composio payload fix.
+  2. The event model (call end reasons, connections, decisions, timeline, progress).
+  3. Prompt v3 with the server-checked tools.
+  4. The GPT-Live contract, voice tools and hang-up follow-ups.
+  5. The Persona UI.
+  6. `note_decline`.
+  7. The app-level replay harness.
+  8. This documentation update.
+- Local clone used by Claude: `C:\Users\idan mann\Desktop\persona-onboarding` (Windows). Codex's Mac worktree was `/Users/idanmann/Projects/persona-onboarding/.worktrees/foundation`.
 
 ## Implemented
 
-- Next.js 16 / React 19 / TypeScript / Bun / Postgres foundation and responsive chat UI.
-- Guest-session cookie; persisted streaming text turns; retry deduplication; failed-send draft recovery.
-- Browser WebRTC GPT-Live session plumbing, captions and transcript fragments, hangup/drop states, shared text/voice context, and a Postgres lease to prevent overlapping calls. **No live GPT-Live call has been validated.**
-- Append-only events and evidence-labelled graph facts with provenance, correction, and supersession.
-- Versioned need-led prompt (`understand-user/v2`).
-- Guarded Context.dev People Enrichment candidate matching followed by narrow Answers research on professional role/company context. Public results remain tentative. **No live Context.dev calls have been validated.**
-- Optional Composio Gmail/Calendar OAuth connection UI and callback checks; bounded read-only agent tools; disconnect and conversation deletion with provider revocation requested first. **No live OAuth/provider account test has been validated.**
-- Per-session quotas, 48 synthetic scenario seeds, boundary and Postgres integration tests, an unscored prompt trace runner, and CI workflow.
+See [implementation status](implementation-status.md) for the full list. In short:
+- **Brief-led assistant.** It has a greeting and prompt `understand-user/v3`, and pursues the brief's four items with server-checked tools (`remember`, `note_decline`, `offer_call`, `show_connection`) plus the bounded Gmail/Calendar reads.
+- **GPT-Live browser calls, built to the published docs:**
+  - a greeting so the assistant speaks first;
+  - bounded seeded history;
+  - `gpt-6-luna` delegation with the same tools and gates as text;
+  - quiet-line and duration limits;
+  - batched transcripts;
+  - typing into the call;
+  - recorded end reasons.
+- **Human follow-ups** after hang-ups, drops and connections, derived from server state, exactly once, and allowed to stay silent. Follow-ups still owed are replayed on return.
+- **Popup OAuth** that survives a live call. Composio Gmail payloads are parsed in the shape the API really returns.
+- **App-level scenario replay** with fixtures and automatic hard invariants.
 
-The exact behavior and remaining gaps are in [implementation status](implementation-status.md). Do not infer release readiness from code or a fluent model trace.
+**Decisions made in this session, and why:**
+- **Onboarding opportunities.** The architecture review's "interpret *try* contextually" is encoded as a progress block from durable state, not a script. The model sees what is known or declined and is told never to re-ask it.
+- **Browser voice path.** Calls use GPT-Live Responses delegation driven by the browser, not a sideband. It fits Vercel (no long-lived server), and `/api/voice/tool` re-validates everything the browser forwards. A sideband is the upgrade path if calls must be observed independently of the tab.
+- **Follow-ups.** They run on request from the page (after a call ends or an account connects, and for any still owed at load), not on a server clock. That fits the browser-only MVP's "no closed-tab ring" rule. The trigger is built from server state, so the client cannot inject text.
+- **Voice utterances.** They are a derived view of the fragments (grouped by speaker run, with backchannels folded away); fragments stay the evidence.
+- **Voice data-channel permissions.** `session.client.data_channel` permissions are not sent yet: the field is documented but unverified live, and a wrong field would break every call.
 
 ## Verification at handoff
 
-On the pushed code before this documentation update, Codex ran `bun run db:migrate`, `bun run test` (62 passing), `bun run typecheck`, and `bun run build` locally. Desktop and 390px mobile UI were inspected. Re-run after code changes. GitHub Actions never started its job because GitHub reported an account payment/spending-limit problem; this is an infrastructure blocker, not a test result. Idan owns that GitHub setting.
+On Windows with an embedded PostgreSQL 18.4, at this branch's head:
+- `bun run db:migrate`
+- `bun run test`: 30 files, 122 tests. These include 20 Postgres integration tests and the replay harness tests run against a scripted model.
+- `bun run typecheck` (ignore stale `.next/types` from a running dev server)
+- `bun run build`
+
+A browser check at desktop width and at 375px used `scripts/seed-demo.ts`. GitHub Actions still does not start because of the account billing/spending limit.
 
 ```sh
 bun install --frozen-lockfile
@@ -102,16 +126,30 @@ bun run typecheck
 bun run build
 ```
 
-For live text and voice, configure `OPENAI_API_KEY` and `OPENAI_TEXT_MODEL` in the ignored `.env.local` or the host's secret manager. Voice needs GPT-Live access. Context.dev needs `CONTEXT_DEV_API_KEY`. Composio needs `COMPOSIO_API_KEY` plus `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` and `COMPOSIO_GMAIL_AUTH_CONFIG_ID` for the two optional integrations. Set `APP_BASE_URL` to the exact running origin. The integration suite can use `TEST_DATABASE_ADMIN_URL` to target a disposable Postgres server. Idan said he can configure provider credentials and a test Google account; **do not ask him to paste secrets into chat**. See `.env.example` and `README.md`.
+**No provider call has been exercised yet** (no keys in this workspace). Needed next, configured outside Git:
+- **Text:** `OPENAI_API_KEY` with `OPENAI_TEXT_MODEL=gpt-6-luna`.
+- **Voice:** the same key with GPT-Live access. `OPENAI_VOICE`, `OPENAI_VOICE_BACKEND_MODEL` and `OPENAI_VOICE_DELEGATION` are optional.
+- **Gmail and Calendar:** `COMPOSIO_API_KEY` plus `COMPOSIO_GMAIL_AUTH_CONFIG_ID` / `COMPOSIO_CALENDAR_AUTH_CONFIG_ID`, created as managed auth in a Composio project separate from Arlo's.
+- **Research:** `CONTEXT_DEV_API_KEY` (optional).
+- `APP_BASE_URL` set to the exact origin.
 
-The prompt-only trace runner is `bun run eval:text --id entry_intent_01` or `bun run eval:text --all --repeats 3`. It writes ignored, **unscored** traces to `evals/results/`. It does not test app state, tools, voice, OAuth, or completed actions. Follow [the eval rubric](../evals/rubric.md) for release evaluation.
+Idan said he can configure credentials and a test Google account; **do not ask him to paste secrets into chat**.
 
 ## Next work, in order
 
-1. Review the architecture contract and code; fix any concrete correctness or privacy gaps found. Preserve the need-led, non-compulsive interaction model and hard server gates.
-2. With provider credentials configured outside Git, run live OpenAI text and GPT-Live calls, Context.dev candidate/Answers tests, and Composio Calendar/Gmail OAuth with a dedicated evaluator Google account. Inspect identity false matches, scope boundaries, callback account collisions, source quality, mobile microphone permissions, and hangup/reconnect behavior.
-3. Build app-level scenario replay with provider fixtures and scoring. Cover all 48 seeds, permutations, cross-channel interruptions, corrections, wrong-account cases, failed provider actions, and voice listening. Record model/prompt/fixture versions, reviewer, latency, and cost. No hard invariant failures before release.
-4. Implement the single approved recurring task from the roadmap with durable scheduling, preview, explicit approval, Run now, disable, and proof of execution. Add account write capabilities only after a separate preview/confirmation path.
-5. Add hosted preview infrastructure, stronger sign-in, edge-level abuse limits, retention/deletion policy, observability, and privacy/legal review for automatic public-person research. Resolve GitHub Actions billing and verify CI. Keep the repository private until Idan approves publication.
+1. **With keys configured, run a live pass.**
+   - `bun run eval:app --all --repeats 3`, then review traces against the rubric; hard invariants must be zero.
+   - A real browser call:
+     - check that the greeting plays and the session payload is accepted (delegation tools, `reasoning.effort`);
+     - have Persona save your name on the call and put the Gmail button on screen;
+     - try typing mid-call and staying quiet until the goodbye;
+     - hang up mid-sentence and read the follow-up;
+     - drop the network;
+     - close the tab and reopen.
+   - Composio OAuth with an evaluator account: popup and redirect fallback, a wrong account, missing scopes, and the real Gmail payload against the parser.
+2. **Fix what the live pass finds.** Most likely areas: GPT-Live event shapes (nested `response.event` types, transcript fields), prompt wording for tool timing, and mobile popup/microphone behaviour.
+3. **Hosted preview.** Vercel plus hosted Postgres (for example, Neon through the Vercel integration), with `APP_BASE_URL` and the Composio callback URL set to the preview origin, and edge-level rate limits for anonymous sessions and calls. This gives the trial's "link to try".
+4. **One approved recurring task** (roadmap slice 4): preview, explicit approval, Run now, disable, a durable schedule with an atomic claim, and proof of execution.
+5. **Remaining release gates:** sign-in, retention/deletion policy, observability, privacy/legal review for automatic person research, GitHub Actions billing, and CI verification. Keep the repository private until Idan approves publication.
 
 Do not silently treat an API response, transcript fragment, or tool call request as a completed action. Preserve source labels and user corrections across text and voice. Work in small reviewable commits, update `docs/implementation-status.md` and the draft PR description when behavior changes, and report tested versus untested behavior plainly.
