@@ -74,7 +74,7 @@ describe('Postgres session store', () => {
     const first = await getGuestSession(store);
     expect(first.created).toBe(true);
     const second = await getGuestSession(store, first.id);
-    expect(second).toEqual({ id: first.id, created: false, events: [expect.objectContaining({ id: 'greeting:v1', speaker: 'assistant', origin: 'greeting', text: GREETING_TEXT })] });
+    expect(second).toEqual({ id: first.id, created: false, events: [expect.objectContaining({ id: 'greeting:v2', speaker: 'assistant', origin: 'greeting', text: GREETING_TEXT })] });
     const invalid = await getGuestSession(store, crypto.randomUUID());
     expect(invalid.created).toBe(true);
     expect(invalid.id).not.toBe(first.id);
@@ -98,7 +98,7 @@ describe('Postgres session store', () => {
     const reloaded = await sessionHandler(new Request('http://localhost/api/session', { headers: { cookie: cookieHeader } }));
     const snapshot = await reloaded.json();
     expect(snapshot.messages).toEqual([
-      { id: 'greeting:v1', role: 'assistant', text: GREETING_TEXT },
+      { id: 'greeting:v2', role: 'assistant', text: GREETING_TEXT },
       { id: 'm3', role: 'user', text: 'hello' },
       { id: 'answer:m3', role: 'assistant', text: 'I can help with that.' },
     ]);
@@ -571,7 +571,7 @@ describe('Postgres session store', () => {
     await store.appendEvent(sessionId, { id: 'm1', at: new Date().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: 'Max' });
     const recent = await store.recentSessions(1_000);
     const mine = recent.find((session) => session.id === sessionId);
-    expect(mine?.events.map((event) => event.id)).toEqual(['greeting:v1', 'm1']);
+    expect(mine?.events.map((event) => event.id)).toEqual(['greeting:v2', 'm1']);
   });
 
   it('records a return visit after a gap, once, and returns the settings', async () => {
@@ -580,7 +580,7 @@ describe('Postgres session store', () => {
     await sql`UPDATE persona_events SET payload = jsonb_set(payload, '{at}', to_jsonb((now() - interval '2 hours')::text)) WHERE session_id = ${sessionId}`;
     const handler = createSessionHandler(store, { OPENAI_VOICE: 'marin' });
     const load = async () => (await handler(new Request('http://localhost/api/session', { headers: { cookie: `persona_session=${sessionId}` } }))).json();
-    expect((await load()).settings).toEqual({ personality: { id: 'warm', label: 'Warm' }, voice: 'marin', avatar: 'pearl' });
+    expect((await load()).settings).toEqual({ personality: { id: 'warm', label: 'Fun' }, voice: 'marin', avatar: 'pearl' });
     await load();
     expect((await store.readEvents(sessionId)).filter((event) => event.type === 'visit')).toHaveLength(1);
   });

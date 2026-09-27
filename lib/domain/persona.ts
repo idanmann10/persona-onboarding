@@ -2,7 +2,7 @@ import type { SessionProjection } from './project';
 
 /** How the assistant comes across. The user picks one, or describes their own. */
 export const PERSONALITIES = {
-  warm: { label: 'Warm', hint: 'Friendly and encouraging', style: 'warm and encouraging: friendly and patient, glad to help, never gushing' },
+  warm: { label: 'Fun', hint: 'Upbeat, casual, a little playful', style: 'fun and warm: upbeat, casual and a little playful, like a friend who happens to be great at this; a light joke when it fits, never at the cost of getting things done' },
   direct: { label: 'Direct', hint: 'Brief and to the point', style: 'direct and efficient: lead with the answer, skip the small talk, use as few words as the job needs' },
   playful: { label: 'Playful', hint: 'Light, with a little wit', style: "playful: light and quick, with humor when it fits, never at the user's expense or at the cost of getting things done" },
   polished: { label: 'Polished', hint: 'Precise and professional', style: 'polished and professional: precise, courteous and a little formal, like a seasoned executive assistant' },

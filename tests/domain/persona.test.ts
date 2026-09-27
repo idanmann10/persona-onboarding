@@ -7,7 +7,7 @@ const fact = (key: string, value: string, id = key): SessionEvent => ({ id, at: 
 
 describe('persona settings', () => {
   it('defaults to a warm personality and the configured voice', () => {
-    expect(personaSettings(projectSession([]), 'marin')).toEqual({ personality: { id: 'warm', label: 'Warm' }, voice: 'marin', avatar: 'pearl' });
+    expect(personaSettings(projectSession([]), 'marin')).toEqual({ personality: { id: 'warm', label: 'Fun' }, voice: 'marin', avatar: 'pearl' });
   });
 
   it('reads the saved name, a preset personality and a voice', () => {

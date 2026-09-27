@@ -18,7 +18,7 @@ interface PromptInput {
 }
 
 const HIDDEN_FACTS = new Set(['identity_lookup_status', 'assistant_name', 'preferred_name', 'current_need', 'personality', 'voice', 'avatar']);
-const DEFAULT_STYLE = 'warm and encouraging: friendly and patient, glad to help, never gushing';
+const DEFAULT_STYLE = 'fun and warm: upbeat, casual and a little playful, like a friend who happens to be great at this; a light joke when it fits, never at the cost of getting things done';
 
 function statusLine(label: string, slot: OnboardingProgress['assistantName'], unknown: string): string {
   if (slot.status === 'declined') return `- ${label}: they'd rather not say. Don't ask again.`;

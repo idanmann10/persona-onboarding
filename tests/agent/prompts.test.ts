@@ -75,7 +75,7 @@ describe('Persona prompt contract', () => {
 
   it('uses the chosen personality, and the warm default otherwise', () => {
     expect(buildSystemPrompt({ facts: [], capabilities: ['text'], personality: 'direct and efficient: lead with the answer' })).toContain('Personality: direct and efficient: lead with the answer.');
-    expect(buildSystemPrompt({ facts: [], capabilities: ['text'] })).toMatch(/Personality: warm and encouraging/);
+    expect(buildSystemPrompt({ facts: [], capabilities: ['text'] })).toMatch(/Personality: fun and warm/);
   });
 
   it('keeps names, needs and personality out of the generic fact list', () => {
