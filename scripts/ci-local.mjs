@@ -40,6 +40,16 @@ if (postStatus && dirty) {
   console.error('Refusing --post-status with uncommitted changes: the verdict would describe code HEAD does not have.');
   process.exit(2);
 }
+if (postStatus) {
+  // A status can only be attached to a commit GitHub already has.
+  try { execFileSync('git', ['fetch', '-q', 'origin', branch], { stdio: 'ignore' }); } catch {}
+  let pushed = false;
+  try { pushed = git('branch', '-r', '--contains', sha).length > 0; } catch {}
+  if (!pushed) {
+    console.error(`Push ${sha.slice(0, 12)} first: GitHub can only attach a status to a commit it has.`);
+    process.exit(2);
+  }
+}
 if (jobs.includes('test') && !process.env.TEST_DATABASE_ADMIN_URL) {
   console.error('The test job needs TEST_DATABASE_ADMIN_URL (a disposable Postgres server, like the CI service).');
   process.exit(2);
@@ -89,7 +99,7 @@ if (postStatus) {
       '-f', `state=${result.ok ? 'success' : 'failure'}`,
       '-f', `context=local-ci/${result.job}`,
       '-f', `description=${result.ok ? 'passed' : 'failed'} locally in ${result.seconds}s (scripts/ci-local.mjs)`,
-    ], { stdio: 'ignore' });
+    ], { stdio: ['ignore', 'ignore', 'inherit'] });
   }
   if (slug) console.log(`posted ${results.length} status(es) to ${slug}@${sha.slice(0, 12)}`);
 }
