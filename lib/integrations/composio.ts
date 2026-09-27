@@ -1,4 +1,6 @@
 const ROOT = 'https://backend.composio.dev/api/v3.1';
+/** Auth configs are created through the v3 API (`POST /api/v3/auth_configs`). */
+const AUTH_CONFIGS_URL = 'https://backend.composio.dev/api/v3/auth_configs';
 
 type ToolSlug = 'GOOGLECALENDAR_EVENTS_LIST' | 'GMAIL_FETCH_EMAILS';
 
@@ -25,6 +27,20 @@ export function createComposioClient(key: string, fetchFn: typeof fetch = fetch)
       return { accountId: data.connected_account_id, redirectUrl, expiresAt: typeof data.expires_at === 'string' ? data.expires_at : undefined };
     },
     getAccount: async (accountId: string) => request(`/connected_accounts/${encodeURIComponent(accountId)}`),
+    /** Creates an auth config that signs users in with Composio's own OAuth app for this toolkit. */
+    createManagedAuthConfig: async (toolkitSlug: string): Promise<string> => {
+      const response = await fetchFn(AUTH_CONFIGS_URL, {
+        method: 'POST',
+        headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toolkit: { slug: toolkitSlug }, auth_config: { type: 'use_composio_managed_auth', name: `Persona ${toolkitSlug}` } }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Composio auth config creation failed (${response.status})`);
+      const data = await response.json() as { auth_config?: { id?: unknown } };
+      const id = data.auth_config?.id;
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(id)) throw new Error('Missing auth config ID');
+      return id;
+    },
     deleteAccount: async (accountId: string) => {
       const response = await fetchFn(`${ROOT}/connected_accounts/${encodeURIComponent(accountId)}?revoke_on_delete=true`, {
         method: 'DELETE', headers: { 'x-api-key': key, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15_000),

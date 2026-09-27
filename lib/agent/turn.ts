@@ -191,6 +191,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
     ...(capabilities.voice ? ['browser call'] : []),
     ...(connected.gmail ? ['connected Gmail (read-only search)'] : capabilities.gmail ? ['Gmail (not connected; can be connected)'] : []),
     ...(connected.calendar ? ['connected Google Calendar (read-only)'] : capabilities.calendar ? ['Google Calendar (not connected; can be connected)'] : []),
+    ...Object.values(state.apps).filter((app) => app.phase === 'connected').map((app) => `${app.name} (connected; you can't act in it yet — say so honestly)`),
   ];
   const facts = Object.entries(state.facts).map(([key, fact]) => ({ key, value: fact.value, provenance: fact.provenance, evidence: fact.evidence, sourceUrl: fact.sourceUrl }));
   const instructions = buildSystemPrompt({

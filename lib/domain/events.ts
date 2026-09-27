@@ -18,5 +18,7 @@ export type SessionEvent =
   | { id: string; at: string; type: 'automation'; automationId: string; phase: 'proposed' | 'approved' | 'declined' | 'disabled' | 'ran' | 'failed'; title: string; schedule: string; instruction?: string; nextRunAt?: string; runId?: string }
   /** A read of a connected account during a turn or call; `items` is how much it found. */
   | { id: string; at: string; type: 'account_read'; toolkit: Toolkit; items: number }
+  /** An app other than Gmail or Calendar was connected from the Apps sheet; the assistant can't act in it yet. */
+  | { id: string; at: string; type: 'app_connection'; app: string; name: string; phase: 'connected' | 'disconnected' | 'failed' }
   /** The user came back to the conversation after a gap. */
   | { id: string; at: string; type: 'visit' };

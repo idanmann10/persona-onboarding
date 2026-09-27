@@ -63,6 +63,22 @@ export function createStore(sql: ReturnType<typeof postgres>) {
       }
       return [...sessions].map(([id, events]) => ({ id, events }));
     },
+    /** The auth config Persona made for a toolkit other than Gmail and Calendar, if any. */
+    getAppAuthConfig: async (toolkit: string): Promise<string | undefined> => {
+      const rows = await sql`SELECT auth_config_id FROM persona_auth_configs WHERE toolkit = ${toolkit} LIMIT 1`;
+      return rows[0]?.auth_config_id as string | undefined;
+    },
+    /** Saves a toolkit's auth config unless one is already saved, and returns the saved one. */
+    saveAppAuthConfig: async (toolkit: string, authConfigId: string): Promise<string> => {
+      await sql`INSERT INTO persona_auth_configs (toolkit, auth_config_id) VALUES (${toolkit}, ${authConfigId}) ON CONFLICT (toolkit) DO NOTHING`;
+      const rows = await sql`SELECT auth_config_id FROM persona_auth_configs WHERE toolkit = ${toolkit} LIMIT 1`;
+      return rows[0].auth_config_id as string;
+    },
+    /** Every app this session has connected right now (gmail, calendar and any other toolkit slug). */
+    listActiveConnectionToolkits: async (sessionId: string): Promise<string[]> => {
+      const rows = await sql`SELECT DISTINCT toolkit FROM persona_connections WHERE session_id = ${sessionId} AND status = 'active' ORDER BY toolkit`;
+      return rows.map((row) => row.toolkit as string);
+    },
     readEvents: async (id: string): Promise<SessionEvent[]> => {
       const rows = await sql`SELECT payload FROM persona_events WHERE session_id = ${id} ORDER BY seq`;
       return rows.map((row) => row.payload as SessionEvent);
