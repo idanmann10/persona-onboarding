@@ -59,4 +59,15 @@ describe('agent log', () => {
     expect([undefined, 'followup:call:live_1', 'followup:connection:gmail:connected', 'automation:a:2026:schedule'].map(turnName))
       .toEqual(['Reply', 'After the call', 'After connecting', 'Recurring task']);
   });
+
+  it('keeps a step that was written just after its turn ended inside that turn', () => {
+    const at = (ms: number) => new Date(Date.UTC(2026, 8, 27, 12, 0, 0, ms)).toISOString();
+    const turns = groupTurns([
+      { id: 1, turnId: 'b2', kind: 'turn', name: 'Reply', at: at(0), status: 'running', data: {} },
+      { id: 2, turnId: 'b2', kind: 'turn', name: 'Reply', at: at(1_000), status: 'ok', durationMs: 1_000, data: { reply: 'Text it is.' } },
+      { id: 3, turnId: 'b2', kind: 'step', name: 'Step 1', at: at(990), status: 'ok', durationMs: 960, data: { text: 'Text it is.' } },
+    ] as never, Date.UTC(2026, 8, 27, 12, 1));
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ status: 'ok', steps: [expect.objectContaining({ name: 'Step 1' })] });
+  });
 });

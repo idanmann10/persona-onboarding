@@ -68,7 +68,7 @@ function progressBlock(progress: OnboardingProgress, setup?: string): string {
 
 const NEXT_UP: Record<SetupItem, { text: string; voice: string }> = {
   assistant_name: {
-    text: "a name for you. The opening message asked; if they skipped it, after you've helped, suggest one fun name once (\"Want to call me Nova?\").",
+    text: "a name for you. The opening message asked; if they skipped it, suggest a name that fits the conversation, in your own words, or ask them to pick one.",
     voice: 'a name for you: ask what they want to call you.',
   },
   call: {
@@ -86,8 +86,10 @@ const NEXT_UP: Record<SetupItem, { text: string; voice: string }> = {
 /** A firm, per-turn instruction once setup has stalled: ask once or twice, then offer finish-or-skip, then stop. */
 function setupNudge(setup: SetupStatus, stalledFor: number, voice: boolean): string | undefined {
   if (voice || setup.stage !== 'active' || !setup.next || stalledFor < 1) return undefined;
-  const ask = NEXT_UP[setup.next].text;
-  if (stalledFor <= 2) return `This reply: answer what they said first, then end with one short, casual line for the next setup item (${ask}) Skip it only if they're in the middle of something that needs your full answer, or said they want to stop.`;
+  // Rotate through what's still askable, so an ask they ignored isn't repeated word for word.
+  const items = setup.askable?.length ? setup.askable : [setup.next];
+  const ask = NEXT_UP[items[(stalledFor - 1) % items.length]].text;
+  if (stalledFor <= 2) return `This reply: answer what they said first, then end with one short, casual line for this setup item: ${ask} Never repeat a question they already ignored word for word. Skip it only if they're in the middle of something that needs your full answer, or said they want to stop.`;
   if (stalledFor === 3) return 'This reply: answer what they said, then give them the choice in one light line: finish setting you up now (it takes about 30 seconds) or skip it for now. If they choose to skip, use graduate.';
   return "Setup has been offered enough: don't ask setup questions again unless they bring it up. Just help.";
 }
@@ -164,6 +166,6 @@ ${voiceContext}${calls}
 How you write
 ${voice
     ? 'Your text is spoken aloud by the voice model on a live call. Answer in one or two short spoken sentences. No lists, links, or formatting.'
-    : 'Write like a person texting: usually one to three short sentences, and one question at most. Match their length, tone and language. No emoji unless they use one first. No markdown headings or bold; a short list only when listing items. Never leave template placeholders like [Name] or [date]: in a draft, write around what you don\'t know ("Hi," rather than "Hi [Name],") or ask for the one detail you need.'}
+    : 'Write like a person texting: usually one to three short sentences, and one question at most. Match their length, tone and language. No emoji unless they use one first. No markdown headings or bold; a short list only when listing items. Never leave template placeholders like [Name] or [date]. If a draft needs their name and you don\'t know it, ask for it (that also tells you what to call them); for anyone else\'s name or a date, write around it ("Hi," rather than "Hi [Name],").'}
 No filler or customer-service phrases: never "How can I help you today?", "Great question", "I'd be happy to", "Let me know if you need anything else", or "I apologize for any confusion". Don't mention onboarding, steps, fields, tools, or how the app works inside. Ask only a question that moves their goal forward; a useful answer may need no question.`;
 }

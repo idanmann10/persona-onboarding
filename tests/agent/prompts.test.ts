@@ -102,7 +102,8 @@ describe('Persona prompt contract', () => {
     const setup = { stage: 'active' as const, open: ['preferred_name' as const], next: 'preferred_name' as const };
     const at = (stalledFor: number) => buildSystemPrompt({ facts: [], capabilities: ['text'], onboarding: progress(), setup, setupStalledFor: stalledFor });
     expect(at(0)).not.toMatch(/This reply:/);
-    expect(at(1)).toMatch(/This reply: answer what they said first, then end with one short, casual line for the next setup item \(ask what to call them/);
+    expect(at(1)).toMatch(/This reply: answer what they said first, then end with one short, casual line for this setup item: ask what to call them/);
+    expect(at(2)).toMatch(/Never repeat a question they already ignored word for word/);
     expect(at(3)).toMatch(/finish setting you up now .* or skip it for now\. If they choose to skip, use graduate\./);
     expect(at(4)).toMatch(/Setup has been offered enough/);
     expect(buildSystemPrompt({ facts: [], capabilities: ['text'], onboarding: progress(), setup: { stage: 'graduated', open: [] }, setupStalledFor: 2 })).not.toMatch(/This reply:/);

@@ -15,6 +15,8 @@ export interface SetupStatus {
   open: SetupItem[];
   /** The one thing to go for next; undefined when the only open item is already on screen (an Answer or Connect card). */
   next?: SetupItem;
+  /** Open items that can be asked for now, in order (not the ones whose card is already on screen). */
+  askable?: SetupItem[];
 }
 
 export function setupStatus(progress: OnboardingProgress, options: { graduated?: boolean; voice?: boolean } = {}): SetupStatus {
@@ -37,7 +39,14 @@ export function setupStatus(progress: OnboardingProgress, options: { graduated?:
         : !needKnown ? 'need'
           : progress.gmail === 'not_offered' || progress.gmail === 'failed' ? 'gmail'
             : undefined;
-  return { stage: 'active', open: callWorthOffering ? ['call', ...open] : open, next };
+  const askable = [
+    ...(named ? [] : ['assistant_name' as const]),
+    ...(callWorthOffering ? ['call' as const] : []),
+    ...(knowsUser ? [] : ['preferred_name' as const]),
+    ...(needKnown ? [] : ['need' as const]),
+    ...(progress.gmail === 'not_offered' || progress.gmail === 'failed' ? ['gmail' as const] : []),
+  ];
+  return { stage: 'active', open: callWorthOffering ? ['call', ...open] : open, next, askable };
 }
 
 export const SETUP_LABELS: Record<SetupItem, string> = {

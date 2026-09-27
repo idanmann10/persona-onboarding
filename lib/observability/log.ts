@@ -110,6 +110,8 @@ function toolViews(value: unknown): ToolView[] {
 export function groupTurns(traces: StoredTrace[], now = Date.now()): TurnItem[] {
   const turns: TurnItem[] = [];
   const open = new Map<string, { item: TurnItem; startedAt: number }>();
+  // The latest turn for each id, finished or not: a step written just after its turn's end still belongs to it.
+  const latest = new Map<string, { item: TurnItem; startedAt: number }>();
   const openTurn = (entry: StoredTrace) => {
     const data = entry.data ?? {};
     const item: TurnItem = {
@@ -123,13 +125,15 @@ export function groupTurns(traces: StoredTrace[], now = Date.now()): TurnItem[] 
     turns.push(item);
     const record = { item, startedAt: Date.parse(entry.at) };
     open.set(entry.turnId, record);
+    latest.set(entry.turnId, record);
     return record;
   };
   for (const entry of traces) {
     if (entry.kind !== 'turn' && entry.kind !== 'step') continue;
     if (entry.kind === 'turn' && entry.status === 'running') { openTurn(entry); continue; }
     // An entry without its start (the start write failed) still gets a turn to belong to.
-    const current = open.get(entry.turnId) ?? openTurn({ ...entry, at: new Date(Date.parse(entry.at) - num(entry.durationMs)).toISOString(), data: {} });
+    const current = open.get(entry.turnId) ?? (entry.kind === 'step' ? latest.get(entry.turnId) : undefined)
+      ?? openTurn({ ...entry, at: new Date(Date.parse(entry.at) - num(entry.durationMs)).toISOString(), data: {} });
     const { item, startedAt } = current;
     const data = entry.data ?? {};
     if (entry.kind === 'step') {

@@ -69,18 +69,20 @@ export function outputSummary(output: unknown): { status?: string; preview: stri
 
 /** Collects trace writes without awaiting them; `flush` waits for all of them and never throws. */
 export function traceWriter(sink: TraceSink | undefined, sessionId: string) {
-  const pending: Array<Promise<unknown>> = [];
+  // One queue, in call order: concurrent inserts let a turn's last step land after its end entry, and the
+  // log then showed that step as a second, never-finished turn. The queue runs in the background, so the
+  // model is still never waiting on a trace write.
+  let queue: Promise<void> = Promise.resolve();
   return {
     record(entry: TraceEntry): void {
       if (!sink) return;
-      try {
-        pending.push(Promise.resolve(sink.appendTrace(sessionId, entry)).catch((error) => console.warn('Trace write failed', error instanceof Error ? error.message : error)));
-      } catch (error) {
-        console.warn('Trace write failed', error instanceof Error ? error.message : error);
-      }
+      queue = queue.then(async () => {
+        try { await sink.appendTrace(sessionId, entry); }
+        catch (error) { console.warn('Trace write failed', error instanceof Error ? error.message : error); }
+      });
     },
     async flush(): Promise<void> {
-      await Promise.allSettled(pending.splice(0));
+      await queue;
     },
   };
 }

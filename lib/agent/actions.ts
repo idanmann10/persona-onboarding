@@ -258,7 +258,7 @@ export async function offerCall(ctx: ActionContext) {
     return { status: 'declined_recently' as const, note: 'They said no to a call. Stay in text; offer again only if they ask.' };
   }
   await ctx.store.appendEvent(ctx.sessionId, { id: `call-offer:${ctx.turnId}`, at: timestamp(ctx), type: 'call', phase: 'offered' });
-  return { status: 'offered' as const, note: 'An Answer button is now in the chat. The call starts only if they tap it; do not say it has started.' };
+  return { status: 'offered' as const, note: 'An Answer button is now in the chat, right below your message. The call starts only if they tap it; do not say it has started.' };
 }
 
 /** The user said no in their own words ("just text me", "I won't connect my calendar"); don't offer it again. */
@@ -306,7 +306,7 @@ export async function showConnection(ctx: ActionContext, input: z.infer<typeof s
     return { status: 'declined_recently' as const, note: `They chose not to connect ${name}. Help without it unless they ask.` };
   }
   await ctx.store.appendEvent(ctx.sessionId, { id: `connection-offer:${toolkit}:${ctx.turnId}`, at: timestamp(ctx), type: 'connection', toolkit, phase: 'offered', reason: input.reason.slice(0, 200) });
-  return { status: 'shown' as const, note: `A Connect ${name} button is now in the chat. Nothing is connected until they finish Google's sign-in.` };
+  return { status: 'shown' as const, note: `A Connect ${name} button is now in the chat, right below your message. Nothing is connected until they finish Google's sign-in.` };
 }
 
 const proposedThisTurn = new WeakMap<ActionContext, boolean>();

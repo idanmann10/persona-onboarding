@@ -24,7 +24,7 @@ describe('setup status (the brief as server state)', () => {
 
   it("doesn't re-ask what is already on screen, is complete when all four are known, and graduation wins", () => {
     const almost = { ...base, assistantName: { status: 'confirmed' as const, value: 'Max' }, preferredName: { status: 'confirmed' as const, value: 'Dana' }, need: { status: 'tentative' as const, value: 'email' }, call: 'declined' as const };
-    expect(setupStatus({ ...almost, gmail: 'offered' })).toEqual({ stage: 'active', open: ['gmail'], next: undefined });
+    expect(setupStatus({ ...almost, gmail: 'offered' })).toEqual({ stage: 'active', open: ['gmail'], next: undefined, askable: [] });
     expect(setupStatus({ ...almost, gmail: 'declined' }).stage).toBe('complete');
     expect(setupStatus({ ...almost, gmail: 'connected' }).stage).toBe('complete');
     expect(setupStatus(base, { graduated: true }).stage).toBe('graduated');
