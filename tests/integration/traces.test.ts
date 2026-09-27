@@ -12,7 +12,7 @@ let sql: ReturnType<typeof postgres>;
 
 describe('agent log store', () => {
   beforeAll(async () => {
-    await admin.unsafe(`CREATE DATABASE ${database}`);
+    await admin.unsafe(`CREATE DATABASE ${database} ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0`);
     sql = postgres(testUrl.toString(), { max: 1 });
     await createStore(sql).initialize();
   });
