@@ -121,3 +121,16 @@ CREATE TABLE IF NOT EXISTS persona_automation_runs (
   finished_at TIMESTAMPTZ,
   UNIQUE (automation_id, scheduled_for, trigger)
 );
+
+CREATE TABLE IF NOT EXISTS persona_traces (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  turn_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('turn', 'step', 'call', 'voice_tool')),
+  name TEXT NOT NULL,
+  at TIMESTAMPTZ NOT NULL,
+  duration_ms INTEGER,
+  status TEXT CHECK (status IN ('running', 'ok', 'error', 'timeout')),
+  data JSONB NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS persona_traces_session ON persona_traces (session_id, id);

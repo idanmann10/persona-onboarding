@@ -3,6 +3,10 @@ import type { SessionEvent } from '../domain/events';
 import { readFile } from 'node:fs/promises';
 import type { KnowledgeFact } from '../domain/knowledge';
 import type { AutomationRecord, AutomationStatus } from '../domain/automation';
+import type { StoredTrace, TraceEntry } from '../observability/trace';
+
+/** The newest agent-log entries a session keeps on screen. */
+const TRACE_LIMIT = 2_000;
 
 function automationFrom(row: Record<string, unknown>): AutomationRecord {
   return {
@@ -226,6 +230,25 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     },
     releaseReservation: async (sessionId: string, key: string): Promise<void> => {
       await sql`DELETE FROM persona_reservations WHERE session_id = ${sessionId} AND reservation_key = ${key}`;
+    },
+    /** One agent-log entry (see lib/observability/trace.ts). */
+    appendTrace: async (sessionId: string, entry: TraceEntry): Promise<void> => {
+      const duration = entry.durationMs === undefined || !Number.isFinite(entry.durationMs) ? null : Math.max(0, Math.round(entry.durationMs));
+      await sql`INSERT INTO persona_traces (session_id, turn_id, kind, name, at, duration_ms, status, data)
+        VALUES (${sessionId}, ${entry.turnId}, ${entry.kind}, ${entry.name}, ${entry.at}, ${duration}, ${entry.status ?? null},
+          ${sql.json(JSON.parse(JSON.stringify(entry.data ?? {})) as Parameters<typeof sql.json>[0])})`;
+    },
+    /** The session's agent log in the order it was written, newest entries kept. */
+    readTraces: async (sessionId: string): Promise<StoredTrace[]> => {
+      const rows = await sql`SELECT id, turn_id, kind, name, at, duration_ms, status, data FROM (
+          SELECT * FROM persona_traces WHERE session_id = ${sessionId} ORDER BY id DESC LIMIT ${TRACE_LIMIT}) newest ORDER BY id`;
+      return rows.map((row) => ({
+        id: Number(row.id), turnId: row.turn_id as string, kind: row.kind as StoredTrace['kind'], name: row.name as string,
+        at: new Date(row.at as string).toISOString(),
+        ...(row.duration_ms === null ? {} : { durationMs: Number(row.duration_ms) }),
+        ...(row.status ? { status: row.status as StoredTrace['status'] } : {}),
+        data: (row.data as Record<string, unknown>) ?? {},
+      }));
     },
     reserveIdentityClaim: async (sessionId: string, userEventId: string): Promise<boolean> => {
       const rows = await sql`INSERT INTO persona_identity_reservations (session_id, user_event_id)

@@ -8,6 +8,7 @@ import { noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutoma
 import type { AutomationStore } from '../domain/automation';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
 import { personalityLine, personaSettings } from '../domain/persona';
+import { describeTurn, type TraceSink, type TurnTrace } from '../observability/trace';
 
 type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
 
@@ -21,6 +22,8 @@ export interface TurnDependencies {
   composio?: AccountReadClient;
   resolveIdentity?: (sessionId: string, userEvent: MessageEvent, clue: { first: string; last: string; company: string }) => Promise<unknown>;
   now?: () => Date;
+  /** Where the agent log goes; turns are traced only when this is set. */
+  trace?: TraceSink;
 }
 
 /** An app event that wakes the assistant without a new user message (a call ended, Gmail connected). */
@@ -36,6 +39,7 @@ export interface PreparedTurn {
   tools: ToolSet;
   state: SessionProjection;
   allowSystemInMessages: boolean;
+  trace?: TurnTrace;
 }
 
 const MESSAGE_LIMIT = 40;
@@ -190,5 +194,6 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   });
   const messages = modelMessages(state);
   if (options.trigger) messages.push({ role: 'system', content: options.trigger.instruction });
-  return { instructions, messages, tools, state, allowSystemInMessages: Boolean(options.trigger) };
+  const trace = deps.trace ? describeTurn(deps.trace, sessionId, { turnId: options.turnId, trigger: options.trigger, channel, model: deps.env.OPENAI_TEXT_MODEL, instructions, messages, tools, userText: latestUser?.text }) : undefined;
+  return { instructions, messages, tools, state, allowSystemInMessages: Boolean(options.trigger), ...(trace ? { trace } : {}) };
 }
