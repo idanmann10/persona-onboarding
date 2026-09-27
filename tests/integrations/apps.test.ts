@@ -268,3 +268,20 @@ describe('Apps HTTP contract', () => {
     expect(state.apps).toEqual({ slack: { name: 'Slack', phase: 'connected' }, notion: { name: 'Notion', phase: 'disconnected' } });
   });
 });
+
+describe('agent awareness of connected apps', () => {
+  it("lists a connected app as a capability it can't act in yet, and drops a disconnected one", async () => {
+    const { prepareTurn } = await import('../../lib/agent/turn');
+    const at = '2026-09-27T12:00:00.000Z';
+    const history: SessionEvent[] = [
+      { id: 'm1', at, type: 'message', speaker: 'user', channel: 'text', text: 'hi' },
+      { id: 'a1', at, type: 'app_connection', app: 'slack', name: 'Slack', phase: 'connected' },
+      { id: 'a2', at, type: 'app_connection', app: 'notion', name: 'Notion', phase: 'connected' },
+      { id: 'a3', at, type: 'app_connection', app: 'notion', name: 'Notion', phase: 'disconnected' },
+    ];
+    const deps = { store: { appendEvent: async () => undefined, getActiveConnection: async () => undefined }, env: { OPENAI_API_KEY: 'k', OPENAI_TEXT_MODEL: 'gpt-6-luna' } };
+    const turn = await prepareTurn(deps, 's1', history, { turnId: 'm1' });
+    expect(turn.instructions).toContain("Slack (connected; you can't act in it yet — say so honestly)");
+    expect(turn.instructions).not.toContain('Notion (connected');
+  });
+});
