@@ -16,6 +16,7 @@ The [architecture review](docs/superpowers/specs/2026-09-27-persona-architecture
 The repository stays private until the owner approves publication. No production credentials belong in Git.
 
 See [implementation status](docs/implementation-status.md) for verified behavior and release gaps.
+For another coding agent taking over, start with [the Claude handoff](docs/CLAUDE-HANDOFF.md); Claude Code will also read the root `CLAUDE.md`.
 
 ## Run locally
 
