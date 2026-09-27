@@ -14,3 +14,17 @@ The [architecture review](docs/superpowers/specs/2026-09-27-persona-architecture
 6. Run scenario, voice, security, accessibility, and deployment evaluations.
 
 The repository stays private until the owner approves publication. No production credentials belong in Git.
+
+## Run locally
+
+Requires Bun 1.3, Node 22.6 or newer, and PostgreSQL. Create a local database named `persona_dev`, copy `.env.example` to `.env.local`, and set a project `OPENAI_API_KEY` plus `OPENAI_TEXT_MODEL` for live text and browser voice. The key needs GPT-Live access for calls.
+
+```sh
+bun install --frozen-lockfile
+bun run db:migrate
+bun run dev
+```
+
+Open `http://localhost:3000`. Without an OpenAI key, the UI shows the chat shell and keeps unsent text as a draft; the Call button stays disabled. `bun run test`, `bun run typecheck`, and `bun run build` are the verification commands. The integration suite uses a disposable Postgres database and accepts `TEST_DATABASE_ADMIN_URL` to target a test server.
+
+The current branch implements text persistence, browser WebRTC plumbing, and a guarded Context.dev identity candidate lookup. Gmail/Calendar, account automation, hosted deployment, and live provider checks remain on the [roadmap](docs/roadmap.md).

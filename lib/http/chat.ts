@@ -8,7 +8,7 @@ interface Store {
   readEvents(id: string): Promise<SessionEvent[]>;
 }
 
-export function createChatHandler(store: Store, respond: (history: SessionEvent[]) => AsyncIterable<string>) {
+export function createChatHandler(store: Store, respond: (history: SessionEvent[], sessionId: string) => AsyncIterable<string>) {
   return async (request: Request): Promise<Response> => {
     const sessionId = readSessionCookie(request);
     if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) {
@@ -26,7 +26,7 @@ export function createChatHandler(store: Store, respond: (history: SessionEvent[
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for await (const chunk of runTextTurn(store, sessionId, event, respond)) controller.enqueue(encoder.encode(chunk));
+          for await (const chunk of runTextTurn(store, sessionId, event, (history) => respond(history, sessionId))) controller.enqueue(encoder.encode(chunk));
           controller.close();
         } catch (error) { controller.error(error); }
       },

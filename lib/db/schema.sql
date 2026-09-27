@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS persona_graph_facts (
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE persona_graph_facts ADD COLUMN IF NOT EXISTS event_id TEXT;
 CREATE INDEX IF NOT EXISTS persona_graph_facts_session ON persona_graph_facts (session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS persona_graph_facts_event ON persona_graph_facts (session_id, event_id) WHERE event_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS persona_action_confirmations (
   session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,

@@ -9,9 +9,13 @@ import { createChatHandler } from '../../lib/http/chat';
 import { createVoiceSessionHandler } from '../../lib/http/voice';
 import { createVoiceEventHandler } from '../../lib/http/voice-events';
 import { projectSession } from '../../lib/domain/project';
+import { resolveIdentityClaim } from '../../lib/research/service';
 
 const database = `persona_test_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-const admin = postgres('postgres://localhost/postgres', { max: 1 });
+const adminUrl = new URL(process.env.TEST_DATABASE_ADMIN_URL || 'postgres://localhost/postgres');
+const testUrl = new URL(adminUrl);
+testUrl.pathname = `/${database}`;
+const admin = postgres(adminUrl.toString(), { max: 1 });
 let sql: ReturnType<typeof postgres>;
 async function collect(stream: AsyncIterable<string>): Promise<string[]> {
   const chunks: string[] = [];
@@ -22,7 +26,7 @@ async function collect(stream: AsyncIterable<string>): Promise<string[]> {
 describe('Postgres session store', () => {
   beforeAll(async () => {
     await admin.unsafe(`CREATE DATABASE ${database}`);
-    sql = postgres(`postgres://localhost/${database}`, { max: 1 });
+    sql = postgres(testUrl.toString(), { max: 1 });
     await createStore(sql).initialize();
   });
 
@@ -130,5 +134,34 @@ describe('Postgres session store', () => {
     expect(state.facts.company).toBeUndefined();
     const snapshot = await createSessionHandler(store)(new Request('http://localhost/api/session', { headers: { cookie: `persona_session=${session.id}` } }));
     expect((await snapshot.json()).voiceFragments).toEqual([{ speaker: 'user', text: 'I maybe work at North...', startMs: 1000, endMs: 1400, callId: 'live_one' }]);
+  });
+
+  it('projects sourced graph facts and supersedes a correction in SQL', async () => {
+    const store = createStore(sql);
+    const sessionId = crypto.randomUUID();
+    await store.createSession(sessionId);
+    await store.appendEvent(sessionId, { id: 'fact-1', at: new Date().toISOString(), type: 'fact', key: 'company', value: 'Old Co', evidence: 'confirmed', provenance: 'user_said', sourceEventId: 'message-1' });
+    await store.appendEvent(sessionId, { id: 'fact-2', at: new Date().toISOString(), type: 'fact', key: 'company', value: 'New Co', evidence: 'confirmed', provenance: 'user_confirmed', sourceEventId: 'message-2', sourceUrl: 'https://example.org/new-co' });
+    const facts = await store.readGraphFacts(sessionId);
+    expect(facts.map((fact) => [fact.value, fact.evidence])).toEqual([['Old Co', 'superseded'], ['New Co', 'confirmed']]);
+    expect(facts[1].provenance).toBe('user_confirmed');
+    expect(facts[1].sourceUrl).toBe('https://example.org/new-co');
+  });
+
+  it('automatically checks only a direct user identity claim and keeps public identity tentative', async () => {
+    const store = createStore(sql);
+    const sessionId = crypto.randomUUID();
+    await store.createSession(sessionId);
+    const userEvent: SessionEvent = { id: 'identity-message', at: new Date().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: "I'm Jordan Lee, founder of Northstar Analytics." };
+    await store.appendEvent(sessionId, userEvent);
+    let calls = 0;
+    const lookup = async () => { calls++; return { status: 'matched_for_research' as const, score: .97, name: 'Jordan Lee', company: 'Northstar Analytics', sourceUrl: 'https://example.org/jordan', requestId: 'req-1' }; };
+    const clue = { first: 'Jordan', last: 'Lee', company: 'Northstar Analytics' };
+    const result = await resolveIdentityClaim(store, sessionId, userEvent, clue, 'test-key', lookup);
+    await resolveIdentityClaim(store, sessionId, userEvent, clue, 'test-key', lookup);
+    expect(result.status).toBe('matched_for_research');
+    expect(calls).toBe(1);
+    const facts = await store.readGraphFacts(sessionId);
+    expect(facts.find((fact) => fact.key === 'public_identity_candidate')).toMatchObject({ evidence: 'tentative', provenance: 'tool_observed', sourceUrl: 'https://example.org/jordan' });
   });
 });

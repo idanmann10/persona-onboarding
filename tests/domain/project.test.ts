@@ -14,8 +14,8 @@ describe('projectSession', () => {
 
   it('lets a correction supersede a previous name', () => {
     const state = projectSession([
-      { id: 'f1', at, type: 'fact', key: 'preferred_name', value: 'Samantha', evidence: 'confirmed', sourceEventId: 'm1' },
-      { id: 'f2', at, type: 'fact', key: 'preferred_name', value: 'Sam', evidence: 'confirmed', sourceEventId: 'm2' },
+      { id: 'f1', at, type: 'fact', key: 'preferred_name', value: 'Samantha', evidence: 'confirmed', provenance: 'user_said', sourceEventId: 'm1' },
+      { id: 'f2', at, type: 'fact', key: 'preferred_name', value: 'Sam', evidence: 'confirmed', provenance: 'user_confirmed', sourceEventId: 'm2' },
     ]);
     expect(state.facts.preferred_name?.value).toBe('Sam');
     expect(state.history.find((fact) => fact.value === 'Samantha')?.evidence).toBe('superseded');

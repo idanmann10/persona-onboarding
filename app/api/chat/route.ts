@@ -1,10 +1,12 @@
-import { streamText } from 'ai';
+import { stepCountIs, streamText, tool, type ToolSet } from 'ai';
 import { openai } from '@ai-sdk/openai';
+import { z } from 'zod';
 import { createStore } from '@/lib/db/store';
 import { getDatabase } from '@/lib/db/client';
 import { createChatHandler } from '@/lib/http/chat';
 import { buildSystemPrompt } from '@/lib/agent/prompts';
 import { projectSession } from '@/lib/domain/project';
+import { resolveIdentityClaim } from '@/lib/research/service';
 
 export const runtime = 'nodejs';
 
@@ -13,15 +15,30 @@ export async function POST(request: Request): Promise<Response> {
     return new Response('Text model is not configured', { status: 503 });
   }
   try {
-    const handler = createChatHandler(createStore(getDatabase()), (history) => {
+    const store = createStore(getDatabase());
+    const handler = createChatHandler(store, (history, sessionId) => {
       const state = projectSession(history);
       const messages = state.messages.map((message) => ({ role: message.speaker, content: message.text }));
-      const currentTask = state.messages.filter((message) => message.speaker === 'user').at(-1)?.text;
-      const facts = Object.entries(state.facts).map(([key, fact]) => ({ key, value: fact.value, provenance: 'user_said', evidence: fact.evidence }));
+      const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
+      const currentTask = latestUser?.text;
+      const facts = Object.entries(state.facts).filter(([key]) => key !== 'identity_lookup_status').map(([key, fact]) => ({ key, value: fact.value, provenance: fact.provenance, evidence: fact.evidence, sourceUrl: fact.sourceUrl }));
+      const researchTools: ToolSet = process.env.CONTEXT_DEV_API_KEY ? {
+        resolve_identity: tool({
+          description: 'Check a directly stated first-person full name and company against a public Context.dev candidate. The server rejects weak or inferred claims.',
+          inputSchema: z.object({ first: z.string().min(1), last: z.string().min(1), company: z.string().min(1) }),
+          execute: async (clue) => {
+            if (!latestUser) return { status: 'insufficient_evidence' };
+            try { return await resolveIdentityClaim(store, sessionId, latestUser, clue, process.env.CONTEXT_DEV_API_KEY!); }
+            catch (error) { console.error('Identity lookup failed', error); return { status: 'unavailable' }; }
+          },
+        }),
+      } : {};
       return streamText({
         model: openai(process.env.OPENAI_TEXT_MODEL!),
         system: buildSystemPrompt({ currentTask, facts, capabilities: ['text'], voiceFragments: state.voiceFragments.map((fragment) => ({ speaker: fragment.speaker, text: fragment.text })) }),
         messages,
+        tools: researchTools,
+        stopWhen: stepCountIs(3),
       }).textStream;
     });
     return await handler(request);
