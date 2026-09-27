@@ -14,7 +14,7 @@ interface Store extends IpQuotaStore {
 }
 interface Service {
   start(id: string, toolkit: string): Promise<{ attemptId: string; redirectUrl: string }>;
-  finish(id: string, attemptId: string): Promise<string>;
+  finish(id: string, attemptId: string, key?: string | null): Promise<string>;
   disconnect(id: string, toolkit: string): Promise<void>;
 }
 interface Catalog {
@@ -174,7 +174,7 @@ export function createConnectionHandlers(store: Store, service: Service, appBase
       if (attempt?.status === 'active') return callbackPage(appBaseUrl, attempt.toolkit, 'connected');
       let toolkit: string;
       try {
-        toolkit = await service.finish(id, attemptId);
+        toolkit = await service.finish(id, attemptId, new URL(request.url).searchParams.get('k'));
       } catch (error) {
         console.error('Connection callback failed', error);
         if (attempt?.status === 'pending') {

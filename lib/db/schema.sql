@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS persona_connections (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS persona_connections_one_active ON persona_connections (session_id, toolkit) WHERE status = 'active';
+-- The hash of the per-attempt callback key (see lib/integrations/connections.ts).
+ALTER TABLE persona_connections ADD COLUMN IF NOT EXISTS callback_hash TEXT;
 -- Any Composio toolkit can be connected now, not only Gmail and Calendar: swap the old list check for a slug check.
 ALTER TABLE persona_connections DROP CONSTRAINT IF EXISTS persona_connections_toolkit_check;
 DO $$ BEGIN

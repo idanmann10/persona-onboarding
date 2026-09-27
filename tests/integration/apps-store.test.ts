@@ -50,20 +50,23 @@ describe('Postgres store for generic app connections', () => {
   });
 
   it('connects a generic app for one session only, and Start over revokes it', async () => {
+    let callbackUrl = '';
     const store = createStore(sql);
     const owner = crypto.randomUUID();
     const stranger = crypto.randomUUID();
     await store.createSession(owner);
     await store.createSession(stranger);
     const client = {
-      createLink: async () => ({ accountId: 'ca_notion_owner', redirectUrl: 'https://connect.composio.dev/link/x' }),
+      createLink: async (_user: string, _config: string, callback: string) => { callbackUrl = callback; return { accountId: 'ca_notion_owner', redirectUrl: 'https://connect.composio.dev/link/x' }; },
       getAccount: async () => ({ id: 'ca_notion_owner', user_id: owner, status: 'ACTIVE', toolkit: { slug: 'notion' }, auth_config: { id: 'ac_notion' } }),
       deleteAccount: async () => undefined,
     };
     const service = createConnectionsService(store, client, {}, 'https://persona.example', { authConfigFor: async () => 'ac_notion' });
     const link = await service.start(owner, 'notion');
-    await expect(service.finish(stranger, link.attemptId)).rejects.toThrow();
-    expect(await service.finish(owner, link.attemptId)).toBe('notion');
+    const key = new URL(callbackUrl).searchParams.get('k');
+    await expect(service.finish(stranger, link.attemptId, key)).rejects.toThrow();
+    await expect(service.finish(owner, link.attemptId)).rejects.toThrow('key mismatch');
+    expect(await service.finish(owner, link.attemptId, key)).toBe('notion');
     expect(await store.listActiveConnectionToolkits(owner)).toEqual(['notion']);
     expect(await store.listActiveConnectionToolkits(stranger)).toEqual([]);
     const revoked: string[] = [];

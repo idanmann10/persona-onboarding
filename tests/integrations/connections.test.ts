@@ -62,4 +62,32 @@ describe('account connection service', () => {
     await service.finish('owner', crypto.randomUUID());
     expect(calls).toEqual(['delete:ca_old', 'deactivate', 'activate']);
   });
+
+  it('finishes only with the callback key, so a forwarded consent link cannot land in the sender\'s session', async () => {
+    let saved: { attemptId: string; accountId: string; authConfigId: string; hash?: string } | undefined;
+    let callbackUrl = '';
+    let active = false;
+    const service = createConnectionsService({
+      createConnectionAttempt: async (_sessionId: string, attemptId: string, _toolkit: string, accountId: string, authConfigId: string, _expires: string, callbackHash?: string) => { saved = { attemptId, accountId, authConfigId, hash: callbackHash }; },
+      getConnectionAttempt: async (_sessionId: string, attemptId: string) => saved?.attemptId === attemptId ? { toolkit: 'gmail', accountId: saved.accountId, authConfigId: saved.authConfigId, status: 'pending', callbackHash: saved.hash } : undefined,
+      activateConnection: async () => { active = true; return true; },
+      getActiveConnection: async () => undefined,
+      deactivateConnection: async () => true,
+    }, {
+      createLink: async (_user: string, _config: string, callback: string) => { callbackUrl = callback; return { accountId: 'ca_g', redirectUrl: 'https://connect.composio.dev/link/opaque' }; },
+      getAccount: async () => ({ id: 'ca_g', user_id: 'attacker', status: 'ACTIVE', toolkit: { slug: 'gmail' }, auth_config: { id: 'auth_gmail' } }),
+      deleteAccount: async () => undefined,
+    }, { gmail: 'auth_gmail' }, 'https://persona.example');
+    const link = await service.start('attacker', 'gmail');
+    const key = new URL(callbackUrl).searchParams.get('k');
+    expect(key).toMatch(/^[\w-]{20,}$/);
+    expect(link.redirectUrl).not.toContain(key!);
+    expect(saved?.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(saved?.hash).not.toBe(key);
+    await expect(service.finish('attacker', link.attemptId)).rejects.toThrow('key mismatch');
+    await expect(service.finish('attacker', link.attemptId, 'guessed')).rejects.toThrow('key mismatch');
+    expect(active).toBe(false);
+    expect(await service.finish('attacker', link.attemptId, key)).toBe('gmail');
+    expect(active).toBe(true);
+  });
 });

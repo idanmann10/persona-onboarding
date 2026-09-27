@@ -1,11 +1,23 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { composioToolkitSlug, isBuiltinApp } from '../domain/apps';
+
+const hashKey = (key: string) => createHash('sha256').update(key).digest('hex');
+
+/** True when the callback carried the attempt's key. Only the browser Composio redirects after consent has it. */
+function keyMatches(storedHash: string | undefined, key: string | null | undefined): boolean {
+  if (!storedHash) return true;
+  if (!key) return false;
+  const given = Buffer.from(hashKey(key));
+  const stored = Buffer.from(storedHash);
+  return given.length === stored.length && timingSafeEqual(given, stored);
+}
 
 /** The apps the agent can read. Any other Composio toolkit is connected under its own slug. */
 export type Toolkit = 'calendar' | 'gmail';
 
 interface Store {
-  createConnectionAttempt(sessionId: string, attemptId: string, toolkit: string, accountId: string, authConfigId: string, expiresAt: string): Promise<void>;
-  getConnectionAttempt(sessionId: string, attemptId: string): Promise<{ toolkit: string; accountId: string; authConfigId: string; status: string } | undefined>;
+  createConnectionAttempt(sessionId: string, attemptId: string, toolkit: string, accountId: string, authConfigId: string, expiresAt: string, callbackHash?: string): Promise<void>;
+  getConnectionAttempt(sessionId: string, attemptId: string): Promise<{ toolkit: string; accountId: string; authConfigId: string; status: string; callbackHash?: string } | undefined>;
   activateConnection(sessionId: string, attemptId: string): Promise<boolean>;
   getActiveConnection(sessionId: string, toolkit: string): Promise<string | undefined>;
   deactivateConnection(sessionId: string, toolkit: string, accountId: string): Promise<boolean>;
@@ -30,15 +42,21 @@ export function createConnectionsService(store: Store, client: Client, authConfi
       const authConfigId = await authConfigFor(toolkit);
       if (!authConfigId) throw new Error(`${toolkit} connection is unavailable`);
       const attemptId = crypto.randomUUID();
+      // A per-attempt key rides only in the callback URL, which Composio keeps server-side: the consent link
+      // it returns is opaque. Someone who sends a victim that link cannot finish the connection in their own
+      // session, because only the browser that actually consents is redirected with the key.
+      const key = randomBytes(24).toString('base64url');
       const callbackUrl = new URL('/api/connections/callback', appBaseUrl);
       callbackUrl.searchParams.set('attempt', attemptId);
+      callbackUrl.searchParams.set('k', key);
       const link = await client.createLink(sessionId, authConfigId, callbackUrl.toString());
-      await store.createConnectionAttempt(sessionId, attemptId, toolkit, link.accountId, authConfigId, link.expiresAt || new Date(Date.now() + 10 * 60_000).toISOString());
+      await store.createConnectionAttempt(sessionId, attemptId, toolkit, link.accountId, authConfigId, link.expiresAt || new Date(Date.now() + 10 * 60_000).toISOString(), hashKey(key));
       return { attemptId, redirectUrl: link.redirectUrl };
     },
-    finish: async (sessionId: string, attemptId: string): Promise<string> => {
+    finish: async (sessionId: string, attemptId: string, key?: string | null): Promise<string> => {
       const attempt = await store.getConnectionAttempt(sessionId, attemptId);
       if (!attempt || attempt.status !== 'pending') throw new Error('Connection attempt not found');
+      if (!keyMatches(attempt.callbackHash, key)) throw new Error('Connection callback key mismatch');
       const account = await client.getAccount(attempt.accountId);
       const toolkit = account.toolkit as { slug?: string } | undefined;
       const authConfig = account.auth_config as { id?: string } | undefined;

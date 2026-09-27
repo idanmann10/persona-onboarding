@@ -116,15 +116,16 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         sourceUrl: (row.sourceUrl as string | null) || undefined,
       }));
     },
-    createConnectionAttempt: async (sessionId: string, attemptId: string, toolkit: 'gmail' | 'calendar', accountId: string, authConfigId: string, expiresAt: string) => {
-      await sql`INSERT INTO persona_connections (attempt_id, session_id, toolkit, connected_account_id, auth_config_id, expires_at)
-        VALUES (${attemptId}, ${sessionId}, ${toolkit}, ${accountId}, ${authConfigId}, ${expiresAt})`;
+    createConnectionAttempt: async (sessionId: string, attemptId: string, toolkit: string, accountId: string, authConfigId: string, expiresAt: string, callbackHash?: string) => {
+      await sql`INSERT INTO persona_connections (attempt_id, session_id, toolkit, connected_account_id, auth_config_id, expires_at, callback_hash)
+        VALUES (${attemptId}, ${sessionId}, ${toolkit}, ${accountId}, ${authConfigId}, ${expiresAt}, ${callbackHash ?? null})`;
     },
     getConnectionAttempt: async (sessionId: string, attemptId: string) => {
-      const rows = await sql`SELECT toolkit, connected_account_id AS "accountId", auth_config_id AS "authConfigId", status
+      const rows = await sql`SELECT toolkit, connected_account_id AS "accountId", auth_config_id AS "authConfigId", status, callback_hash AS "callbackHash"
         FROM persona_connections WHERE session_id = ${sessionId} AND attempt_id = ${attemptId}
         AND (expires_at > now() OR status = 'active') LIMIT 1`;
-      return rows[0] as { toolkit: 'gmail' | 'calendar'; accountId: string; authConfigId: string; status: string } | undefined;
+      const row = rows[0] as { toolkit: string; accountId: string; authConfigId: string; status: string; callbackHash: string | null } | undefined;
+      return row ? { toolkit: row.toolkit, accountId: row.accountId, authConfigId: row.authConfigId, status: row.status, ...(row.callbackHash ? { callbackHash: row.callbackHash } : {}) } : undefined;
     },
     activateConnection: async (sessionId: string, attemptId: string): Promise<boolean> => sql.begin(async (tx) => {
       const rows = await tx`SELECT toolkit FROM persona_connections WHERE session_id = ${sessionId} AND attempt_id = ${attemptId}
