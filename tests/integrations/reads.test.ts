@@ -20,8 +20,24 @@ describe('bounded account reads', () => {
       args = input;
       return { messages: [{ id: 'm1', subject: 'Schedule', snippet: 'Can we meet?', from: 'alex@example.com', body: 'Full confidential body' }] };
     };
-    expect(await searchMailbox(execute, 'ca_gmail', 'owner', 'newer_than:7d schedule')).toEqual([{ id: 'm1', subject: 'Schedule', snippet: 'Can we meet?', from: 'alex@example.com' }]);
+    expect(await searchMailbox(execute, 'ca_gmail', 'owner', 'newer_than:7d schedule')).toEqual([{ id: 'm1', subject: 'Schedule', snippet: 'Can we meet?', from: 'alex@example.com', unread: false }]);
     expect(args).toMatchObject({ max_results: 5, include_payload: false, query: 'newer_than:7d schedule' });
     await expect(searchMailbox(execute, 'ca_gmail', 'owner', 'x'.repeat(121))).rejects.toThrow('query');
+  });
+
+  it("reads Composio's Gmail shape (sender, preview, messageId) inside a nested wrapper", async () => {
+    const execute = async () => ({ response_data: { messages: [{
+      messageId: '18f1', threadId: 't1', sender: 'Dana <dana@example.com>', messageTimestamp: '2026-09-26T09:00:00Z',
+      labelIds: ['INBOX', 'UNREAD'], preview: { subject: 'Lease renewal', body: 'Can you confirm by Friday?' }, messageText: 'Full body stays out',
+    }] } });
+    expect(await searchMailbox(execute, 'ca_gmail', 'owner', 'in:inbox')).toEqual([{
+      id: '18f1', threadId: 't1', subject: 'Lease renewal', snippet: 'Can you confirm by Friday?', from: 'Dana <dana@example.com>',
+      receivedAt: '2026-09-26T09:00:00Z', unread: true,
+    }]);
+  });
+
+  it('finds calendar items inside a nested Composio wrapper', async () => {
+    const execute = async () => ({ data: { items: [{ id: 'e2', summary: 'Standup', start: { date: '2026-09-28' }, end: { date: '2026-09-28' } }] } });
+    expect(await readCalendarWindow(execute, 'ca_one', 'owner', '2026-09-28T00:00:00Z', '2026-09-29T00:00:00Z')).toEqual([{ id: 'e2', summary: 'Standup', start: '2026-09-28', end: '2026-09-28' }]);
   });
 });
