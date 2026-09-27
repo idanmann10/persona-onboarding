@@ -180,6 +180,11 @@ function Waterfall({ turn, elapsed }: { turn: TurnItem; elapsed?: number }) {
   );
 }
 
+/** Indented JSON when the text is JSON (a clipped value stays as it is). */
+function pretty(text: string): string {
+  try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+}
+
 function ToolCalls({ tools }: { tools: ToolView[] }) {
   return (
     <ul className="ins-calls">
@@ -196,8 +201,8 @@ function ToolCalls({ tools }: { tools: ToolView[] }) {
                 <span className="ins-call-ms">{ms(tool.ms)}</span>
               </summary>
               <div className="ins-call-body">
-                <div><span>Input</span><pre className="ins-pre">{tool.input || '{}'}</pre></div>
-                {tool.preview && <div><span>Result</span><pre className="ins-pre">{tool.preview}</pre></div>}
+                <div><span>Input</span><pre className="ins-pre">{pretty(tool.input || '{}')}</pre></div>
+                {tool.preview && <div><span>Result</span><pre className="ins-pre">{pretty(tool.preview)}</pre></div>}
               </div>
             </details>
           </li>

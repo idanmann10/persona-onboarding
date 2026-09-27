@@ -28,7 +28,7 @@ export function turnTracer(trace: TurnTrace | undefined) {
         const tools = step.toolCalls.map((call) => {
           const result = step.toolResults.find((item) => item.toolCallId === call.toolCallId);
           const summary = result ? outputSummary(result.output) : { status: 'no_result', preview: '' };
-          return { name: call.toolName, input: clip(call.input, 240), status: summary.status ?? 'done', preview: summary.preview, ms: step.performance?.toolExecutionMs?.[call.toolCallId] };
+          return { name: call.toolName, input: clip(call.input, 4_000), status: summary.status ?? 'done', preview: summary.preview, ms: step.performance?.toolExecutionMs?.[call.toolCallId] };
         });
         const usage = step.usage;
         const tokensIn = usage?.inputTokens ?? 0;

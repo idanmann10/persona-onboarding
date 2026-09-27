@@ -22,7 +22,7 @@ export function withVoiceToolTrace(store: Partial<TraceSink>, handler: (request:
     await recordTrace(store, sessionId, {
       turnId: callId, kind: 'voice_tool', name, at: new Date().toISOString(), durationMs,
       status: summary.status === 'unavailable' || summary.status === 'error' ? 'error' : 'ok',
-      data: { input: clip(body?.arguments, 400), status: summary.status ?? 'done', preview: summary.preview, callItemId: body?.callItemId, ...(payload?.ui ? { ui: payload.ui } : {}) },
+      data: { input: clip(body?.arguments, 4_000), status: summary.status ?? 'done', preview: summary.preview, callItemId: body?.callItemId, ...(payload?.ui ? { ui: payload.ui } : {}) },
     });
     return response;
   };

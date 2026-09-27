@@ -64,7 +64,8 @@ export function outputSummary(output: unknown): { status?: string; preview: stri
     try { value = JSON.parse(value); } catch { /* plain text output */ }
   }
   const status = value && typeof value === 'object' && 'status' in value ? String((value as { status: unknown }).status) : undefined;
-  return { ...(status ? { status } : {}), preview: clip(value, 240) };
+  // The full result, bounded: the agent log is where people check exactly what a tool returned.
+  return { ...(status ? { status } : {}), preview: clip(value, 6_000) };
 }
 
 /** Collects trace writes without awaiting them; `flush` waits for all of them and never throws. */
