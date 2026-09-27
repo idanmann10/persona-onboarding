@@ -1,0 +1,8 @@
+.env*
+!.env.example
+.next
+node_modules
+evals/results
+*.tsbuildinfo
+.worktrees
+.git
