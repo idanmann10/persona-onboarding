@@ -31,8 +31,8 @@ export function personaLine(row: SimRow): string {
   const ending = row.status === 'left' ? `left ${row.leave?.feeling ?? ''}` : row.status === 'error' ? `ERROR ${row.errorSource ?? ''}`.trim() : 'out of actions';
   const parts = [`${row.personaId} #${row.attempt}`.padEnd(25), ending.padEnd(15)];
   if (row.stages) {
-    const { stayed, activated, briefComplete, turns } = row.stages;
-    parts.push(`stayed ${yesNo(stayed)}  activated ${yesNo(activated)}  brief ${yesNo(briefComplete)}  turns ${String(turns).padStart(2)}`);
+    const { stayed, activated, briefComplete, goalMet, turns } = row.stages;
+    parts.push(`stayed ${yesNo(stayed)}  goal ${yesNo(goalMet)}  activated ${yesNo(activated)}  brief ${yesNo(briefComplete)}  turns ${String(turns).padStart(2)}`);
   }
   if (row.judge) parts.push(`form ${fixed(row.judge.formLike)} pushy ${fixed(row.judge.pushy)} ignored ${fixed(row.judge.ignoredUser)} human ${fixed(row.judge.human, 1)}`);
   if (row.invariantFailures.length) parts.push(`HARD: ${row.invariantFailures.join(', ')}`);
@@ -62,7 +62,7 @@ export function summaryLines(rows: SimRow[]): string[] {
   const leftOut = rows.length - total;
   return [
     `Conversations: ${rows.length}${leftOut ? ` (${leftOut} left out of the rates: the simulated user or the harness failed)` : ''}${turns === null ? '' : `, mean ${turns.toFixed(1)} actions each`}`,
-    ...(['stayed', 'activated', 'briefComplete', 'firstValue', 'gmailConnected', 'callHappened'] as const).map(rate),
+    ...(['stayed', 'goalMet', 'briefComplete', 'graduated', 'activated', 'firstValue', 'gmailConnected', 'callHappened'] as const).map(rate),
     judged.length
       ? `Judge (n=${judged.length}): form_like ${fixed(mean(judged.map((row) => row.judge!.formLike)))}  pushy ${fixed(mean(judged.map((row) => row.judge!.pushy)))}  ignored_user ${fixed(mean(judged.map((row) => row.judge!.ignoredUser)))}  human ${fixed(mean(judged.map((row) => row.judge!.human)))}/5`
       : 'Judge: none (no TYPESAFE_API_KEY, or every request failed)',

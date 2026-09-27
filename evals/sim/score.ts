@@ -30,6 +30,10 @@ export interface SimStages {
    * declined call counts as offered here even when `callOffered` (the card) is false.
    */
   briefComplete: boolean;
+  /** They chose to skip the rest of setup and get started (the brief allows early graduation). */
+  graduated: boolean;
+  /** The brief's goal: the four things settled, or the person graduated early. */
+  goalMet: boolean;
   /** They did not leave annoyed, bored or confused, and the conversation did not fail. */
   stayed: boolean;
   /** Actions the person took. */
@@ -59,6 +63,8 @@ export function scoreTrace(trace: Pick<SimTrace, 'events' | 'steps' | 'status' |
     taskProposed: state.automations.length > 0,
     activated: trace.events.some((event) => event.type === 'automation' && event.phase === 'approved'),
     briefComplete: named && knowsUser && needKnown && (progress.gmail === 'connected' || progress.gmail === 'declined') && callSettled,
+    graduated: state.setup.stage === 'graduated',
+    goalMet: state.setup.stage === 'graduated' || (named && knowsUser && needKnown && (progress.gmail === 'connected' || progress.gmail === 'declined') && callSettled),
     stayed: trace.status !== 'error' && !(trace.leave && UNHAPPY.has(trace.leave.feeling)),
     turns: trace.steps.length,
   };
