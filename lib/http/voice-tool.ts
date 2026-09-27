@@ -6,6 +6,8 @@ import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { noteDecline, noteDeclineInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext } from '../agent/actions';
 import { calendarReadInput, gmailSearchInput, relevantToolkits, runCalendarRead, runGmailSearch, type AccountReadClient } from '../agent/account-tools';
 import { answeredQuestion, userWords } from '../agent/turn';
+import { withVoiceToolTrace } from '../observability/voice-tool-trace';
+import type { TraceSink } from '../observability/trace';
 
 interface Store extends IpQuotaStore {
   sessionExists(id: string): Promise<boolean>;
@@ -14,6 +16,7 @@ interface Store extends IpQuotaStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   getActiveConnection(id: string, toolkit: Toolkit): Promise<string | undefined>;
   consumeQuota(id: string, scope: 'tool', limit: number, windowSeconds: number): Promise<boolean>;
+  appendTrace?: TraceSink['appendTrace'];
 }
 
 export const VOICE_TOOL_NAMES = ['remember', 'note_decline', 'show_connection', 'search_gmail', 'read_calendar_window'] as const;
@@ -24,7 +27,7 @@ export const VOICE_TOOL_NAMES = ['remember', 'note_decline', 'show_connection', 
  * gates as text chat decide what happens.
  */
 export function createVoiceToolHandler(store: Store, env: Record<string, string | undefined>, composio?: AccountReadClient) {
-  return async (request: Request): Promise<Response> => {
+  return withVoiceToolTrace(store, async (request: Request): Promise<Response> => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
     const sessionId = readSessionCookie(request);
     if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) return new Response('Session required', { status: 401 });
@@ -78,5 +81,5 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
     }
     const parsed = calendarReadInput.safeParse(args);
     return parsed.success ? Response.json({ output: JSON.stringify(await runCalendarRead(composio, accountId, sessionId, parsed.data, record)) }) : invalid();
-  };
+  });
 }
