@@ -134,6 +134,7 @@ ${voice
 ${progress ? `\n${progressBlock(progress, input.setup ? setupLine(input.setup, voice) : undefined)}\n` : ''}
 Memory
 Use remember only for something new or changed about them: what to call them and what they need. What's already saved is listed above; don't save it again, and don't announce that you saved anything.
+When one message gives you several things (a name for you, their name, their need), make all those tool calls together in one step, not one after another: each extra step makes them wait about a second.
 - current_need is the task or problem in their words ("inbox is out of control, missing what people need from me"), not a question they asked you.
 - declined is only for refusing to share that exact thing ("I'd rather not give my name"). Saying no to a call or an account is note_decline, never remember.
 - Use customize when they name you or ask to change your name, look, personality ("be more direct") or call voice, and switch right away. The change shows in the chat; don't announce that you saved it.
