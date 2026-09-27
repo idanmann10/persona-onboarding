@@ -32,7 +32,7 @@ export interface SimStages {
   briefComplete: boolean;
   /** They chose to skip the rest of setup and get started (the brief allows early graduation). */
   graduated: boolean;
-  /** The brief's goal: the four things settled, or the person graduated early. */
+  /** The goal as the app defines it: setup complete (the four things known) or the person skipped ahead. `briefComplete` is the stricter check. */
   goalMet: boolean;
   /** They did not leave annoyed, bored or confused, and the conversation did not fail. */
   stayed: boolean;
@@ -64,7 +64,8 @@ export function scoreTrace(trace: Pick<SimTrace, 'events' | 'steps' | 'status' |
     activated: trace.events.some((event) => event.type === 'automation' && event.phase === 'approved'),
     briefComplete: named && knowsUser && needKnown && (progress.gmail === 'connected' || progress.gmail === 'declined') && callSettled,
     graduated: state.setup.stage === 'graduated',
-    goalMet: state.setup.stage === 'graduated' || (named && knowsUser && needKnown && (progress.gmail === 'connected' || progress.gmail === 'declined') && callSettled),
+    // The app's own definition of the goal: setup complete (the four things known) or the person skipped ahead.
+    goalMet: state.setup.stage !== 'active',
     stayed: trace.status !== 'error' && !(trace.leave && UNHAPPY.has(trace.leave.feeling)),
     turns: trace.steps.length,
   };
