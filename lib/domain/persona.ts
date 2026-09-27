@@ -110,6 +110,10 @@ export function personalityFrom(value: string): { id: PersonalityId | 'custom'; 
   for (const [id, preset] of Object.entries(PERSONALITIES)) {
     if (normalized === id || normalized === preset.label.toLowerCase()) return { id: id as PersonalityId };
   }
+  // "a bit more direct" or "more playful please" names one preset: use it.
+  const words = new Set(normalized.split(/[^\p{L}]+/u));
+  const named = Object.entries(PERSONALITIES).filter(([id, preset]) => words.has(id) || words.has(preset.label.toLowerCase()));
+  if (named.length === 1 && normalized.length <= 40) return { id: named[0][0] as PersonalityId };
   return { id: 'custom', text: value.replace(/\s+/g, ' ').trim().slice(0, CUSTOM_PERSONALITY_LIMIT) };
 }
 

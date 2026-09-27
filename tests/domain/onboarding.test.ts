@@ -68,4 +68,12 @@ describe('setup status (the brief as server state)', () => {
     expect(repliesSinceSetupMoved(events)).toBe(2);
     expect(repliesSinceSetupMoved([...events, fact('preferred_name', 'Dana')])).toBe(0);
   });
+
+  it("doesn't count the message being answered, or setting up the assistant's look, as a stall", async () => {
+    const { repliesSinceSetupMoved } = await import('../../lib/domain/onboarding');
+    const say = (id: string, speaker: 'user' | 'assistant'): SessionEvent => ({ id, at, type: 'message', speaker, channel: 'text', text: 'x' });
+    const base: SessionEvent[] = [fact('assistant_name', 'Nova'), say('u1', 'user'), say('a1', 'assistant'), say('u2', 'user'), say('a2', 'assistant')];
+    expect(repliesSinceSetupMoved([...base, say('u3', 'user')])).toBe(2);
+    expect(repliesSinceSetupMoved([...base, fact('avatar', 'img:1'), say('u3', 'user')])).toBe(0);
+  });
 });

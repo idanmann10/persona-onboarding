@@ -412,9 +412,13 @@ export default function InspectPage() {
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let loadedOnce = false;
     const load = async () => {
       if (stopped) return;
-      if (document.visibilityState === 'visible') {
+      // The first load always runs (a log opened in a background tab showed "Loading…" until focused);
+      // after that it only polls while the tab is visible.
+      if (!loadedOnce || document.visibilityState === 'visible') {
+        loadedOnce = true;
         try {
           const response = await fetch('/api/inspect', { cache: 'no-store' });
           if (response.status === 401) { setError('No conversation yet. Open the chat first, then come back here.'); setLive(false); }

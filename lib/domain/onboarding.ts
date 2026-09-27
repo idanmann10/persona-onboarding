@@ -57,7 +57,8 @@ export const SETUP_LABELS: Record<SetupItem, string> = {
   gmail: 'Gmail',
 };
 
-const SETUP_FACTS = new Set(['assistant_name', 'preferred_name', 'current_need']);
+// Setting up the assistant's look, personality or voice is engagement too, not an ignored ask.
+const SETUP_FACTS = new Set(['assistant_name', 'preferred_name', 'current_need', 'avatar', 'personality', 'voice']);
 
 /** An event that moves setup forward: an item saved or declined, the Gmail card shown or answered, the call offered or taken. */
 function movesSetup(event: SessionEvent): boolean {
@@ -75,11 +76,14 @@ function movesSetup(event: SessionEvent): boolean {
  */
 export function repliesSinceSetupMoved(events: SessionEvent[]): number {
   let since = 0;
+  let lastWasUser = false;
   for (const event of events) {
     if (movesSetup(event)) since = 0;
     // Count the user's messages: an exchange that went by without progress. The reply in the turn that made
     // progress lands after its fact, so counting replies would count that turn as stalled.
     else if (event.type === 'message' && event.speaker === 'user') since++;
+    if (event.type === 'message') lastWasUser = event.speaker === 'user';
   }
-  return since;
+  // The message being answered now may be the answer ("I'm Dana"), so it is not a stalled exchange yet.
+  return lastWasUser ? Math.max(0, since - 1) : since;
 }

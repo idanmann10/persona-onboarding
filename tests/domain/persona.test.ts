@@ -25,6 +25,8 @@ describe('persona settings', () => {
     expect(personalityFrom('Playful')).toEqual({ id: 'playful' });
     expect(personalityFrom('  direct ')).toEqual({ id: 'direct' });
     expect(personalityFrom('more like a friend')).toEqual({ id: 'custom', text: 'more like a friend' });
+    expect(personalityFrom('a bit more direct')).toEqual({ id: 'direct' });
+    expect(personalityFrom('playful but polished')).toMatchObject({ id: 'custom' });
     expect(personaSettings(projectSession([fact('voice', 'robot')]), 'marin').voice).toBe('marin');
   });
 
