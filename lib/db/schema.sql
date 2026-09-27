@@ -134,3 +134,13 @@ CREATE TABLE IF NOT EXISTS persona_traces (
   data JSONB NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS persona_traces_session ON persona_traces (session_id, id);
+
+CREATE TABLE IF NOT EXISTS persona_avatars (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  prompt TEXT NOT NULL,
+  mime TEXT NOT NULL CHECK (mime IN ('image/webp', 'image/png', 'image/jpeg')),
+  bytes BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS persona_avatars_session ON persona_avatars (session_id);

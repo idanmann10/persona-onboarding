@@ -21,33 +21,63 @@ export const VOICES = {
 export type VoiceId = keyof typeof VOICES;
 
 /**
- * The assistant's look: the orb's three gradient stops (light, mid, deep), drawn as
- * `radial-gradient(circle at 32% 28%, #fff 0 12%, light 38%, mid 72%, deep 100%)`.
+ * The assistant's look: a painted character portrait. The default looks are static files in public/avatars
+ * (painted once by scripts/generate-avatars.ts from these descriptions). A look the user describes in words is
+ * painted on request, stored in Postgres and saved as `img:<uuid>` (served by /api/avatars/<uuid>).
+ * `stops` is a light-to-deep tint of each look, for rings and placeholders while a portrait loads.
  */
 export const AVATARS = {
-  pearl: { label: 'Pearl', stops: ['#d9d6cf', '#8f8b84', '#2a2a2e'] },
-  ember: { label: 'Ember', stops: ['#f6c9a4', '#d86a3a', '#4e1a10'] },
-  lagoon: { label: 'Lagoon', stops: ['#bfe7e2', '#3d9a96', '#10353c'] },
-  violet: { label: 'Violet', stops: ['#dcd0f5', '#8b6fd0', '#2a1d4f'] },
-  moss: { label: 'Moss', stops: ['#d6e1c0', '#7a9255', '#24311a'] },
-  rose: { label: 'Rose', stops: ['#f4d0d8', '#c76e85', '#461a28'] },
-  gold: { label: 'Gold', stops: ['#f3e2b2', '#c29a3c', '#46320f'] },
-  midnight: { label: 'Midnight', stops: ['#bcc5de', '#4a5a88', '#11152a'] },
-} as const satisfies Record<string, { label: string; stops: readonly [string, string, string] }>;
+  sunny: { label: 'Sunny', description: 'a cheerful golden retriever with a big friendly grin and bright eyes, wearing a soft mustard knit scarf', stops: ['#f7e3a8', '#e0a93b', '#5a3b0c'] },
+  sage: { label: 'Sage', description: 'a calm, wise owl with soft sage-green and cream feathers and small round glasses, wearing a cosy oatmeal cardigan', stops: ['#dbe6cf', '#86a36c', '#27361d'] },
+  nova: { label: 'Nova', description: 'a friendly little robot with a pearly white rounded shell, lavender accents and a glowing round face screen showing a gentle smile', stops: ['#e2d9f7', '#9a82d6', '#2c2150'] },
+  pixel: { label: 'Pixel', description: 'a curious grey tabby cat with big green eyes and oversized headphones around its neck, in a navy hoodie', stops: ['#cdd5ea', '#56689a', '#141a33'] },
+  fox: { label: 'Fox', description: 'a clever red fox with a warm, knowing smile, wearing a light denim jacket over a white tee', stops: ['#f8d2b4', '#dc7440', '#4f1c0e'] },
+  bloom: { label: 'Bloom', description: 'a gentle young woman with rosy cheeks, soft wavy auburn hair and a small crown of pastel flowers, in a blush linen top', stops: ['#f6d6dd', '#cf7d91', '#4a1d2a'] },
+} as const satisfies Record<string, { label: string; description: string; stops: readonly [string, string, string] }>;
 export type AvatarId = keyof typeof AVATARS;
-export const DEFAULT_AVATAR: AvatarId = 'pearl';
+/** The look before anyone picks one: its own portrait at /avatars/default.webp. */
+export const DEFAULT_AVATAR = 'default';
+export const DEFAULT_LOOK = {
+  label: 'Classic',
+  description: 'a warm, friendly young person with short tousled dark hair, kind eyes and a relaxed smile, in a soft cream knit sweater',
+  stops: ['#e4e0d8', '#a39d92', '#34322f'],
+} as const;
+/** The retired gradient orbs, read as the closest portrait so older sessions keep a look. */
+const RETIRED_LOOKS: Record<string, AvatarId | typeof DEFAULT_AVATAR> = {
+  pearl: 'default', ember: 'fox', lagoon: 'sage', violet: 'nova', moss: 'sage', rose: 'bloom', gold: 'sunny', midnight: 'pixel',
+};
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const PAINTED = /^img:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 export const isPersonalityId = (value: unknown): value is PersonalityId => typeof value === 'string' && Object.hasOwn(PERSONALITIES, value);
 export const isVoiceId = (value: unknown): value is VoiceId => typeof value === 'string' && Object.hasOwn(VOICES, value);
 export const isAvatarId = (value: unknown): value is AvatarId => typeof value === 'string' && Object.hasOwn(AVATARS, value);
 
-/** A look as stored: a preset id (by id or label, any case) or a lowercase `#rrggbb` color. Undefined when neither. */
-export function avatarFrom(value: string): AvatarId | `#${string}` | undefined {
+/**
+ * A look someone can pick by name: a default look's id or label (any case), `default`/`classic`, a retired
+ * orb's id (read as its closest portrait), or a lowercase `#rrggbb` color. Undefined for anything else,
+ * which the customize tool treats as a description to paint.
+ */
+export function avatarFrom(value: string): AvatarId | typeof DEFAULT_AVATAR | `#${string}` | undefined {
   const normalized = value.trim().toLowerCase();
   if (HEX_COLOR.test(normalized)) return normalized as `#${string}`;
-  for (const [id, preset] of Object.entries(AVATARS)) if (normalized === id || normalized === preset.label.toLowerCase()) return id as AvatarId;
-  return undefined;
+  if (normalized === DEFAULT_AVATAR || normalized === DEFAULT_LOOK.label.toLowerCase()) return DEFAULT_AVATAR;
+  for (const [id, look] of Object.entries(AVATARS)) if (normalized === id || normalized === look.label.toLowerCase()) return id as AvatarId;
+  return Object.hasOwn(RETIRED_LOOKS, normalized) ? RETIRED_LOOKS[normalized] : undefined;
+}
+
+/** A saved look as the app uses it: a pickable look, or a painted portrait `img:<uuid>`. Anything else is the default. */
+export function storedAvatar(value?: string): string {
+  const painted = value?.trim().match(PAINTED);
+  if (painted) return `img:${painted[1].toLowerCase()}`;
+  return (value ? avatarFrom(value) : undefined) ?? DEFAULT_AVATAR;
+}
+
+/** Where the portrait for a saved look lives. */
+export function avatarUrl(value?: string): string {
+  const avatar = storedAvatar(value);
+  if (avatar.startsWith('img:')) return `/api/avatars/${avatar.slice(4)}`;
+  return isAvatarId(avatar) ? `/avatars/${avatar}.webp` : `/avatars/${DEFAULT_AVATAR}.webp`;
 }
 
 const mix = (hex: string, target: number, amount: number) => `#${[1, 3, 5].map((index) => {
@@ -55,20 +85,23 @@ const mix = (hex: string, target: number, amount: number) => `#${[1, 3, 5].map((
   return Math.round(channel + (target - channel) * amount).toString(16).padStart(2, '0');
 }).join('')}`;
 
-/** The orb's gradient for a stored look: a preset's stops, or three stops derived from a custom color. Unknown values get the default. */
-export function avatarPalette(value?: string): { id: AvatarId | 'custom'; label: string; stops: [string, string, string] } {
-  const avatar = value ? avatarFrom(value) : undefined;
-  if (avatar && isAvatarId(avatar)) return { id: avatar, label: AVATARS[avatar].label, stops: [...AVATARS[avatar].stops] };
-  if (avatar) return { id: 'custom', label: 'Custom color', stops: [mix(avatar, 255, 0.6), avatar, mix(avatar, 0, 0.72)] };
-  return { id: DEFAULT_AVATAR, label: AVATARS[DEFAULT_AVATAR].label, stops: [...AVATARS[DEFAULT_AVATAR].stops] };
+/** A look's name and tint: a default look's own, a painted portrait's, or three stops derived from a custom color. */
+export function avatarPalette(value?: string): { id: AvatarId | typeof DEFAULT_AVATAR | 'custom' | 'painted'; label: string; stops: [string, string, string] } {
+  const avatar = storedAvatar(value);
+  if (isAvatarId(avatar)) return { id: avatar, label: AVATARS[avatar].label, stops: [...AVATARS[avatar].stops] };
+  if (avatar.startsWith('img:')) return { id: 'painted', label: 'Custom portrait', stops: [...DEFAULT_LOOK.stops] };
+  if (avatar.startsWith('#')) return { id: 'custom', label: 'Custom color', stops: [mix(avatar, 255, 0.6), avatar, mix(avatar, 0, 0.72)] };
+  return { id: DEFAULT_AVATAR, label: DEFAULT_LOOK.label, stops: [...DEFAULT_LOOK.stops] };
 }
 
 export interface PersonaSettings {
   assistantName?: string;
   personality: { id: PersonalityId | 'custom'; label: string; text?: string };
   voice: string;
-  /** A preset id or a `#rrggbb` color; see avatarPalette. */
+  /** A default look id, `default`, a `#rrggbb` color (older sessions) or `img:<uuid>`; see storedAvatar. */
   avatar: string;
+  /** The portrait to show: /api/avatars/<uuid>, /avatars/<look>.webp, or /avatars/default.webp. */
+  avatarUrl: string;
 }
 
 /** A saved personality value: a preset's id or label ("direct", "Direct"), otherwise the user's own description. */
@@ -86,12 +119,13 @@ export function personaSettings(state: SessionProjection, defaultVoice?: string)
   const saved = state.facts.personality?.value;
   const personality = saved ? personalityFrom(saved) : { id: DEFAULT_PERSONALITY };
   const voice = state.facts.voice?.value;
-  const avatar = state.facts.avatar?.value ? avatarFrom(state.facts.avatar.value) : undefined;
+  const avatar = storedAvatar(state.facts.avatar?.value);
   return {
     ...(name.value && (name.status === 'confirmed' || name.status === 'tentative') ? { assistantName: name.value } : {}),
     personality: { ...personality, label: personality.id === 'custom' ? 'Your own' : PERSONALITIES[personality.id].label },
     voice: isVoiceId(voice) ? voice : defaultVoice || 'marin',
-    avatar: avatar ?? DEFAULT_AVATAR,
+    avatar,
+    avatarUrl: avatarUrl(avatar),
   };
 }
 
