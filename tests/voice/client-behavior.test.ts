@@ -96,12 +96,14 @@ describe('browser call behavior', () => {
     expect(call.sent.map((event) => event.content)).toContain('GOODBYE');
     call.advance(1_000);
     call.receive({ type: 'session.input_transcript.delta', event_id: 'u1', delta: 'Sorry, I am here', start_ms: 60_000, end_ms: 61_000 });
-    call.advance(5_000); vi.advanceTimersByTime(6_000);
+    call.advance(11_000); vi.advanceTimersByTime(12_000);
     expect(call.sent.some((event) => event.type === 'session.close')).toBe(false);
     call.advance(21_000); vi.advanceTimersByTime(1_000);
     call.advance(31_000); vi.advanceTimersByTime(1_000);
-    call.advance(6_000); vi.advanceTimersByTime(6_000);
+    call.advance(12_000); vi.advanceTimersByTime(12_000);
     expect(call.sent.some((event) => event.type === 'session.close')).toBe(true);
+    call.advance(5_000); vi.advanceTimersByTime(5_000);
+    expect(call.sent.filter((event) => event.type === 'session.close')).toHaveLength(1);
     call.receive({ type: 'session.closed', reason: 'close_requested' });
     await vi.runAllTimersAsync();
     expect(call.phases.at(-1)).toBe('ended:inactive');
@@ -126,11 +128,46 @@ describe('browser call behavior', () => {
     closedPage.receive({ type: 'session.started' });
     closedPage.controller.abandon();
     await vi.waitFor(() => expect(closedPage.posts.some((post) => post.body.kind === 'dropped' && post.body.reason === 'page_closed')).toBe(true));
+    expect(closedPage.phases.at(-1)).toBe('dropped:page_closed');
   });
 
   it('explains microphone failures plainly', () => {
     expect(microphoneError({ name: 'NotAllowedError' }).message).toMatch(/blocked/);
     expect(microphoneError({ name: 'NotFoundError' }).message).toMatch(/No microphone/);
     expect(microphoneError({ name: 'NotReadableError' }).message).toMatch(/busy/);
+  });
+
+  it('treats typing as the user being there, so a pending goodbye is cancelled', async () => {
+    vi.useFakeTimers();
+    const call = await connect();
+    call.receive({ type: 'session.started' });
+    call.advance(21_000); vi.advanceTimersByTime(1_000);
+    call.advance(31_000); vi.advanceTimersByTime(1_000);
+    expect(call.sent.map((event) => event.content)).toContain('GOODBYE');
+    call.advance(3_000);
+    call.controller.addTextContext('sorry, typing a long answer');
+    call.advance(9_000); vi.advanceTimersByTime(12_000);
+    expect(call.sent.some((event) => event.type === 'session.close')).toBe(false);
+  });
+
+  it("lets the user's hang-up win over an automated close, and resolves every close call", async () => {
+    vi.useFakeTimers();
+    const call = await connect();
+    call.receive({ type: 'session.started' });
+    const automated = call.controller.close('inactive');
+    const byUser = call.controller.close();
+    expect(call.sent.filter((event) => event.type === 'session.close')).toHaveLength(1);
+    call.receive({ type: 'session.closed', reason: 'close_requested' });
+    await vi.runAllTimersAsync();
+    await Promise.all([automated, byUser]);
+    expect(call.phases.at(-1)).toBe('ended:user_hangup');
+  });
+
+  it('keeps typed text within the per-append token limit', async () => {
+    const call = await connect();
+    call.receive({ type: 'session.started' });
+    call.controller.addTextContext('語'.repeat(2_000));
+    const typed = call.sent.find((event) => event.type === 'response.item.create') as { item: { content: Array<{ text: string }> } };
+    expect(typed.item.content[0].text.length).toBeLessThanOrEqual(441);
   });
 });

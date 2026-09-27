@@ -1,6 +1,7 @@
 import type { CallEndReason } from '../domain/events';
 import type { ParsedLiveEvent } from './events';
 import { parseLiveEvent } from './events';
+import { truncateToTokens } from './tokens';
 
 export interface VoiceController {
   callId: string;
@@ -62,6 +63,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   let closed = false;
   let busy = false;
   let requestedReason: CallEndReason | undefined;
+  let closing: Promise<void> | undefined;
   let greeting = '';
   let limits: Limits | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -129,13 +131,15 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
 
   function close(reason: CallEndReason = 'user_hangup') {
     if (closed) return Promise.resolve();
+    // The user's own hang-up always wins over an automated close already under way.
+    if (closing) { if (reason === 'user_hangup') requestedReason = reason; return closing; }
     requestedReason = reason;
     callbacks.onPhase('ending');
     if (channel.readyState !== 'open') { finish('dropped', 'connection_lost'); return Promise.resolve(); }
-    const finished = new Promise<void>((resolve) => { resolveClose = resolve; });
+    closing = new Promise<void>((resolve) => { resolveClose = resolve; });
     send({ type: 'session.close' });
-    closeTimer = setTimeout(() => finish('ended', reason), 15_000);
-    return finished;
+    closeTimer = setTimeout(() => finish('ended', requestedReason ?? reason), 15_000);
+    return closing;
   }
 
   async function runTool(item: { call_id?: unknown; name?: unknown; arguments?: unknown }) {
@@ -184,7 +188,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   }
 
   function watch() {
-    if (closed || !started || !limits) return;
+    if (closed || closing || !started || !limits) return;
     const time = now();
     if (!wrappedUp && time - startedAt >= limits.maxDurationMs - limits.wrapUpBeforeMs) { wrappedUp = true; instruct(limits.wrapUp); }
     if (time - startedAt >= limits.maxDurationMs) { void close('max_duration'); return; }
@@ -195,10 +199,12 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
       requestedReason = 'inactive';
       const goodbyeAt = time;
       instruct(limits.goodbye);
+      // Long enough for the spoken goodbye to finish and for the user to answer or type.
       setTimeout(() => {
+        if (closed || closing || requestedReason !== 'inactive') return;
         if (lastUserActivity >= goodbyeAt) { requestedReason = undefined; checkedIn = false; return; }
         void close('inactive');
-      }, 6_000);
+      }, 12_000);
     }
   }
 
@@ -283,19 +289,27 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     addTextContext: (text) => {
       if (!started) return;
       lastActivity = now();
-      const typed = text.slice(0, 1_500);
+      lastUserActivity = lastActivity;
+      checkedIn = false;
+      // Each append is limited to 500 tokens; leave room for the framing sentence.
+      const typed = truncateToTokens(text, 440);
       send({ type: 'session.thinking.append', delegation_id: null, content: `The user typed this in the chat during the call. Treat it as their own words and respond to it: ${typed}` });
       if (delegation) send({ type: 'response.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: typed }] } });
     },
     setBusy: (value) => { busy = value; if (!value) { lastActivity = now(); lastUserActivity = lastActivity; checkedIn = false; } },
-    notify: (content) => { if (started) send({ type: 'session.thinking.append', delegation_id: null, content: content.slice(0, 1_500) }); },
+    notify: (content) => { if (started) send({ type: 'session.thinking.append', delegation_id: null, content: truncateToTokens(content, 480) }); },
     abandon: () => {
       if (closed || !callId) return;
       void flush(true);
       void post({ kind: 'dropped', reason: 'page_closed' }, true);
       closed = true;
+      for (const timer of [closeTimer, flushTimer]) if (timer) clearTimeout(timer);
+      for (const timer of [heartbeatTimer, watchTimer]) if (timer) clearInterval(timer);
       microphone?.getTracks().forEach((track) => track.stop());
       peer.close();
+      // If the page is restored from the back/forward cache, it must not still look like a live call.
+      callbacks.onPhase('dropped', 'page_closed');
+      resolveClose?.();
     },
   };
 }

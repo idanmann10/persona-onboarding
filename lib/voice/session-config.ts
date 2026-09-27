@@ -4,6 +4,7 @@ import { buildSystemPrompt } from '../agent/prompts';
 import { noteDeclineInput, rememberInput, showConnectionInput } from '../agent/actions';
 import { calendarReadInput, gmailSearchInput } from '../agent/account-tools';
 import { callLines, modelMessages } from '../agent/turn';
+import { estimateTokens } from './tokens';
 
 export interface VoiceLimits {
   /** Quiet on both sides for this long: ask the model to check in once. */
@@ -30,13 +31,7 @@ export const VOICE_LIMITS: VoiceLimits = {
 const INPUT_TOKEN_BUDGET = 6_000;
 const INPUT_MESSAGE_LIMIT = 60;
 
-/** Conservative token estimate: ~4 Latin characters per token, one token per non-ASCII character. */
-export function estimateTokens(text: string): number {
-  let ascii = 0;
-  let other = 0;
-  for (const character of text) (character.charCodeAt(0) < 128 ? ascii++ : other++);
-  return Math.ceil(ascii / 4 + other);
-}
+export { estimateTokens } from './tokens';
 
 type InputMessage = { type: 'message'; role: 'developer' | 'user' | 'assistant'; content: Array<{ type: 'input_text' | 'output_text'; text: string }> };
 

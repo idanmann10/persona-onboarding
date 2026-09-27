@@ -41,6 +41,7 @@ export default function Home() {
   const voiceRef = useRef<VoiceController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const followUpsRunning = useRef(false);
+  const followUpQueue = useRef<FollowUpRequest[]>([]);
 
   const assistantName = progress && (progress.assistantName.status === 'confirmed' || progress.assistantName.status === 'tentative') && progress.assistantName.value ? progress.assistantName.value : 'Persona';
 
@@ -55,10 +56,12 @@ export default function Home() {
   }, []);
 
   const runFollowUps = useCallback(async (requests: FollowUpRequest[]) => {
-    if (!requests.length || followUpsRunning.current) return;
+    // Queue rather than drop: a connection can finish while a call's follow-up is still running.
+    followUpQueue.current.push(...requests);
+    if (followUpsRunning.current) return;
     followUpsRunning.current = true;
     try {
-      for (const request of requests) {
+      for (let request = followUpQueue.current.shift(); request; request = followUpQueue.current.shift()) {
         setThinking(!('acknowledge' in request && request.acknowledge));
         const response = await post('/api/agent/follow-up', request).catch(() => undefined);
         if (response?.ok) await refresh();
@@ -96,7 +99,7 @@ export default function Home() {
     if (loading) return;
     endRef.current?.scrollIntoView({ behavior: scrolledOnce.current ? 'smooth' : 'auto', block: 'end' });
     scrolledOnce.current = true;
-  }, [timeline, draft, captions, thinking, loading]);
+  }, [timeline, draft, thinking, loading]);
 
   useEffect(() => {
     if (callPhase !== 'active') return;
@@ -136,6 +139,7 @@ export default function Home() {
     setInput('');
     setError('');
     if (voiceRef.current && callPhase === 'active') {
+      if (text.length > 2_000) { setInput(text); setError('That is too long to send into the call. Keep it under 2,000 characters, or send it after the call.'); return; }
       voiceRef.current.addTextContext(text);
       setTimeline((current) => [...current, { kind: 'message', id, speaker: 'user', channel: 'text', text }]);
       await post('/api/voice/event', { callId: voiceRef.current.callId, kind: 'typed', messageId: id, text }).catch(() => undefined);
@@ -229,7 +233,12 @@ export default function Home() {
       const response = await post('/api/connections', { toolkit });
       if (!response.ok) throw new Error('The connection could not be started.');
       const { redirectUrl } = await response.json() as { redirectUrl: string };
-      if (popup && !popup.closed) {
+      if (popup?.closed) {
+        // The user closed the sign-in window while it was loading: treat it as cancelled.
+        setConnecting(null);
+        return;
+      }
+      if (popup) {
         popup.location.href = redirectUrl;
         voiceRef.current?.setBusy(true);
         const watcher = setInterval(() => {
@@ -331,7 +340,7 @@ export default function Home() {
         <section className="live-call" aria-live="polite" aria-label="Live call">
           <div className="live-head"><span className="pulse" aria-hidden="true" />{callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending call…' : `Live with ${assistantName}`}<span className="live-time">{callPhase === 'active' ? duration(callStartedAt) : ''}</span></div>
           <div className="captions">
-            {captions.length ? captions.slice(-3).map((caption, index) => <p key={index} className={caption.speaker}><b>{caption.speaker === 'user' ? 'You' : assistantName}</b> {caption.text}</p>) : <p className="muted">{callPhase === 'active' ? 'Say hello, or type below. Your text goes into the call.' : 'Setting up your microphone…'}</p>}
+            {captions.length ? captions.slice(-3).map((caption, index) => <p key={index} className={caption.speaker}><b>{caption.speaker === 'user' ? 'You' : assistantName}</b> {caption.text.length > 240 ? `…${caption.text.slice(-240)}` : caption.text}</p>) : <p className="muted">{callPhase === 'active' ? 'Say hello, or type below. Your text goes into the call.' : 'Setting up your microphone…'}</p>}
           </div>
         </section>
       ) : null}
@@ -352,7 +361,7 @@ export default function Home() {
       <div className="composer-area">
         {error ? <p className="error" role="alert">{error}</p> : null}
         <form className="composer" onSubmit={sendMessage}>
-          <textarea aria-label={`Message ${assistantName}`} placeholder={callPhase === 'active' ? 'Type into the call…' : `Message ${assistantName}…`} rows={1} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={onComposerKeyDown} disabled={loading || sending} />
+          <textarea maxLength={8_000} aria-label={`Message ${assistantName}`} placeholder={callPhase === 'active' ? 'Type into the call…' : `Message ${assistantName}…`} rows={1} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={onComposerKeyDown} disabled={loading || sending} />
           <button className="send-button" type="submit" aria-label="Send message" disabled={!input.trim() || loading || sending}>↑</button>
         </form>
         <p className="composer-note">Private preview · Enter to send, Shift+Enter for a new line</p>

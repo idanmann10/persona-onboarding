@@ -51,7 +51,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .live-time { margin-left: auto; font-variant-numeric: tabular-nums; color: #b9b8b3; }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(68, 200, 103, .6); animation: pulse 1.8s infinite; }
 @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(68, 200, 103, 0); } 100% { box-shadow: 0 0 0 0 rgba(68, 200, 103, 0); } }
-.captions { margin-top: 8px; min-height: 42px; }
+.captions { margin-top: 8px; min-height: 42px; max-height: 7.5em; overflow: hidden; }
 .captions p { margin: 4px 0 0; font-size: 14px; line-height: 1.45; color: #e8e7e2; }
 .captions p b { color: #9d9c97; font-weight: 600; margin-right: 4px; }
 .captions .muted { color: #9d9c97; }
@@ -93,7 +93,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 .composer-area { flex: none; padding: 10px 16px calc(14px + env(safe-area-inset-bottom)); }
 .composer { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 16px; border: 1px solid var(--line); border-radius: 26px; background: var(--surface); box-shadow: 0 8px 28px rgba(22, 22, 22, .06); }
-.composer:focus-within { border-color: #cfcdc6; }
+.composer:focus-within { border-color: #b9b7b0; box-shadow: 0 0 0 3px rgba(9, 127, 255, .18), 0 8px 28px rgba(22, 22, 22, .06); }
+button:focus-visible, summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .composer textarea { flex: 1; min-height: 38px; max-height: 160px; padding: 9px 0; resize: none; outline: none; border: 0; background: transparent; font-size: 15px; line-height: 1.4; }
 .composer textarea::placeholder { color: var(--subtle); }
 .send-button { width: 38px; height: 38px; flex: none; border: 0; border-radius: 50%; background: var(--ink); color: #fff; font-size: 18px; line-height: 1; }
