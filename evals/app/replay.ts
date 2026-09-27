@@ -29,7 +29,9 @@ const scenarioSchema = z.object({
     followUp: z.enum(['message', 'silent']).optional(),
     mentions: z.array(z.string()).default([]),
     notMentions: z.array(z.string()).default([]),
-  }).default({ tools: [], facts: {}, mentions: [], notMentions: [] }),
+    /** Tools that must not be used anywhere in the scenario. */
+    notTools: z.array(z.string()).default([]),
+  }).default({ tools: [], facts: {}, mentions: [], notMentions: [], notTools: [] }),
   rubric: z.array(z.string()).min(1),
 });
 

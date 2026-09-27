@@ -79,6 +79,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .pill.primary { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 1px 2px rgba(10, 132, 255, .25); }
 .pill.primary:hover:not(:disabled) { background: var(--blue-press); border-color: var(--blue-press); }
 .pill.danger { color: var(--red-ink); font-weight: 600; }
+.account { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.account-email { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-mute); font-size: 12px; }
 .pill-icon { color: var(--ink-mute); margin-left: -2px; }
 .icon-button { display: inline-grid; place-items: center; width: 32px; height: 32px; flex: none; border: 0; border-radius: 50%; background: var(--surface-alt); color: var(--ink-mute); }
 .icon-button:hover { background: var(--step); color: var(--ink); }
@@ -200,6 +202,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
   .topbar-actions { justify-self: stretch; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
   .confirm { justify-content: flex-start; }
   .pill { height: 30px; padding: 0 12px; }
+  .account-email { display: none; }
   .call-button { height: 34px; padding: 0 14px 0 12px; }
   .bubble { max-width: 80%; }
 }

@@ -86,5 +86,6 @@ export function checkExpectations(scenario: Scenario, trace: ScenarioTrace): Che
   const transcript = trace.steps.map((step) => step.output ?? '').join('\n');
   for (const pattern of scenario.expect.mentions) results.push({ id: `mentions:${pattern}`, passed: new RegExp(pattern, 'i').test(transcript) });
   for (const pattern of scenario.expect.notMentions) results.push({ id: `not_mentions:${pattern}`, passed: !new RegExp(pattern, 'i').test(transcript) });
+  for (const name of scenario.expect.notTools ?? []) results.push({ id: `not_tool:${name}`, passed: !used.has(name) });
   return results;
 }

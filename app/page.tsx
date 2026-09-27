@@ -14,7 +14,7 @@ type Message = { id: string; role: 'user' | 'assistant'; text: string };
 type FollowUpRequest = { kind: 'call_ended'; callId: string } | { kind: 'connection'; toolkit: Toolkit; acknowledge?: boolean };
 /** `avatarUrl` is the assistant's photo, served by `/api/session`. */
 type Settings = PersonaSettings & { avatarUrl?: string };
-type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: Settings; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean };
+type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: Settings; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean; account?: { email: string } | null };
 type Caption = { speaker: 'user' | 'assistant'; text: string };
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
@@ -35,6 +35,9 @@ export default function Home() {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
+  // Signed in = this session is the main session of a Gmail address Google verified when it was connected.
+  const [account, setAccount] = useState<{ email: string } | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
   const [appsVersion, setAppsVersion] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -63,6 +66,7 @@ export default function Home() {
     setTimeline(snapshot.timeline ?? timelineFromMessages(snapshot.messages));
     if (snapshot.progress) setProgress(snapshot.progress);
     if (snapshot.settings) setAvatarUrl(snapshot.settings.avatarUrl || undefined);
+    setAccount(snapshot.account ?? null);
     return snapshot;
   }, []);
 
@@ -303,6 +307,18 @@ export default function Home() {
   }
 
   /** Start over: clears the conversation and revokes connected accounts, then reloads a fresh chat. */
+  /** Sign out of this browser only: the main session and its accounts stay, and signing in with the same Gmail brings them back. */
+  async function signOut() {
+    if (signingOut || callPhase !== 'idle') return;
+    setSigningOut(true);
+    setError('');
+    try {
+      const response = await fetch('/api/auth/sign-out', { method: 'POST' });
+      if (!response.ok) throw new Error('Signing out did not go through. Please try again.');
+      window.location.reload();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Signing out failed.'); setSigningOut(false); }
+  }
+
   async function startOver() {
     if (callPhase !== 'idle') return;
     setDeleting(true);
@@ -347,6 +363,14 @@ export default function Home() {
                 <>
                   <button ref={appsButtonRef} type="button" className="pill" aria-haspopup="dialog" aria-expanded={appsOpen} disabled={deleting} onClick={() => { setError(''); setAppsOpen(true); }}><AppsIcon className="pill-icon" width={15} height={15} />Apps</button>
                   <a className="pill" href="/inspect" target="_blank" rel="noreferrer">Agent log</a>
+                  {account ? (
+                    <span className="account" title={`Signed in as ${account.email}`}>
+                      <span className="account-email">{account.email}</span>
+                      <button type="button" className="pill" disabled={signingOut || onCall} onClick={() => void signOut()}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
+                    </span>
+                  ) : (
+                    <button type="button" className="pill" title="Sign in with Google: connects Gmail (read-only) and brings back your conversation on any browser" disabled={Boolean(connecting) || deleting} onClick={() => { setError(''); void connect('gmail'); }}>{connecting === 'gmail' ? 'Signing in…' : 'Sign in'}</button>
+                  )}
                   <button type="button" className="pill" disabled={busy || onCall} onClick={() => { setError(''); setConfirmDelete(true); }}>Start over</button>
                 </>
               )}

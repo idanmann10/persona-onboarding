@@ -25,7 +25,7 @@ const scenarios: Scenario[] = [
   ...(args.includes('--base') ? parseCorpus(base).map((item): Scenario => ({
     id: item.id, title: item.id, critical: item.critical, setup: { connected: [] },
     steps: item.turns.filter((turn) => turn.actor === 'user').map((turn) => ({ user: turn.content })),
-    expect: { tools: [], facts: {}, mentions: [], notMentions: [] }, rubric: item.expected,
+    expect: { tools: [], facts: {}, mentions: [], notMentions: [], notTools: [] }, rubric: item.expected,
   })) : []),
 ];
 const idIndex = args.indexOf('--id');
