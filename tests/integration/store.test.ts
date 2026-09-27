@@ -133,7 +133,7 @@ describe('Postgres session store', () => {
     expect(liveSession.model).toBe('gpt-live-1');
     expect(liveSession.input[0].role).toBe('developer');
     expect(liveSession.delegation).toMatchObject({ type: 'responses', responses: { model: 'gpt-6-luna' } });
-    expect(liveSession.delegation.responses.tools.map((tool) => tool.name)).toEqual(['remember']);
+    expect(liveSession.delegation.responses.tools.map((tool) => tool.name)).toEqual(['remember', 'note_decline']);
     expect(JSON.stringify(sent)).toContain('I need help preparing for Friday');
     expect(JSON.stringify(sent)).toContain('preferred_pace');
     expect(JSON.stringify(sent)).toContain('I might need a short brief');

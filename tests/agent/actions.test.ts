@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { offerCall, remember, saidByUser, showConnection, type ActionContext } from '../../lib/agent/actions';
+import { noteDecline, offerCall, remember, saidByUser, showConnection, type ActionContext } from '../../lib/agent/actions';
 import { projectSession } from '../../lib/domain/project';
 import type { SessionEvent } from '../../lib/domain/events';
 
@@ -96,5 +96,23 @@ describe('show_connection', () => {
     expect(await showConnection(context({ userWords: ['fine, connect my gmail'] }, declined).ctx, { toolkit: 'gmail', reason: 'r' })).toMatchObject({ status: 'shown' });
     expect(await showConnection(context({ connected: { gmail: true } }).ctx, { toolkit: 'gmail', reason: 'r' })).toMatchObject({ status: 'already_connected' });
     expect(await showConnection(context({ capabilities: { voice: true, gmail: false, calendar: false } }).ctx, { toolkit: 'gmail', reason: 'r' })).toMatchObject({ status: 'unavailable' });
+  });
+});
+
+describe('note_decline', () => {
+  it('records a typed or spoken "no" so the offer is not repeated', async () => {
+    const { ctx, appended } = context();
+    expect(await noteDecline(ctx, { what: 'call' })).toMatchObject({ status: 'saved' });
+    expect(await noteDecline(ctx, { what: 'calendar' })).toMatchObject({ status: 'saved' });
+    expect(appended).toEqual([
+      expect.objectContaining({ id: 'call-decline:t1', type: 'call', phase: 'declined' }),
+      expect.objectContaining({ id: 'connection-decline:calendar:t1', type: 'connection', toolkit: 'calendar', phase: 'declined' }),
+    ]);
+    const after = context({ userWords: ['what else can you do'] }, appended);
+    expect(after.ctx.state.onboarding.call).toBe('declined');
+    expect(await offerCall(after.ctx)).toMatchObject({ status: 'declined_recently' });
+    expect(await noteDecline(after.ctx, { what: 'call' })).toMatchObject({ status: 'unchanged' });
+    expect(await noteDecline(context({ connected: { gmail: true } }).ctx, { what: 'gmail' })).toMatchObject({ status: 'already_connected' });
+    expect(await noteDecline(context({ channel: 'voice' }).ctx, { what: 'call' })).toMatchObject({ status: 'already_on_call' });
   });
 });

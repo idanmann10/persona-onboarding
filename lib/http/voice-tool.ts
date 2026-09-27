@@ -2,7 +2,7 @@ import type { SessionEvent, Toolkit } from '../domain/events';
 import { projectSession } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { readSessionCookie } from './session';
-import { remember, rememberInput, showConnection, showConnectionInput, type ActionContext } from '../agent/actions';
+import { noteDecline, noteDeclineInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext } from '../agent/actions';
 import { calendarReadInput, gmailSearchInput, relevantToolkits, runCalendarRead, runGmailSearch, type AccountReadClient } from '../agent/account-tools';
 import { userWords } from '../agent/turn';
 
@@ -15,7 +15,7 @@ interface Store {
   consumeQuota(id: string, scope: 'tool', limit: number, windowSeconds: number): Promise<boolean>;
 }
 
-export const VOICE_TOOL_NAMES = ['remember', 'show_connection', 'search_gmail', 'read_calendar_window'] as const;
+export const VOICE_TOOL_NAMES = ['remember', 'note_decline', 'show_connection', 'search_gmail', 'read_calendar_window'] as const;
 
 /**
  * Runs a function call that GPT-Live's backend requested, forwarded by the browser. The browser is not
@@ -56,6 +56,10 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
     if (name === 'remember') {
       const parsed = rememberInput.safeParse(args);
       return parsed.success ? Response.json({ output: JSON.stringify(await remember(context, parsed.data)) }) : invalid();
+    }
+    if (name === 'note_decline') {
+      const parsed = noteDeclineInput.safeParse(args);
+      return parsed.success ? Response.json({ output: JSON.stringify(await noteDecline(context, parsed.data)) }) : invalid();
     }
     if (name === 'show_connection') {
       const parsed = showConnectionInput.safeParse(args);

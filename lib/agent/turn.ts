@@ -4,7 +4,7 @@ import type { CallEndReason, SessionEvent, Toolkit } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { buildSystemPrompt } from './prompts';
-import { offerCall, offerCallInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
+import { noteDecline, noteDeclineInput, offerCall, offerCallInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
 
 type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
@@ -116,6 +116,11 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
       description: 'Save a name for you, what to call the user, or what they want help with, in their words. Use declined when they would rather not say.',
       inputSchema: rememberInput,
       execute: (input) => remember(context, input),
+    }),
+    note_decline: tool({
+      description: 'Record that the user said no to a call, to connecting Gmail, or to connecting Google Calendar, so it is not offered again.',
+      inputSchema: noteDeclineInput,
+      execute: (input) => noteDecline(context, input),
     }),
     ...(capabilities.voice && channel === 'text' ? {
       offer_call: tool({

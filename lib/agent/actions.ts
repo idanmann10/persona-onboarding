@@ -33,6 +33,7 @@ export const rememberInput = z.object({
   declined: z.boolean().optional().describe('True when the user would rather not say.'),
 });
 export const offerCallInput = z.object({ reason: z.string().max(200).optional().describe('One line on why a call helps now.') });
+export const noteDeclineInput = z.object({ what: z.enum(['call', 'gmail', 'calendar']).describe('What the user said no to.') });
 export const showConnectionInput = z.object({
   toolkit: z.enum(['gmail', 'calendar']),
   reason: z.string().min(1).max(200).describe('The concrete benefit for the current need, in one line.'),
@@ -93,6 +94,20 @@ export async function offerCall(ctx: ActionContext) {
   }
   await ctx.store.appendEvent(ctx.sessionId, { id: `call-offer:${ctx.turnId}`, at: timestamp(ctx), type: 'call', phase: 'offered' });
   return { status: 'offered' as const, note: 'An Answer button is now in the chat. The call starts only if they tap it; do not say it has started.' };
+}
+
+/** The user said no in their own words ("just text me", "I won't connect my calendar"); don't offer it again. */
+export async function noteDecline(ctx: ActionContext, input: z.infer<typeof noteDeclineInput>) {
+  if (input.what === 'call') {
+    if (ctx.channel === 'voice') return { status: 'already_on_call' as const };
+    if (ctx.state.onboarding.call === 'declined') return { status: 'unchanged' as const };
+    await ctx.store.appendEvent(ctx.sessionId, { id: `call-decline:${ctx.turnId}`, at: timestamp(ctx), type: 'call', phase: 'declined' });
+  } else {
+    if (ctx.connected[input.what]) return { status: 'already_connected' as const, note: 'It is connected; they can disconnect it from the menu.' };
+    if (ctx.state.connections[input.what] === 'declined') return { status: 'unchanged' as const };
+    await ctx.store.appendEvent(ctx.sessionId, { id: `connection-decline:${input.what}:${ctx.turnId}`, at: timestamp(ctx), type: 'connection', toolkit: input.what, phase: 'declined' });
+  }
+  return { status: 'saved' as const, note: "Noted. Don't offer it again unless they ask." };
 }
 
 export async function showConnection(ctx: ActionContext, input: z.infer<typeof showConnectionInput>) {

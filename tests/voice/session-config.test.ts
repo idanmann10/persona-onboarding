@@ -45,7 +45,7 @@ describe('GPT-Live session configuration', () => {
     expect(session.audio.output.voice).toBe('cedar');
     const responses = (session as unknown as { delegation: { responses: { model: string; tool_choice: string; parallel_tool_calls: boolean; tools: Array<{ type: string; name: string; parameters: Record<string, unknown> }> } } }).delegation.responses;
     expect(responses).toMatchObject({ model: 'gpt-6-luna', tool_choice: 'auto', parallel_tool_calls: false });
-    expect(responses.tools.map((tool) => tool.name)).toEqual(['remember', 'show_connection', 'search_gmail', 'read_calendar_window']);
+    expect(responses.tools.map((tool) => tool.name)).toEqual(['remember', 'note_decline', 'show_connection', 'search_gmail', 'read_calendar_window']);
     expect(responses.tools[0].parameters).toMatchObject({ type: 'object', properties: { key: { enum: ['assistant_name', 'preferred_name', 'current_need'] } } });
     expect(responses.tools[0].parameters).not.toHaveProperty('$schema');
     const off = buildLiveSession(projectSession([]), { OPENAI_VOICE_DELEGATION: 'off' }, { gmail: true, calendar: true });
