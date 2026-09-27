@@ -31,11 +31,13 @@ export function describeTrigger(state: SessionProjection, request: FollowUpReque
       `Something just happened: the browser call ended because ${END_REASONS[reason]}${duration ? `, after ${duration}` : ''}.`,
       cutOff ? 'Their last line in the call transcript above may have been cut off mid-sentence.' : '',
       'Decide what a thoughtful person would do next, then either send one short text or stay silent.',
+      '- First, save anything they told you on the call that is not saved yet (a name for you, their name, what they need).',
       '- If something was left unfinished (they hung up or the line dropped mid-thought), send one short message that picks up right where you left off and names what they were talking about. Do not invent what they were about to say.',
       DROPPED.has(reason) ? '- The line dropped, so you may offer to call back or to keep going here.' : '',
       reason === 'user_hangup' || reason === 'page_closed' ? '- They ended the call themselves, so don\'t push another call.' : '',
       reason === 'inactive' ? '- The call went quiet; check in gently here without pressure.' : '',
       `- If the call wrapped up naturally and nothing is open, reply with exactly ${SILENT}. Send a short recap only if you promised them something.`,
+      "- If it ended without a goodbye (a hang-up, a drop or a quiet line) before you learned what they'd like help with, send one short line that picks it up here.",
       '- Mention saved names, connected accounts or completed work only if the app state above confirms them.',
     ];
     return { id: `followup:call:${call.callId}`, instruction: lines.filter(Boolean).join('\n') };
@@ -56,7 +58,7 @@ export function describeTrigger(state: SessionProjection, request: FollowUpReque
     instruction: [
       `Something just happened: the user connected ${name} a moment ago, and the app confirmed it.`,
       request.toolkit === 'gmail'
-        ? '- If what they want help with involves email, search their inbox now and tell them one or two specific things you found (for example, who is waiting on a reply), then offer one next step.'
+        ? '- If what they want help with involves email, search their inbox now and tell them one or two specific things you found (for example, who is waiting on a reply), then offer one next step. If what you found is useful, offer in the same message to send them a rundown like this on a schedule, with the preview card (propose_automation).'
         : '- If what they want help with involves their schedule, read the relevant days now and tell them one or two specific things you found, then offer one next step.',
       '- If there is no clear need yet, confirm it is connected in a few words and suggest one useful thing you could do with it.',
       '- Keep it short and don\'t ask them to repeat anything.',
@@ -64,7 +66,12 @@ export function describeTrigger(state: SessionProjection, request: FollowUpReque
   };
 }
 
+/**
+ * True when the model chose silence. Tolerant of a mangled marker (seen live: "<s енsilent>"), so a
+ * garbled token is never shown to the user as a message.
+ */
 export function isSilent(text: string): boolean {
   const trimmed = text.trim();
-  return !trimmed || trimmed.toLowerCase().startsWith(SILENT);
+  if (!trimmed || trimmed.toLowerCase().startsWith(SILENT)) return true;
+  return trimmed.length <= 40 && /^<[^<>]{0,24}>$/.test(trimmed) && /s\W*i\W*l\W*e\W*n\W*t|silent/i.test(trimmed.replace(/[^\p{L}]/gu, ''));
 }

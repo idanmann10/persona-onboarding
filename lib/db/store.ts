@@ -3,6 +3,10 @@ import type { SessionEvent } from '../domain/events';
 import { readFile } from 'node:fs/promises';
 import type { KnowledgeFact } from '../domain/knowledge';
 import type { AutomationRecord, AutomationStatus } from '../domain/automation';
+import type { StoredTrace, TraceEntry } from '../observability/trace';
+
+/** The newest agent-log entries a session keeps on screen. */
+const TRACE_LIMIT = 2_000;
 
 function automationFrom(row: Record<string, unknown>): AutomationRecord {
   return {
@@ -22,6 +26,20 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     },
     createSession: async (id: string) => {
       await sql`INSERT INTO persona_sessions (id) VALUES (${id}) ON CONFLICT (id) DO NOTHING`;
+    },
+    /**
+     * Makes this session the main session of a verified email unless the email already has one, and
+     * returns the email's main session. Undefined when this session is already main for another email.
+     */
+    claimMainSession: async (email: string, sessionId: string): Promise<string | undefined> => {
+      await sql`INSERT INTO persona_users (email, main_session_id) VALUES (${email}, ${sessionId}) ON CONFLICT DO NOTHING`;
+      const rows = await sql`SELECT main_session_id FROM persona_users WHERE email = ${email} LIMIT 1`;
+      return rows[0]?.main_session_id as string | undefined;
+    },
+    /** The account whose main session this is, if any. */
+    getSessionAccount: async (sessionId: string): Promise<{ email: string } | undefined> => {
+      const rows = await sql`SELECT email FROM persona_users WHERE main_session_id = ${sessionId} LIMIT 1`;
+      return rows[0] ? { email: rows[0].email as string } : undefined;
     },
     sessionExists: async (id: string) => {
       const rows = await sql`SELECT 1 FROM persona_sessions WHERE id = ${id} LIMIT 1`;
@@ -47,6 +65,34 @@ export function createStore(sql: ReturnType<typeof postgres>) {
           VALUES (${crypto.randomUUID()}, ${id}, ${event.id}, 'user', ${event.key}, ${event.value}, ${event.evidence}, ${event.provenance}, ${event.sourceUrl || null}, ${event.sourceEventId})`;
       });
     },
+    /** The newest sessions with their events, for the funnel. */
+    recentSessions: async (limit = 500): Promise<Array<{ id: string; events: SessionEvent[] }>> => {
+      const rows = await sql`SELECT s.id, e.payload FROM (SELECT id, created_at FROM persona_sessions ORDER BY created_at DESC LIMIT ${limit}) s
+        JOIN persona_events e ON e.session_id = s.id ORDER BY s.created_at DESC, s.id, e.seq`;
+      const sessions = new Map<string, SessionEvent[]>();
+      for (const row of rows) {
+        const events = sessions.get(row.id as string) ?? [];
+        events.push(row.payload as SessionEvent);
+        sessions.set(row.id as string, events);
+      }
+      return [...sessions].map(([id, events]) => ({ id, events }));
+    },
+    /** The auth config Persona made for a toolkit other than Gmail and Calendar, if any. */
+    getAppAuthConfig: async (toolkit: string): Promise<string | undefined> => {
+      const rows = await sql`SELECT auth_config_id FROM persona_auth_configs WHERE toolkit = ${toolkit} LIMIT 1`;
+      return rows[0]?.auth_config_id as string | undefined;
+    },
+    /** Saves a toolkit's auth config unless one is already saved, and returns the saved one. */
+    saveAppAuthConfig: async (toolkit: string, authConfigId: string): Promise<string> => {
+      await sql`INSERT INTO persona_auth_configs (toolkit, auth_config_id) VALUES (${toolkit}, ${authConfigId}) ON CONFLICT (toolkit) DO NOTHING`;
+      const rows = await sql`SELECT auth_config_id FROM persona_auth_configs WHERE toolkit = ${toolkit} LIMIT 1`;
+      return rows[0].auth_config_id as string;
+    },
+    /** Every app this session has connected right now (gmail, calendar and any other toolkit slug). */
+    listActiveConnectionToolkits: async (sessionId: string): Promise<string[]> => {
+      const rows = await sql`SELECT DISTINCT toolkit FROM persona_connections WHERE session_id = ${sessionId} AND status = 'active' ORDER BY toolkit`;
+      return rows.map((row) => row.toolkit as string);
+    },
     readEvents: async (id: string): Promise<SessionEvent[]> => {
       const rows = await sql`SELECT payload FROM persona_events WHERE session_id = ${id} ORDER BY seq`;
       return rows.map((row) => row.payload as SessionEvent);
@@ -70,15 +116,16 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         sourceUrl: (row.sourceUrl as string | null) || undefined,
       }));
     },
-    createConnectionAttempt: async (sessionId: string, attemptId: string, toolkit: 'gmail' | 'calendar', accountId: string, authConfigId: string, expiresAt: string) => {
-      await sql`INSERT INTO persona_connections (attempt_id, session_id, toolkit, connected_account_id, auth_config_id, expires_at)
-        VALUES (${attemptId}, ${sessionId}, ${toolkit}, ${accountId}, ${authConfigId}, ${expiresAt})`;
+    createConnectionAttempt: async (sessionId: string, attemptId: string, toolkit: string, accountId: string, authConfigId: string, expiresAt: string, callbackHash?: string) => {
+      await sql`INSERT INTO persona_connections (attempt_id, session_id, toolkit, connected_account_id, auth_config_id, expires_at, callback_hash)
+        VALUES (${attemptId}, ${sessionId}, ${toolkit}, ${accountId}, ${authConfigId}, ${expiresAt}, ${callbackHash ?? null})`;
     },
     getConnectionAttempt: async (sessionId: string, attemptId: string) => {
-      const rows = await sql`SELECT toolkit, connected_account_id AS "accountId", auth_config_id AS "authConfigId", status
+      const rows = await sql`SELECT toolkit, connected_account_id AS "accountId", auth_config_id AS "authConfigId", status, callback_hash AS "callbackHash"
         FROM persona_connections WHERE session_id = ${sessionId} AND attempt_id = ${attemptId}
         AND (expires_at > now() OR status = 'active') LIMIT 1`;
-      return rows[0] as { toolkit: 'gmail' | 'calendar'; accountId: string; authConfigId: string; status: string } | undefined;
+      const row = rows[0] as { toolkit: string; accountId: string; authConfigId: string; status: string; callbackHash: string | null } | undefined;
+      return row ? { toolkit: row.toolkit, accountId: row.accountId, authConfigId: row.authConfigId, status: row.status, ...(row.callbackHash ? { callbackHash: row.callbackHash } : {}) } : undefined;
     },
     activateConnection: async (sessionId: string, attemptId: string): Promise<boolean> => sql.begin(async (tx) => {
       const rows = await tx`SELECT toolkit FROM persona_connections WHERE session_id = ${sessionId} AND attempt_id = ${attemptId}
@@ -103,6 +150,16 @@ export function createStore(sql: ReturnType<typeof postgres>) {
       const rows = await sql`SELECT connected_account_id FROM persona_connections
         WHERE session_id = ${sessionId} AND status IN ('pending', 'active') ORDER BY created_at, attempt_id`;
       return rows.map((row) => row.connected_account_id as string);
+    },
+    /** A painted portrait of the assistant (see lib/avatars). The same id twice keeps the first. */
+    saveAvatar: async (sessionId: string, avatar: { id: string; prompt: string; mime: string; bytes: Uint8Array }): Promise<void> => {
+      await sql`INSERT INTO persona_avatars (id, session_id, prompt, mime, bytes)
+        VALUES (${avatar.id}, ${sessionId}, ${avatar.prompt}, ${avatar.mime}, ${Buffer.from(avatar.bytes)})
+        ON CONFLICT (id) DO NOTHING`;
+    },
+    getAvatar: async (id: string): Promise<{ mime: string; bytes: Uint8Array } | undefined> => {
+      const rows = await sql`SELECT mime, bytes FROM persona_avatars WHERE id = ${id} LIMIT 1`;
+      return rows[0] ? { mime: rows[0].mime as string, bytes: new Uint8Array(rows[0].bytes as Uint8Array) } : undefined;
     },
     deleteSession: async (sessionId: string): Promise<void> => {
       await sql`DELETE FROM persona_sessions WHERE id = ${sessionId}`;
@@ -214,6 +271,25 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     },
     releaseReservation: async (sessionId: string, key: string): Promise<void> => {
       await sql`DELETE FROM persona_reservations WHERE session_id = ${sessionId} AND reservation_key = ${key}`;
+    },
+    /** One agent-log entry (see lib/observability/trace.ts). */
+    appendTrace: async (sessionId: string, entry: TraceEntry): Promise<void> => {
+      const duration = entry.durationMs === undefined || !Number.isFinite(entry.durationMs) ? null : Math.max(0, Math.round(entry.durationMs));
+      await sql`INSERT INTO persona_traces (session_id, turn_id, kind, name, at, duration_ms, status, data)
+        VALUES (${sessionId}, ${entry.turnId}, ${entry.kind}, ${entry.name}, ${entry.at}, ${duration}, ${entry.status ?? null},
+          ${sql.json(JSON.parse(JSON.stringify(entry.data ?? {})) as Parameters<typeof sql.json>[0])})`;
+    },
+    /** The session's agent log in the order it was written, newest entries kept. */
+    readTraces: async (sessionId: string): Promise<StoredTrace[]> => {
+      const rows = await sql`SELECT id, turn_id, kind, name, at, duration_ms, status, data FROM (
+          SELECT * FROM persona_traces WHERE session_id = ${sessionId} ORDER BY id DESC LIMIT ${TRACE_LIMIT}) newest ORDER BY id`;
+      return rows.map((row) => ({
+        id: Number(row.id), turnId: row.turn_id as string, kind: row.kind as StoredTrace['kind'], name: row.name as string,
+        at: new Date(row.at as string).toISOString(),
+        ...(row.duration_ms === null ? {} : { durationMs: Number(row.duration_ms) }),
+        ...(row.status ? { status: row.status as StoredTrace['status'] } : {}),
+        data: (row.data as Record<string, unknown>) ?? {},
+      }));
     },
     reserveIdentityClaim: async (sessionId: string, userEventId: string): Promise<boolean> => {
       const rows = await sql`INSERT INTO persona_identity_reservations (session_id, user_event_id)

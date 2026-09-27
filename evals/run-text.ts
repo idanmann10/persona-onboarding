@@ -23,7 +23,7 @@ for (const scenario of selected) {
     const base = { runId, caseId: scenario.id, group: scenario.group, attempt, model, promptVersion: PROMPT_VERSION,
       expected: scenario.expected, critical: scenario.critical, mode: 'prompt_only', scored: false };
     try {
-      const result = await generateText({ model: openai(model), system: buildSystemPrompt({ currentTask: userText, facts: [], capabilities: ['text'] }),
+      const result = await generateText({ model: openai(model), system: buildSystemPrompt({ facts: [], capabilities: ['text'] }),
         prompt: userText });
       await appendFile(output, JSON.stringify({ ...base, response: result.text, durationMs: Date.now() - started, status: 'completed' }) + '\n');
     } catch (error) {

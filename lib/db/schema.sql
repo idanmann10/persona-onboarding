@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS persona_action_confirmations (
 CREATE TABLE IF NOT EXISTS persona_connections (
   attempt_id UUID PRIMARY KEY,
   session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
-  toolkit TEXT NOT NULL CHECK (toolkit IN ('gmail', 'calendar')),
+  toolkit TEXT NOT NULL CONSTRAINT persona_connections_toolkit_slug CHECK (toolkit ~ '^[a-z0-9_]{1,60}$'),
   connected_account_id TEXT NOT NULL UNIQUE,
   auth_config_id TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'superseded')),
@@ -50,6 +50,21 @@ CREATE TABLE IF NOT EXISTS persona_connections (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS persona_connections_one_active ON persona_connections (session_id, toolkit) WHERE status = 'active';
+-- The hash of the per-attempt callback key (see lib/integrations/connections.ts).
+ALTER TABLE persona_connections ADD COLUMN IF NOT EXISTS callback_hash TEXT;
+-- Any Composio toolkit can be connected now, not only Gmail and Calendar: swap the old list check for a slug check.
+ALTER TABLE persona_connections DROP CONSTRAINT IF EXISTS persona_connections_toolkit_check;
+DO $$ BEGIN
+  ALTER TABLE persona_connections ADD CONSTRAINT persona_connections_toolkit_slug CHECK (toolkit ~ '^[a-z0-9_]{1,60}$');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- One Composio-managed auth config per toolkit other than Gmail and Calendar, created on first connect.
+CREATE TABLE IF NOT EXISTS persona_auth_configs (
+  toolkit TEXT PRIMARY KEY CHECK (toolkit ~ '^[a-z0-9_]{1,60}$'),
+  auth_config_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS persona_call_leases (
   session_id UUID PRIMARY KEY REFERENCES persona_sessions(id) ON DELETE CASCADE,
@@ -121,3 +136,34 @@ CREATE TABLE IF NOT EXISTS persona_automation_runs (
   finished_at TIMESTAMPTZ,
   UNIQUE (automation_id, scheduled_for, trigger)
 );
+
+CREATE TABLE IF NOT EXISTS persona_traces (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  turn_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('turn', 'step', 'call', 'voice_tool')),
+  name TEXT NOT NULL,
+  at TIMESTAMPTZ NOT NULL,
+  duration_ms INTEGER,
+  status TEXT CHECK (status IN ('running', 'ok', 'error', 'timeout')),
+  data JSONB NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS persona_traces_session ON persona_traces (session_id, id);
+
+-- One person, one main session: the verified Gmail address (lowercased) of whoever connected Gmail first.
+-- Deleting the main session ("Start over") deletes the row, so the address can start fresh.
+CREATE TABLE IF NOT EXISTS persona_users (
+  email TEXT PRIMARY KEY CHECK (email = lower(email)),
+  main_session_id UUID NOT NULL UNIQUE REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS persona_avatars (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  prompt TEXT NOT NULL,
+  mime TEXT NOT NULL CHECK (mime IN ('image/webp', 'image/png', 'image/jpeg')),
+  bytes BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS persona_avatars_session ON persona_avatars (session_id);

@@ -4,6 +4,10 @@ import type { FollowUpRequest } from '../agent/follow-up';
 import { getGuestSession } from '../agent/session';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 import type { AutomationRecord } from '../domain/automation';
+import { personaSettings } from '../domain/persona';
+
+/** A page load this long after the last activity counts as coming back. */
+const VISIT_GAP_MS = 30 * 60_000;
 
 interface Store extends IpQuotaStore {
   createSession(id: string): Promise<void>;
@@ -12,6 +16,7 @@ interface Store extends IpQuotaStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   getCallLease?(id: string): Promise<{ callId?: string; active: boolean } | undefined>;
   listAutomations?(id: string): Promise<AutomationRecord[]>;
+  getSessionAccount?(id: string): Promise<{ email: string } | undefined>;
 }
 
 export function readSessionCookie(request: Request): string | undefined {
@@ -38,7 +43,7 @@ export function pendingFollowUps(state: SessionProjection, now = Date.now()): Fo
   return pending;
 }
 
-export function createSessionHandler(store: Store) {
+export function createSessionHandler(store: Store, env: Record<string, string | undefined> = {}) {
   return async (request: Request): Promise<Response> => {
     const cookie = readSessionCookie(request);
     const known = Boolean(cookie && /^[0-9a-f-]{36}$/i.test(cookie) && await store.sessionExists(cookie));
@@ -56,6 +61,12 @@ export function createSessionHandler(store: Store) {
         events = await store.readEvents(session.id);
       }
     }
+    const lastActivity = Math.max(0, ...events.map((event) => Date.parse(event.at) || 0));
+    if (!session.created && lastActivity && Date.now() - lastActivity > VISIT_GAP_MS) {
+      const at = new Date().toISOString();
+      await store.appendEvent(session.id, { id: `visit:${at}`, at, type: 'visit' });
+      events = await store.readEvents(session.id);
+    }
     const projection = events === session.events ? state : projectSession(events);
     const messages = events
       .filter((event): event is Extract<SessionEvent, { type: 'message' }> => event.type === 'message')
@@ -70,8 +81,10 @@ export function createSessionHandler(store: Store) {
     }
     const automations = store.listAutomations ? await store.listAutomations(session.id) : [];
     const automationDue = automations.some((automation) => automation.status === 'active' && automation.nextRunAt && Date.parse(automation.nextRunAt) <= Date.now());
+    const account = store.getSessionAccount ? await store.getSessionAccount(session.id) : undefined;
     return new Response(JSON.stringify({
-      messages, voiceFragments, timeline: projection.timeline, progress: projection.onboarding, pendingFollowUps: pendingFollowUps(projection), automationDue,
+      messages, voiceFragments, timeline: projection.timeline, progress: projection.onboarding, settings: personaSettings(projection, env.OPENAI_VOICE),
+      pendingFollowUps: pendingFollowUps(projection), automationDue, account: account ? { email: account.email } : null,
     }), { headers });
   };
 }

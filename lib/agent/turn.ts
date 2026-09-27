@@ -4,9 +4,13 @@ import type { CallEndReason, SessionEvent, Toolkit } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { buildSystemPrompt } from './prompts';
-import { noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
+import { customize, customizeInput, noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore, graduate, graduateInput } from './actions';
 import type { AutomationStore } from '../domain/automation';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
+import { personalityLine, personaSettings } from '../domain/persona';
+import { repliesSinceSetupMoved, setupStatus } from '../domain/onboarding';
+import { describeTurn, type TraceSink, type TurnTrace } from '../observability/trace';
+import { generateAvatar } from '../avatars/generate';
 
 type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
 
@@ -15,11 +19,13 @@ export interface TurnStore extends ActionStore {
 }
 
 export interface TurnDependencies {
-  store: TurnStore & Partial<Pick<AutomationStore, 'proposeAutomation'>>;
+  store: TurnStore & Partial<Pick<AutomationStore, 'proposeAutomation'>> & { saveAvatar?: NonNullable<ActionContext['avatars']>['save'] };
   env: Record<string, string | undefined>;
   composio?: AccountReadClient;
   resolveIdentity?: (sessionId: string, userEvent: MessageEvent, clue: { first: string; last: string; company: string }) => Promise<unknown>;
   now?: () => Date;
+  /** Where the agent log goes; turns are traced only when this is set. */
+  trace?: TraceSink;
 }
 
 /** An app event that wakes the assistant without a new user message (a call ended, Gmail connected). */
@@ -35,6 +41,7 @@ export interface PreparedTurn {
   tools: ToolSet;
   state: SessionProjection;
   allowSystemInMessages: boolean;
+  trace?: TurnTrace;
 }
 
 const MESSAGE_LIMIT = 40;
@@ -113,6 +120,12 @@ export function callLines(state: SessionProjection): string[] {
   });
 }
 
+function hungUpJustNow(state: SessionProjection, trigger?: TurnTrigger): boolean {
+  if (!trigger?.id.startsWith('followup:call:')) return false;
+  const call = state.calls.find((record) => trigger.id === `followup:call:${record.callId}`);
+  return call?.reason === 'user_hangup' || call?.reason === 'page_closed';
+}
+
 export async function prepareTurn(deps: TurnDependencies, sessionId: string, history: SessionEvent[], options: { turnId: string; trigger?: TurnTrigger; channel?: 'text' | 'voice' }): Promise<PreparedTurn> {
   const state = projectSession(history);
   const capabilities = availableCapabilities(deps.env);
@@ -127,30 +140,44 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
     store: deps.store, sessionId, channel, turnId: options.turnId, state, userWords: words,
     capabilities: { voice: capabilities.voice, gmail: capabilities.gmail, calendar: capabilities.calendar }, connected, now: deps.now,
     ...(deps.store.proposeAutomation ? { automations: { proposeAutomation: deps.store.proposeAutomation } } : {}),
+    ...(deps.store.saveAvatar && deps.env.OPENAI_API_KEY ? { avatars: { generate: (input) => generateAvatar(input, { env: deps.env }), save: deps.store.saveAvatar } } : {}),
   };
   const relevant = relevantToolkits({ userTexts: words, lastAssistant: answeredQuestion(state), include: options.trigger?.include });
   const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
   const tools: ToolSet = {
     remember: tool({
-      description: 'Save a name for you, what to call the user, or what they want help with, in their words. Use declined when they would rather not say.',
+      description: 'Save something new or changed: what to call the user (preferred_name) or what they want help with (current_need). Use declined only when they refuse to share that exact thing.',
       inputSchema: rememberInput,
       execute: (input) => remember(context, input),
+    }),
+    customize: tool({
+      description: 'Change your own name, look (avatar), personality or call voice when the user names you or asks for a change. Send only what changes.',
+      inputSchema: customizeInput,
+      execute: (input) => customize(context, input),
     }),
     note_decline: tool({
       description: 'Record that the user said no to a call, to connecting Gmail, or to connecting Google Calendar, so it is not offered again.',
       inputSchema: noteDeclineInput,
       execute: (input) => noteDecline(context, input),
     }),
-    ...(capabilities.voice && channel === 'text' ? {
+    ...(state.setup.stage === 'active' ? {
+      graduate: tool({
+        description: 'The user wants to skip the rest of setup and just get started ("skip", "just let me in", "enough questions"). After this, no more setup questions.',
+        inputSchema: graduateInput,
+        execute: (input) => graduate(context, input),
+      }),
+    } : {}),
+    // They ended the call themselves: the follow-up must not put another call offer up (a prompt line alone didn't hold).
+    ...(capabilities.voice && channel === 'text' && !hungUpJustNow(state, options.trigger) ? {
       offer_call: tool({
-        description: 'Show an Answer button in the chat for a short browser call, after the user agreed to talk. It does not start the call.',
+        description: 'Put an Answer button in the chat for a short browser call. The button is the invitation: the call starts only if they tap it.',
         inputSchema: offerCallInput,
         execute: () => offerCall(context),
       }),
     } : {}),
     ...(deps.store.proposeAutomation && channel === 'text' && !options.trigger?.id.startsWith('automation:') ? {
       propose_automation: tool({
-        description: 'Preview one recurring task (daily, weekdays or weekly at a local time) for the user to approve. It does not schedule anything by itself.',
+        description: 'Show a preview card for one recurring task (daily, weekdays or weekly at a local time) with an Approve button. Nothing is scheduled until they approve it.',
         inputSchema: proposeAutomationInput,
         execute: (input) => proposeAutomation(context, input),
       }),
@@ -162,7 +189,9 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
         execute: (input) => showConnection(context, input),
       }),
     } : {}),
-    ...(deps.composio ? createAccountTools(deps.composio, sessionId, relevant, accounts) : {}),
+    ...(deps.composio ? createAccountTools(deps.composio, sessionId, relevant, accounts, (toolkit, items) => deps.store.appendEvent(sessionId, {
+      id: `read:${options.turnId}:${toolkit}`, at: (deps.now?.() ?? new Date()).toISOString(), type: 'account_read', toolkit, items,
+    })) : {}),
     ...(deps.resolveIdentity && latestUser ? {
       resolve_identity: tool({
         description: 'Check a directly stated first-person full name and company against a public Context.dev candidate. The server rejects weak or inferred claims.',
@@ -179,13 +208,18 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
     ...(capabilities.voice ? ['browser call'] : []),
     ...(connected.gmail ? ['connected Gmail (read-only search)'] : capabilities.gmail ? ['Gmail (not connected; can be connected)'] : []),
     ...(connected.calendar ? ['connected Google Calendar (read-only)'] : capabilities.calendar ? ['Google Calendar (not connected; can be connected)'] : []),
+    ...Object.values(state.apps).filter((app) => app.phase === 'connected').map((app) => `${app.name} (connected; you can't act in it yet — say so honestly)`),
   ];
   const facts = Object.entries(state.facts).map(([key, fact]) => ({ key, value: fact.value, provenance: fact.provenance, evidence: fact.evidence, sourceUrl: fact.sourceUrl }));
   const instructions = buildSystemPrompt({
-    currentTask: latestUser?.text, facts, capabilities: labels, onboarding: state.onboarding, calls: callLines(state),
+    facts, capabilities: labels, onboarding: state.onboarding, calls: callLines(state), personality: personalityLine(personaSettings(state)),
+    setup: setupStatus(state.onboarding, { graduated: state.setup.stage === 'graduated', voice: capabilities.voice }),
+    // Automation runs and app-event follow-ups don't nudge; a reply to the user does.
+    setupStalledFor: options.trigger ? 0 : repliesSinceSetupMoved(history),
     now: (deps.now?.() ?? new Date()).toISOString(), mode: channel === 'voice' ? 'voice_backend' : 'text',
   });
   const messages = modelMessages(state);
   if (options.trigger) messages.push({ role: 'system', content: options.trigger.instruction });
-  return { instructions, messages, tools, state, allowSystemInMessages: Boolean(options.trigger) };
+  const trace = deps.trace ? describeTurn(deps.trace, sessionId, { turnId: options.turnId, trigger: options.trigger, channel, model: deps.env.OPENAI_TEXT_MODEL, instructions, messages, tools, userText: latestUser?.text }) : undefined;
+  return { instructions, messages, tools, state, allowSystemInMessages: Boolean(options.trigger), ...(trace ? { trace } : {}) };
 }

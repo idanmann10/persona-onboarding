@@ -7,8 +7,8 @@ interface Store {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
 }
 
-export const GREETING_ID = 'greeting:v1';
-export const GREETING_TEXT = "Hi, I'm your new assistant. I don't have a name yet, so what would you like to call me?\n\nIf something's already on your mind, start there instead. Names can wait.";
+export const GREETING_ID = 'greeting:v2';
+export const GREETING_TEXT = "Hi! I'm your new Persona assistant 👋 I'm here to take stuff off your plate: email, calendar, even phone calls.\n\nFirst up: what should I go by? Or skip that and tell me what's on your mind.";
 
 export function greetingEvent(at = new Date()): SessionEvent {
   return { id: GREETING_ID, at: at.toISOString(), type: 'message', speaker: 'assistant', channel: 'text', text: GREETING_TEXT, origin: 'greeting' };

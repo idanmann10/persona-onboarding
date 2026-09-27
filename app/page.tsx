@@ -4,14 +4,21 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type Keyboard
 import type { OnboardingProgress, TimelineItem } from '@/lib/domain/project';
 import { reconcileFailedTurn } from '@/lib/ui/reconcile';
 import { startBrowserCall, type VoiceController, type VoiceCallbacks } from '@/lib/voice/client';
-import { Bubble, duration, TimelineEntry, type Toolkit } from './thread';
+import type { PersonaSettings } from '@/lib/domain/persona';
+import { assistantGroupEnds, Bubble, duration, TimelineEntry, type Face, type Toolkit } from './thread';
+import { Avatar } from './components/avatar';
+import { ConnectionsSheet } from './components/connections-sheet';
+import { AppsIcon, ArrowUpIcon, PersonaMark, PhoneIcon } from './components/icons';
 
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
 type FollowUpRequest = { kind: 'call_ended'; callId: string } | { kind: 'connection'; toolkit: Toolkit; acknowledge?: boolean };
-type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean };
+/** `avatarUrl` is the assistant's photo, served by `/api/session`. */
+type Settings = PersonaSettings & { avatarUrl?: string };
+type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: Settings; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean };
 type Caption = { speaker: 'user' | 'assistant'; text: string };
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
+const isToolkit = (value: unknown): value is Toolkit => value === 'gmail' || value === 'calendar';
 const post = (url: string, body: unknown, method = 'POST') => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 function timelineFromMessages(messages: Message[]): TimelineItem[] {
@@ -27,12 +34,12 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState('');
-  const [capabilities, setCapabilities] = useState({ text: false, voice: false, calendar: false, gmail: false });
-  const [connections, setConnections] = useState({ calendar: false, gmail: false });
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
+  const [appsOpen, setAppsOpen] = useState(false);
+  const [appsVersion, setAppsVersion] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [connecting, setConnecting] = useState<Toolkit | null>(null);
+  const [connecting, setConnecting] = useState<string | null>(null);
   const [callPhase, setCallPhase] = useState<'idle' | 'connecting' | 'active' | 'ending'>('idle');
   const [liveCallId, setLiveCallId] = useState<string | undefined>();
   const [callStartedAt, setCallStartedAt] = useState<string | undefined>();
@@ -40,6 +47,10 @@ export default function Home() {
   const [, setTick] = useState(0);
   const voiceRef = useRef<VoiceController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const appRef = useRef<HTMLElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const appsButtonRef = useRef<HTMLButtonElement>(null);
   const followUpsRunning = useRef(false);
   const followUpQueue = useRef<FollowUpRequest[]>([]);
 
@@ -51,7 +62,7 @@ export default function Home() {
     const snapshot = await response.json() as Snapshot;
     setTimeline(snapshot.timeline ?? timelineFromMessages(snapshot.messages));
     if (snapshot.progress) setProgress(snapshot.progress);
-    void fetch('/api/connections', { cache: 'no-store' }).then((result) => result.ok ? result.json() as Promise<{ calendar: boolean; gmail: boolean }> : null).then((status) => { if (status) setConnections(status); }).catch(() => undefined);
+    if (snapshot.settings) setAvatarUrl(snapshot.settings.avatarUrl || undefined);
     return snapshot;
   }, []);
 
@@ -87,10 +98,6 @@ export default function Home() {
       })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'The conversation could not be loaded.'); })
       .finally(() => { if (active) setLoading(false); });
-    fetch('/api/capabilities', { cache: 'no-store' })
-      .then((response) => response.json() as Promise<typeof capabilities>)
-      .then((result) => { if (active) setCapabilities(result); })
-      .catch(() => undefined);
     return () => { active = false; };
   }, [refresh, runFollowUps]);
 
@@ -107,6 +114,22 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [callPhase]);
 
+  // The header and composer float over the thread as glass: keep the thread's padding equal to their height.
+  useEffect(() => {
+    const app = appRef.current;
+    if (!app) return;
+    const sync = () => {
+      app.style.setProperty('--top-h', `${topRef.current?.offsetHeight ?? 0}px`);
+      app.style.setProperty('--bottom-h', `${bottomRef.current?.offsetHeight ?? 0}px`);
+    };
+    sync();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(sync);
+    if (topRef.current) observer.observe(topRef.current);
+    if (bottomRef.current) observer.observe(bottomRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     const onHide = () => voiceRef.current?.abandon();
     window.addEventListener('pagehide', onHide);
@@ -116,9 +139,11 @@ export default function Home() {
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin || event.data?.type !== 'persona-connection') return;
-      const toolkit = event.data.toolkit === 'gmail' || event.data.toolkit === 'calendar' ? event.data.toolkit as Toolkit : undefined;
+      const slug: unknown = event.data.toolkit;
+      const toolkit = isToolkit(slug) ? slug : undefined;
       voiceRef.current?.setBusy(false);
       setConnecting(null);
+      setAppsVersion((value) => value + 1);
       void refresh().then(() => {
         if (!toolkit) return;
         if (voiceRef.current && event.data.status === 'connected') {
@@ -179,7 +204,7 @@ export default function Home() {
 
   async function startCall() {
     if (voiceRef.current) { await voiceRef.current.close(); return; }
-    if (!capabilities.voice || callPhase !== 'idle') return;
+    if (callPhase !== 'idle') return;
     setError('');
     setCaptions([]);
     let callId: string | undefined;
@@ -224,14 +249,15 @@ export default function Home() {
     await refresh().catch(() => undefined);
   }
 
-  async function connect(toolkit: Toolkit) {
-    if (!capabilities[toolkit] || connecting) return;
+  /** Opens the sign-in window for any app slug: Gmail and Calendar from the thread, the rest from the Apps sheet. */
+  async function connect(toolkit: string) {
+    if (connecting) return;
     setConnecting(toolkit);
     setError('');
     const popup = window.open('about:blank', 'persona-connect', 'popup,width=520,height=720');
     try {
       const response = await post('/api/connections', { toolkit });
-      if (!response.ok) throw new Error('The connection could not be started.');
+      if (!response.ok) throw new Error((await response.text().catch(() => '')).trim() || 'The connection could not be started.');
       const { redirectUrl } = await response.json() as { redirectUrl: string };
       if (popup?.closed) {
         // The user closed the sign-in window while it was loading: treat it as cancelled.
@@ -246,6 +272,7 @@ export default function Home() {
           clearInterval(watcher);
           voiceRef.current?.setBusy(false);
           setConnecting(null);
+          setAppsVersion((value) => value + 1);
           void refresh().catch(() => undefined);
         }, 600);
       } else if (voiceRef.current) {
@@ -275,97 +302,102 @@ export default function Home() {
     await refresh().catch(() => undefined);
   }
 
-  async function disconnect(toolkit: Toolkit) {
-    if (connecting) return;
-    setConnecting(toolkit);
-    setError('');
-    try {
-      const response = await post('/api/connections', { toolkit }, 'DELETE');
-      if (!response.ok) throw new Error('The account could not be disconnected.');
-      await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The account could not be disconnected.'); }
-    finally { setConnecting(null); }
-  }
-
-  async function deleteConversation() {
-    if (!confirmDelete) { setConfirmDelete(true); return; }
+  /** Start over: clears the conversation and revokes connected accounts, then reloads a fresh chat. */
+  async function startOver() {
     if (callPhase !== 'idle') return;
     setDeleting(true);
     setError('');
     try {
       const response = await fetch('/api/session', { method: 'DELETE' });
-      if (!response.ok) throw new Error('The conversation could not be deleted. Please try again.');
-      window.location.assign('/');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Deletion failed.'); setDeleting(false); }
+      if (!response.ok) throw new Error((await response.text().catch(() => '')).trim() || 'The conversation could not be cleared. Please try again.');
+      window.location.reload();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Starting over failed.'); setDeleting(false); setConfirmDelete(false); }
+  }
+
+  function closeApps() {
+    setAppsOpen(false);
+    appsButtonRef.current?.focus();
   }
 
   const onCall = callPhase !== 'idle';
   const busy = sending || loading || deleting;
+  const face: Face = { name: assistantName, avatarUrl };
+  const groupEnds = assistantGroupEnds(timeline, thinking && !draft);
   const callLabel = callPhase === 'active' ? 'Hang up' : callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending…' : 'Call';
+  const subtitle = callPhase === 'active' ? `On a call · ${duration(callStartedAt)}` : assistantName === 'Persona' ? 'Your new assistant' : 'Your Persona assistant';
 
   return (
-    <main className="app">
-      <header className="topbar">
-        <div className="identity">
-          <span className="orb" aria-hidden="true" />
-          <span className="identity-text"><strong>{assistantName}</strong><small>{callPhase === 'active' ? `On a call · ${duration(callStartedAt)}` : assistantName === 'Persona' ? 'Your new assistant' : 'Your Persona assistant'}</small></span>
-        </div>
-        <div className="topbar-actions">
-          <button className={`call-button${onCall ? ' live' : ''}`} type="button" onClick={() => void startCall()} disabled={(!capabilities.voice && !onCall) || callPhase === 'connecting' || callPhase === 'ending'} title={capabilities.voice ? 'Start or end a browser call' : 'Voice needs a server API key'}>
-            <span aria-hidden="true">✆</span> {callLabel}{!capabilities.voice && !onCall ? <span className="soon"> · setup needed</span> : null}
-          </button>
-          <button className="menu-button" type="button" aria-label="Settings" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); setConfirmDelete(false); }}>⋯</button>
-        </div>
-        {menuOpen ? (
-          <section className="menu" aria-label="Connections and privacy">
-            <strong>Connections</strong>
-            <p>Optional and read-only. Connect an account only when it helps.</p>
-            {(['gmail', 'calendar'] as const).map((toolkit) => (
-              <div className="menu-row" key={toolkit}>
-                <span>{TOOLKIT_NAMES[toolkit]}</span>
-                <button type="button" disabled={(!connections[toolkit] && !capabilities[toolkit]) || Boolean(connecting)} onClick={() => void (connections[toolkit] ? disconnect(toolkit) : connect(toolkit))}>
-                  {connecting === toolkit ? 'Working…' : connections[toolkit] ? 'Disconnect' : !capabilities[toolkit] ? 'Setup needed' : 'Connect'}
-                </button>
-              </div>
-            ))}
-            <div className="menu-row danger">
-              <span>{confirmDelete ? 'This also removes connected accounts.' : 'Delete this conversation'}</span>
-              <button type="button" disabled={deleting || onCall} onClick={() => void deleteConversation()}>{deleting ? 'Deleting…' : confirmDelete ? 'Confirm delete' : 'Delete'}</button>
+    <main className={`app${onCall ? ' on-call' : ''}`} ref={appRef}>
+      <div className="top-stack" ref={topRef}>
+        <header className="topbar">
+          <div className="topbar-inner">
+            <span className="brand" aria-label="Persona"><PersonaMark className="brand-mark" /><span className="brand-word" aria-hidden="true">Persona</span></span>
+            <div className="identity">
+              <Avatar src={avatarUrl} name={assistantName} size={36} />
+              <span className="identity-text"><strong>{assistantName}</strong><small>{subtitle}</small></span>
+            </div>
+            <div className="topbar-actions">
+              {confirmDelete ? (
+                <span className="confirm" role="group" aria-label="Start over">
+                  <span className="confirm-text">Clear the chat and disconnect accounts?</span>
+                  <button type="button" className="pill danger" disabled={deleting || onCall} onClick={() => void startOver()}>{deleting ? 'Clearing…' : 'Start over'}</button>
+                  <button type="button" className="pill" disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancel</button>
+                </span>
+              ) : (
+                <>
+                  <button ref={appsButtonRef} type="button" className="pill" aria-haspopup="dialog" aria-expanded={appsOpen} disabled={deleting} onClick={() => { setError(''); setAppsOpen(true); }}><AppsIcon className="pill-icon" width={15} height={15} />Apps</button>
+                  <a className="pill" href="/inspect" target="_blank" rel="noreferrer">Agent log</a>
+                  <button type="button" className="pill" disabled={busy || onCall} onClick={() => { setError(''); setConfirmDelete(true); }}>Start over</button>
+                </>
+              )}
+            </div>
+            <button className={`call-button glass${onCall ? ' live' : ''}`} type="button" onClick={() => void startCall()} disabled={callPhase === 'connecting' || callPhase === 'ending'} title="Start or end a browser call">
+              {onCall ? <span className="live-dot" aria-hidden="true" /> : <PhoneIcon className="call-glyph" width={15} height={15} />}
+              {callLabel}
+            </button>
+          </div>
+        </header>
+
+        {onCall ? (
+          <section className="live-call glass" aria-live="polite" aria-label="Live call">
+            <div className="live-head">
+              <Avatar src={avatarUrl} name={assistantName} size={28} />
+              <span className="live-title">{callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending call…' : `Live with ${assistantName}`}</span>
+              <span className="live-time"><span className="live-dot" aria-hidden="true" />{callPhase === 'active' ? duration(callStartedAt) : ''}</span>
+            </div>
+            <div className="captions">
+              {captions.length ? captions.slice(-3).map((caption, index) => <p key={index} className={caption.speaker}><b>{caption.speaker === 'user' ? 'You' : assistantName}</b> {caption.text.length > 240 ? `…${caption.text.slice(-240)}` : caption.text}</p>) : <p className="muted">{callPhase === 'active' ? 'Say hello, or type below. Your text goes into the call.' : 'Setting up your microphone…'}</p>}
             </div>
           </section>
         ) : null}
-      </header>
-
-      {onCall ? (
-        <section className="live-call" aria-live="polite" aria-label="Live call">
-          <div className="live-head"><span className="pulse" aria-hidden="true" />{callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending call…' : `Live with ${assistantName}`}<span className="live-time">{callPhase === 'active' ? duration(callStartedAt) : ''}</span></div>
-          <div className="captions">
-            {captions.length ? captions.slice(-3).map((caption, index) => <p key={index} className={caption.speaker}><b>{caption.speaker === 'user' ? 'You' : assistantName}</b> {caption.text.length > 240 ? `…${caption.text.slice(-240)}` : caption.text}</p>) : <p className="muted">{callPhase === 'active' ? 'Say hello, or type below. Your text goes into the call.' : 'Setting up your microphone…'}</p>}
-          </div>
-        </section>
-      ) : null}
+      </div>
 
       <div className="thread" aria-live="polite">
         <div className="thread-inner">
           {loading ? <p className="loading">Loading your conversation…</p> : null}
-          {timeline.map((item) => (
-            <TimelineEntry key={item.id} item={item} assistantName={assistantName} liveCallId={liveCallId} busy={busy || Boolean(connecting) || (item.kind === 'call_offer' && onCall)} connectable={{ gmail: capabilities.gmail, calendar: capabilities.calendar }}
+          {timeline.map((item, index) => (
+            <TimelineEntry key={item.id} item={item} assistantName={assistantName} liveCallId={liveCallId} busy={busy || Boolean(connecting) || (item.kind === 'call_offer' && onCall)}
+              avatarUrl={avatarUrl} face={groupEnds.has(index) ? face : undefined}
               onAnswer={() => void startCall()} onDeclineCall={() => void declineCall()} onConnect={(toolkit) => void connect(toolkit)} onDeclineConnection={(toolkit) => void declineConnection(toolkit)} onAutomation={(action, id) => void automation(action, id)} />
           ))}
-          {draft ? <><Bubble speaker="user" text={draft.user.text} /><Bubble speaker="assistant" text={draft.assistant.text} pending /></> : null}
-          {thinking && !draft ? <Bubble speaker="assistant" text="" /> : null}
-          <div ref={endRef} />
+          {draft ? <><Bubble speaker="user" text={draft.user.text} /><Bubble speaker="assistant" text={draft.assistant.text} pending face={face} typingLabel={`${assistantName} is typing`} /></> : null}
+          {thinking && !draft ? <Bubble speaker="assistant" text="" face={face} typingLabel={`${assistantName} is typing`} /> : null}
+          <div className="thread-end" ref={endRef} />
         </div>
       </div>
 
-      <div className="composer-area">
-        {error ? <p className="error" role="alert">{error}</p> : null}
-        <form className="composer" onSubmit={sendMessage}>
-          <textarea maxLength={8_000} aria-label={`Message ${assistantName}`} placeholder={callPhase === 'active' ? 'Type into the call…' : `Message ${assistantName}…`} rows={1} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={onComposerKeyDown} disabled={loading || sending} />
-          <button className="send-button" type="submit" aria-label="Send message" disabled={!input.trim() || loading || sending}>↑</button>
-        </form>
-        <p className="composer-note">Private preview · Enter to send, Shift+Enter for a new line</p>
+      <div className="composer-area" ref={bottomRef}>
+        <div className="composer-inner">
+          {error ? <p className="error" role="alert">{error}</p> : null}
+          <form className="composer glass" onSubmit={sendMessage}>
+            <textarea maxLength={8_000} aria-label={`Message ${assistantName}`} placeholder={callPhase === 'active' ? 'Type into the call…' : `Message ${assistantName}`} rows={1} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={onComposerKeyDown} disabled={loading || sending} />
+            <button className="send-button" type="submit" aria-label="Send message" disabled={!input.trim() || loading || sending}><ArrowUpIcon width={17} height={17} /></button>
+          </form>
+          <p className="composer-note">Private preview · Enter to send, Shift+Enter for a new line</p>
+        </div>
       </div>
+
+      {appsOpen ? <ConnectionsSheet connecting={connecting} version={appsVersion} onConnect={(slug) => void connect(slug)} onChanged={() => void refresh().catch(() => undefined)} onClose={closeApps} /> : null}
     </main>
   );
 }

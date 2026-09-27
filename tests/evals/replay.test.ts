@@ -36,15 +36,16 @@ describe('brief scenario corpus', () => {
 describe('app-level replay', () => {
   it('runs tools through the real gates and records state, then passes its invariants', async () => {
     const trace = await replayScenario(scenario('brief_name_then_call'), { model: scripted([
-      { call: { name: 'remember', input: { key: 'assistant_name', value: 'Max' } } },
+      { call: { name: 'customize', input: { name: 'Max' } } },
       { text: "Max it is.\n\nWant to hop on a two-minute call? It's faster than typing." },
       { call: { name: 'offer_call', input: {} } },
       { text: 'Tap Answer when you are ready.' },
     ]) });
-    expect(trace.steps.map((step) => step.tools.map((tool) => tool.name))).toEqual([['remember'], ['offer_call']]);
+    expect(trace.steps.map((step) => step.tools.map((tool) => tool.name))).toEqual([['customize'], ['offer_call']]);
     // The session starts like the app's: the opening message asked for a name.
     expect(trace.events[0]).toMatchObject({ type: 'message', origin: 'greeting' });
-    expect(trace.steps[0].tools[0].output).toMatchObject({ status: 'saved', evidence: 'confirmed', provenance: 'user_said' });
+    expect(trace.steps[0].tools[0].output).toMatchObject({ status: 'saved', changed: { name: 'Max' } });
+    expect(trace.events).toContainEqual(expect.objectContaining({ type: 'fact', key: 'assistant_name', value: 'Max', evidence: 'confirmed', provenance: 'user_said', sourceEventId: expect.stringMatching(/^customize:/) }));
     expect(trace.finalProgress).toMatchObject({ assistantName: { status: 'confirmed', value: 'Max' }, call: 'offered' });
     expect(checkInvariants(trace).filter((result) => !result.passed)).toEqual([]);
     expect(checkExpectations(scenario('brief_name_then_call'), trace).every((result) => result.passed)).toBe(true);
@@ -64,10 +65,12 @@ describe('app-level replay', () => {
 
   it('reads fixtures only after the user connects, and the model sees Composio-shaped mail', async () => {
     const trace = await replayScenario(scenario('brief_gmail_value'), { model: scripted([
+      { call: { name: 'customize', input: { name: 'Max' } } },
       { call: { name: 'show_connection', input: { toolkit: 'gmail', reason: 'See who is waiting on a reply' } } },
       { text: 'Max it is. Connect Gmail below and I will find what people need from you.' },
       { call: { name: 'search_gmail', input: { query: 'in:inbox is:unread newer_than:3d' } } },
-      { text: 'Dana needs your lease answer by Friday, and Sam wants to move Thursday. Want a reply drafted for Dana?' },
+      { call: { name: 'propose_automation', input: { title: 'Morning inbox rundown', instruction: 'List the emails waiting on my reply.', cadence: 'weekdays', time: '08:00', toolkits: ['gmail'] } } },
+      { text: 'Dana needs your lease answer by Friday, and Sam wants to move Thursday. Want this every weekday at 8? Approve it below.' },
     ]) });
     expect(trace.reads).toEqual([expect.objectContaining({ slug: 'GMAIL_FETCH_EMAILS', allowed: true })]);
     const search = trace.steps[1].tools[0];
@@ -107,6 +110,7 @@ describe('app-level replay', () => {
 
   it('previews a recurring task after value and flags a premature "scheduled" claim', async () => {
     const good = await replayScenario(scenario('brief_first_automation'), { model: scripted([
+      { call: { name: 'customize', input: { name: 'Max' } } },
       { call: { name: 'search_gmail', input: { query: 'in:inbox is:unread' } } },
       { text: 'Dana needs your lease answer by Friday, and Sam wants to move Thursday.' },
       { call: { name: 'propose_automation', input: { title: 'Morning inbox rundown', instruction: 'List the emails waiting on my reply.', cadence: 'weekdays', time: '08:00', toolkits: ['gmail'] } } },

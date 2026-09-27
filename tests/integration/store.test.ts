@@ -31,7 +31,7 @@ async function collect(stream: AsyncIterable<string>): Promise<string[]> {
 
 describe('Postgres session store', () => {
   beforeAll(async () => {
-    await admin.unsafe(`CREATE DATABASE ${database}`);
+    await admin.unsafe(`CREATE DATABASE ${database} ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0`);
     sql = postgres(testUrl.toString(), { max: 1 });
     await createStore(sql).initialize();
   });
@@ -74,7 +74,7 @@ describe('Postgres session store', () => {
     const first = await getGuestSession(store);
     expect(first.created).toBe(true);
     const second = await getGuestSession(store, first.id);
-    expect(second).toEqual({ id: first.id, created: false, events: [expect.objectContaining({ id: 'greeting:v1', speaker: 'assistant', origin: 'greeting', text: GREETING_TEXT })] });
+    expect(second).toEqual({ id: first.id, created: false, events: [expect.objectContaining({ id: 'greeting:v2', speaker: 'assistant', origin: 'greeting', text: GREETING_TEXT })] });
     const invalid = await getGuestSession(store, crypto.randomUUID());
     expect(invalid.created).toBe(true);
     expect(invalid.id).not.toBe(first.id);
@@ -98,7 +98,7 @@ describe('Postgres session store', () => {
     const reloaded = await sessionHandler(new Request('http://localhost/api/session', { headers: { cookie: cookieHeader } }));
     const snapshot = await reloaded.json();
     expect(snapshot.messages).toEqual([
-      { id: 'greeting:v1', role: 'assistant', text: GREETING_TEXT },
+      { id: 'greeting:v2', role: 'assistant', text: GREETING_TEXT },
       { id: 'm3', role: 'user', text: 'hello' },
       { id: 'answer:m3', role: 'assistant', text: 'I can help with that.' },
     ]);
@@ -130,13 +130,13 @@ describe('Postgres session store', () => {
     expect((await handler(request(session.id))).status).toBe(429);
     const answer = await result.json();
     expect(answer).toMatchObject({ session: { id: 'live_test' }, transport: { type: 'webrtc', sdp: 'answer-sdp' }, delegation: true });
-    expect(answer.greeting).toMatch(/^Greet the caller now in English\. .*ask what you should call them/);
+    expect(answer.greeting).toMatch(/^Greet the caller now in the language they have been using \(English if unsure\)\. .*ask what you should call them/);
     expect(answer.limits).toMatchObject({ checkInAfterMs: 20_000, closeAfterMs: 30_000, maxDurationMs: 720_000 });
     const liveSession = (sent as { session: { model: string; input: Array<{ role: string }>; delegation: { type: string; responses: { model: string; tools: Array<{ name: string }> } } } }).session;
     expect(liveSession.model).toBe('gpt-live-1');
     expect(liveSession.input[0].role).toBe('developer');
     expect(liveSession.delegation).toMatchObject({ type: 'responses', responses: { model: 'gpt-6-luna' } });
-    expect(liveSession.delegation.responses.tools.map((tool) => tool.name)).toEqual(['remember', 'note_decline']);
+    expect(liveSession.delegation.responses.tools.map((tool) => tool.name)).toEqual(['remember', 'customize', 'note_decline', 'graduate']);
     expect(JSON.stringify(sent)).toContain('I need help preparing for Friday');
     expect(JSON.stringify(sent)).toContain('preferred_pace');
     expect(JSON.stringify(sent)).toContain('I might need a short brief');
@@ -393,7 +393,14 @@ describe('Postgres session store', () => {
     expect(JSON.parse((await search.json()).output)).toMatchObject({ status: 'not_connected' });
     const card = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_4', name: 'show_connection', arguments: JSON.stringify({ toolkit: 'gmail', reason: 'See who is waiting on you' }) }));
     expect(await card.json()).toMatchObject({ ui: { type: 'connection_offer', toolkit: 'gmail' } });
+    const look = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_5', name: 'customize', arguments: JSON.stringify({ avatar: 'sage', voice: 'willow' }) }));
+    const looked = await look.json();
+    expect(looked).toMatchObject({ ui: { type: 'customize' } });
+    expect(JSON.parse(looked.output)).toMatchObject({ status: 'saved', changed: { avatar: 'sage', voice: 'willow' }, note: expect.stringContaining('next call') });
+    const badLook = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_6', name: 'customize', arguments: JSON.stringify({ voice: 'robot' }) }));
+    expect(JSON.parse((await badLook.json()).output)).toMatchObject({ status: 'invalid_arguments' });
     const state = projectSession(await store.readEvents(sessionId));
+    expect(state.facts.avatar).toMatchObject({ value: 'sage', sourceEventId: 'customize:live_tool:call_5' });
     expect(state.onboarding.preferredName).toEqual({ status: 'confirmed', value: 'Dana' });
     expect(state.onboarding.gmail).toBe('offered');
   });
@@ -555,5 +562,26 @@ describe('Postgres session store', () => {
     expect(state.messages.some((message) => message.origin === 'automation')).toBe(false);
     expect(state.timeline.some((item) => item.kind === 'automation_notice')).toBe(true);
     expect(state.timeline.find((item) => item.kind === 'automation')).toMatchObject({ status: 'active', nextRunAt: expect.any(String) });
+  });
+
+
+  it('lists recent sessions with their events for the funnel', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    await store.appendEvent(sessionId, { id: 'm1', at: new Date().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: 'Max' });
+    const recent = await store.recentSessions(1_000);
+    const mine = recent.find((session) => session.id === sessionId);
+    expect(mine?.events.map((event) => event.id)).toEqual(['greeting:v2', 'm1']);
+  });
+
+  it('records a return visit after a gap, once, and returns the settings', async () => {
+    const store = createStore(sql);
+    const sessionId = (await getGuestSession(store)).id;
+    await sql`UPDATE persona_events SET payload = jsonb_set(payload, '{at}', to_jsonb((now() - interval '2 hours')::text)) WHERE session_id = ${sessionId}`;
+    const handler = createSessionHandler(store, { OPENAI_VOICE: 'marin' });
+    const load = async () => (await handler(new Request('http://localhost/api/session', { headers: { cookie: `persona_session=${sessionId}` } }))).json();
+    expect((await load()).settings).toEqual({ personality: { id: 'warm', label: 'Fun' }, voice: 'marin', avatar: 'default', avatarUrl: '/avatars/default.webp' });
+    await load();
+    expect((await store.readEvents(sessionId)).filter((event) => event.type === 'visit')).toHaveLength(1);
   });
 });

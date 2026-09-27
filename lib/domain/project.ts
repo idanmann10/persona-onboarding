@@ -1,5 +1,6 @@
 import type { CallEndReason, SessionEvent, Toolkit } from './events';
 import { groupUtterances, type Utterance } from '../voice/transcript';
+import { setupStatus, type SetupStatus } from './onboarding';
 
 type FactEvent = Extract<SessionEvent, { type: 'fact' }>;
 type FactRecord = Omit<FactEvent, 'evidence'> & { evidence: FactEvent['evidence'] | 'superseded' };
@@ -27,7 +28,9 @@ export type TimelineItem =
   | { kind: 'connection_offer'; id: string; toolkit: Toolkit; status: 'pending' | 'connected' | 'declined' | 'failed'; reason?: string }
   | { kind: 'connection_notice'; id: string; toolkit: Toolkit; phase: 'connected' | 'failed' | 'disconnected'; at?: string }
   | { kind: 'automation'; id: string; automationId: string; title: string; schedule: string; instruction?: string; status: 'proposed' | 'active' | 'declined' | 'disabled'; nextRunAt?: string }
-  | { kind: 'automation_notice'; id: string; automationId: string; title: string; phase: 'failed' };
+  | { kind: 'automation_notice'; id: string; automationId: string; title: string; phase: 'failed' }
+  | { kind: 'settings_notice'; id: string; key: string; value: string }
+  | { kind: 'setup_notice'; id: string; phase: 'completed' | 'graduated' };
 
 export interface OnboardingProgress {
   assistantName: { status: SlotStatus; value?: string };
@@ -46,10 +49,14 @@ export interface SessionProjection {
   calls: CallRecord[];
   voiceFragments: Extract<SessionEvent, { type: 'voice_fragment' }>[];
   connections: Record<Toolkit, ConnectionPhase | 'none'>;
+  /** Apps other than Gmail and Calendar, by slug, from the Apps sheet. */
+  apps: Record<string, { name: string; phase: Extract<SessionEvent, { type: 'app_connection' }>['phase'] }>;
   decisions: Record<string, 'messaged' | 'silent'>;
   automations: Array<Extract<TimelineItem, { kind: 'automation' }>>;
   timeline: TimelineItem[];
   onboarding: OnboardingProgress;
+  /** The brief's goal: the four things known, or the user skipped ahead. */
+  setup: SetupStatus;
 }
 
 const ENDED: CallPhase[] = ['ended', 'dropped'];
@@ -57,12 +64,14 @@ const ENDED: CallPhase[] = ['ended', 'dropped'];
 export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
-    connections: { gmail: 'none', calendar: 'none' }, decisions: {}, automations: [], timeline: [],
+    connections: { gmail: 'none', calendar: 'none' }, apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
     onboarding: {
       assistantName: { status: 'unknown' }, preferredName: { status: 'unknown' }, need: { status: 'unknown' },
       gmail: 'not_offered', call: 'not_offered', automation: { status: 'none' },
     },
   };
+  let graduated = false;
+  let completedNoticed = false;
   const seen = new Set<string>();
   const calls = new Map<string, CallRecord>();
   const callFor = (callId: string, id: string) => {
@@ -105,6 +114,8 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         state.history.push(current);
         if (event.evidence === 'declined') delete state.facts[event.key];
         else state.facts[event.key] = current;
+        // A change the assistant made with customize (or the retired settings menu) gets a line in the thread.
+        if (/^(customize|settings):/.test(event.sourceEventId)) state.timeline.push({ kind: 'settings_notice', id: event.id, key: event.key, value: event.value });
         break;
       }
       case 'call': {
@@ -149,6 +160,15 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         if (event.phase !== 'declined') state.timeline.push({ kind: 'connection_notice', id: event.id, toolkit: event.toolkit, phase: event.phase, at: event.at });
         break;
       }
+      case 'onboarding':
+        if (!graduated && !completedNoticed) state.timeline.push({ kind: 'setup_notice', id: event.id, phase: 'graduated' });
+        graduated = true;
+        break;
+      case 'app_connection':
+        // A failed reconnect leaves the earlier connection in place.
+        if (event.phase === 'failed' && state.apps[event.app]?.phase === 'connected') break;
+        state.apps[event.app] = { name: event.name, phase: event.phase };
+        break;
       case 'decision':
         state.decisions[event.trigger] = event.outcome;
         break;
@@ -173,9 +193,15 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         break;
       }
     }
+    // The moment the four things are all known (and they didn't skip ahead), setup is done: one line in the thread.
+    if (!graduated && !completedNoticed && (event.type === 'fact' || event.type === 'connection') && setupStatus(progress(state)).stage === 'complete') {
+      completedNoticed = true;
+      state.timeline.push({ kind: 'setup_notice', id: `setup-complete:${event.id}`, phase: 'completed' });
+    }
   }
   for (const utterance of groupUtterances(state.voiceFragments)) calls.get(utterance.callId)?.utterances.push(utterance);
   state.onboarding = progress(state);
+  state.setup = setupStatus(state.onboarding, { graduated });
   return state;
 }
 

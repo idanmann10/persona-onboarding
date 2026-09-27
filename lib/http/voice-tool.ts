@@ -3,9 +3,11 @@ import { projectSession } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { readSessionCookie } from './session';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
-import { noteDecline, noteDeclineInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext } from '../agent/actions';
+import { customize, customizeInput, noteDecline, noteDeclineInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, graduate, graduateInput } from '../agent/actions';
 import { calendarReadInput, gmailSearchInput, relevantToolkits, runCalendarRead, runGmailSearch, type AccountReadClient } from '../agent/account-tools';
 import { answeredQuestion, userWords } from '../agent/turn';
+import { withVoiceToolTrace } from '../observability/voice-tool-trace';
+import type { TraceSink } from '../observability/trace';
 
 interface Store extends IpQuotaStore {
   sessionExists(id: string): Promise<boolean>;
@@ -14,9 +16,10 @@ interface Store extends IpQuotaStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   getActiveConnection(id: string, toolkit: Toolkit): Promise<string | undefined>;
   consumeQuota(id: string, scope: 'tool', limit: number, windowSeconds: number): Promise<boolean>;
+  appendTrace?: TraceSink['appendTrace'];
 }
 
-export const VOICE_TOOL_NAMES = ['remember', 'note_decline', 'show_connection', 'search_gmail', 'read_calendar_window'] as const;
+export const VOICE_TOOL_NAMES = ['remember', 'customize', 'note_decline', 'graduate', 'show_connection', 'search_gmail', 'read_calendar_window'] as const;
 
 /**
  * Runs a function call that GPT-Live's backend requested, forwarded by the browser. The browser is not
@@ -24,7 +27,7 @@ export const VOICE_TOOL_NAMES = ['remember', 'note_decline', 'show_connection', 
  * gates as text chat decide what happens.
  */
 export function createVoiceToolHandler(store: Store, env: Record<string, string | undefined>, composio?: AccountReadClient) {
-  return async (request: Request): Promise<Response> => {
+  return withVoiceToolTrace(store, async (request: Request): Promise<Response> => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
     const sessionId = readSessionCookie(request);
     if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) return new Response('Session required', { status: 401 });
@@ -52,10 +55,21 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
       connected: { gmail: Boolean(accounts.gmail), calendar: Boolean(accounts.calendar) },
     };
     const relevant = relevantToolkits({ userTexts: words, lastAssistant: answeredQuestion(state) });
+    const record = (toolkit: Toolkit, items: number) => store.appendEvent(sessionId, { id: `read:${callId}:${callItemId}`, at: new Date().toISOString(), type: 'account_read', toolkit, items });
     const invalid = () => Response.json({ output: JSON.stringify({ status: 'invalid_arguments' }) });
     if (name === 'remember') {
       const parsed = rememberInput.safeParse(args);
       return parsed.success ? Response.json({ output: JSON.stringify(await remember(context, parsed.data)) }) : invalid();
+    }
+    if (name === 'customize') {
+      const parsed = customizeInput.safeParse(args);
+      if (!parsed.success) return invalid();
+      const result = await customize(context, parsed.data);
+      return Response.json({ output: JSON.stringify(result), ...(result.status === 'saved' ? { ui: { type: 'customize' } } : {}) });
+    }
+    if (name === 'graduate') {
+      const parsed = graduateInput.safeParse(args);
+      return parsed.success ? Response.json({ output: JSON.stringify(await graduate(context, parsed.data)) }) : invalid();
     }
     if (name === 'note_decline') {
       const parsed = noteDeclineInput.safeParse(args);
@@ -73,9 +87,9 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
     if (!relevant.includes(toolkit)) return Response.json({ output: JSON.stringify({ status: 'not_relevant', note: 'Read the account only for a request the user made about it.' }) });
     if (name === 'search_gmail') {
       const parsed = gmailSearchInput.safeParse(args);
-      return parsed.success ? Response.json({ output: JSON.stringify(await runGmailSearch(composio, accountId, sessionId, parsed.data)) }) : invalid();
+      return parsed.success ? Response.json({ output: JSON.stringify(await runGmailSearch(composio, accountId, sessionId, parsed.data, record)) }) : invalid();
     }
     const parsed = calendarReadInput.safeParse(args);
-    return parsed.success ? Response.json({ output: JSON.stringify(await runCalendarRead(composio, accountId, sessionId, parsed.data)) }) : invalid();
-  };
+    return parsed.success ? Response.json({ output: JSON.stringify(await runCalendarRead(composio, accountId, sessionId, parsed.data, record)) }) : invalid();
+  });
 }
