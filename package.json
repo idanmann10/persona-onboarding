@@ -9,6 +9,8 @@
     "db:migrate": "bun scripts/migrate.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "eval:sim": "bun evals/run-sim.ts",
+    "eval:sim:show": "bun evals/show-sim.ts",
     "eval:text": "bun evals/run-text.ts",
     "eval:app": "bun evals/run-app.ts",
     "eval:show": "bun evals/show.ts",
