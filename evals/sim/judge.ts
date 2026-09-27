@@ -1,6 +1,7 @@
 import type { SessionEvent, Toolkit } from '../../lib/domain/events';
 import { projectSession } from '../../lib/domain/project';
 import { END_REASONS } from '../../lib/agent/turn';
+import { settingsLine, setupLine } from './screen';
 
 export const JEV_URL = 'https://api.typesafe.ai/v1/systemone';
 export const JEV_MODEL = 'jev-latest';
@@ -22,7 +23,7 @@ export interface SimJudgment {
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
 const flat = (text: string) => text.replace(/\s*\n+\s*/g, ' / ').trim();
 
-/** The conversation as the judge reads it: typed and spoken lines, and the cards with what became of them. */
+/** The conversation as the judge reads it: typed and spoken lines, the cards with what became of them, and the thread's status lines. */
 export function transcriptLines(events: SessionEvent[]): string[] {
   const lines: string[] = [];
   for (const item of projectSession(events).timeline) {
@@ -52,6 +53,15 @@ export function transcriptLines(events: SessionEvent[]): string[] {
       case 'automation_notice':
         lines.push(`[card] "${item.title}" could not run`);
         break;
+      case 'settings_notice':
+        lines.push(`[card] ${settingsLine(item.key, item.value)}`);
+        break;
+      case 'setup_notice':
+        lines.push(`[card] ${setupLine(item.phase)}`);
+        break;
+      default:
+        // Everything the thread shows goes to the judge: a new kind fails the typecheck here.
+        item satisfies never;
     }
   }
   return lines;

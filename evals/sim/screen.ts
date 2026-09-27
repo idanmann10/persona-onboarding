@@ -1,5 +1,6 @@
 import type { CallEndReason, Toolkit } from '../../lib/domain/events';
 import type { CallRecord, SessionProjection, TimelineItem } from '../../lib/domain/project';
+import { PERSONALITIES, VOICES, avatarPalette, isPersonalityId, isVoiceId } from '../../lib/domain/persona';
 import type { SimControl } from './user';
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
@@ -19,6 +20,18 @@ const ENDINGS: Record<CallEndReason, string> = {
   content: 'Call stopped',
   setup_failed: "Couldn't connect",
 };
+
+/** The thread's line for a change the assistant made to itself with customize (mirrors app/thread.tsx). */
+export function settingsLine(key: string, value: string): string {
+  if (key === 'assistant_name') return `Renamed to ${value}`;
+  if (key === 'avatar') return /^(https?:|\/|data:image\/)/.test(value) ? 'New photo' : `New look: ${avatarPalette(value).label}`;
+  if (key === 'personality') return `Personality: ${isPersonalityId(value) ? PERSONALITIES[value].label : 'your own description'}`;
+  if (key === 'voice') return `Call voice: ${isVoiceId(value) ? VOICES[value].label : value}`;
+  return 'Settings updated';
+}
+
+/** The thread's line when setup is done or the person skipped the rest of it (mirrors app/thread.tsx). */
+export const setupLine = (phase: 'completed' | 'graduated') => (phase === 'completed' ? "You're all set up" : 'Skipped the rest of setup');
 
 /** The name the app shows for the assistant (mirrors app/page.tsx). */
 export function assistantName(state: SessionProjection): string {
@@ -74,7 +87,7 @@ function renderItem(item: TimelineItem, name: string, liveCallId?: string): stri
       if (item.status === 'connected') return undefined;
       if (item.status === 'declined') return `(Skipped ${toolkit} for now)`;
       const connect = item.status === 'failed' ? 'Try again' : `Connect ${toolkit}`;
-      return `[Card] Connect ${toolkit} — ${item.reason || `So ${name} can help with this.`} Read-only, and you can disconnect anytime. — buttons: ${connect} (${CONNECT[item.toolkit]}) / Not now (${NOT_NOW[item.toolkit]})`;
+      return `[Card] Connect ${toolkit} — ${item.reason || `So ${name} can help with this.`} Read-only. Start over disconnects it. — buttons: ${connect} (${CONNECT[item.toolkit]}) / Not now (${NOT_NOW[item.toolkit]})`;
     }
     case 'connection_notice': {
       const toolkit = TOOLKIT_NAMES[item.toolkit];
@@ -89,13 +102,22 @@ function renderItem(item: TimelineItem, name: string, liveCallId?: string): stri
     }
     case 'automation_notice':
       return `("${item.title}" couldn't run this time)`;
+    case 'settings_notice':
+      return `(${settingsLine(item.key, item.value)})`;
+    case 'setup_notice':
+      return `(${setupLine(item.phase)})`;
+    default:
+      // Every kind the thread shows must reach the simulated user: a new kind fails the typecheck here.
+      item satisfies never;
+      return undefined;
   }
 }
 
 /**
  * The chat screen as plain text: messages, finished calls with their transcripts, pending cards with
- * the controls to tap, and short status lines for resolved cards. No tool calls or system text: the
- * person sees only what the app shows. A live call is left out here; see renderCallScreen.
+ * the controls to tap, and the thread's short status lines (resolved cards, connected accounts, changes
+ * to the assistant's name or look, the end of setup). No tool calls or system text: the person sees only
+ * what the app shows. A live call is left out here; see renderCallScreen.
  */
 export function renderScreen(state: SessionProjection, options: { liveCallId?: string } = {}): string {
   const name = assistantName(state);
