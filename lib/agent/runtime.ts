@@ -5,9 +5,10 @@ import { createComposioClient } from '../integrations/composio';
 import { resolveIdentityClaim } from '../research/service';
 
 type ResearchStore = Parameters<typeof resolveIdentityClaim>[0];
+type Env = Record<string, string | undefined>;
 
 /** Provider wiring for a turn: only what the configured environment enables. */
-export function turnDependencies(store: TurnDependencies['store'] & ResearchStore, env: Record<string, string | undefined> = process.env): TurnDependencies {
+export function turnDependencies(store: TurnDependencies['store'] & ResearchStore, env: Env = process.env): TurnDependencies {
   return {
     store,
     env,
@@ -18,20 +19,20 @@ export function turnDependencies(store: TurnDependencies['store'] & ResearchStor
   };
 }
 
-export function textModel(env: Record<string, string | undefined> = process.env): { model: LanguageModel; providerOptions: { openai: { reasoningEffort: 'none' | 'low' | 'medium' | 'high' } } } {
+function modelSettings(env: Env, override?: LanguageModel) {
+  if (override) return { model: override };
   const effort = env.OPENAI_REASONING_EFFORT;
   return {
-    model: openai(env.OPENAI_TEXT_MODEL!),
+    model: openai(env.OPENAI_TEXT_MODEL!) as LanguageModel,
     providerOptions: { openai: { reasoningEffort: effort === 'none' || effort === 'medium' || effort === 'high' ? effort : 'low' } },
   };
 }
 
 /** Stream a turn's text. A tool step between two pieces of text gets a paragraph break. */
-export async function* streamTurn(turn: PreparedTurn, env: Record<string, string | undefined> = process.env): AsyncGenerator<string> {
-  const { model, providerOptions } = textModel(env);
+export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): AsyncGenerator<string> {
   const result = streamText({
-    model, system: turn.instructions, messages: turn.messages, tools: turn.tools, allowSystemInMessages: turn.allowSystemInMessages,
-    stopWhen: stepCountIs(4), providerOptions,
+    ...modelSettings(env, override), system: turn.instructions, messages: turn.messages, tools: turn.tools,
+    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: stepCountIs(4),
   });
   let emitted = false;
   let pendingBreak = false;
@@ -45,11 +46,15 @@ export async function* streamTurn(turn: PreparedTurn, env: Record<string, string
   }
 }
 
-export async function generateTurn(turn: PreparedTurn, env: Record<string, string | undefined> = process.env): Promise<string> {
-  const { model, providerOptions } = textModel(env);
-  const result = await generateText({
-    model, system: turn.instructions, messages: turn.messages, tools: turn.tools, allowSystemInMessages: turn.allowSystemInMessages,
-    stopWhen: stepCountIs(4), providerOptions,
+/** The full result (steps, tool calls, usage) for callers that inspect it, such as the scenario replay. */
+export function generateTurnResult(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel) {
+  return generateText({
+    ...modelSettings(env, override), system: turn.instructions, messages: turn.messages, tools: turn.tools,
+    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: stepCountIs(4),
   });
+}
+
+export async function generateTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): Promise<string> {
+  const result = await generateTurnResult(turn, env, override);
   return result.steps.map((step) => step.text.trim()).filter(Boolean).join('\n\n');
 }
