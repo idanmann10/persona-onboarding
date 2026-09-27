@@ -1,5 +1,6 @@
 import type { SessionEvent, Toolkit } from '../../lib/domain/events';
 import type { AutomationRecord } from '../../lib/domain/automation';
+import type { TraceEntry } from '../../lib/observability/trace';
 
 /** An in-memory stand-in for the Postgres store with the same idempotent append semantics. */
 export function createMemoryStore(connected: Partial<Record<Toolkit, string>> = {}) {
@@ -7,10 +8,13 @@ export function createMemoryStore(connected: Partial<Record<Toolkit, string>> = 
   const ids = new Set<string>();
   const reservations = new Set<string>();
   const automations: AutomationRecord[] = [];
+  const traces: TraceEntry[] = [];
   return {
     events,
     connected,
     automations,
+    traces,
+    appendTrace: async (_sessionId: string, entry: TraceEntry) => { traces.push(entry); },
     proposeAutomation: async (sessionId: string, automation: Omit<AutomationRecord, 'sessionId' | 'status' | 'timezone' | 'nextRunAt'>) => {
       automations.push({ ...automation, sessionId, status: 'proposed' });
     },

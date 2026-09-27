@@ -3,6 +3,8 @@ import { openai } from '@ai-sdk/openai';
 import type { PreparedTurn, TurnDependencies } from './turn';
 import { createComposioClient } from '../integrations/composio';
 import { resolveIdentityClaim } from '../research/service';
+import { isTraceSink, type TraceStatus } from '../observability/trace';
+import { turnTracer } from '../observability/turn-trace';
 
 type ResearchStore = Parameters<typeof resolveIdentityClaim>[0];
 type Env = Record<string, string | undefined>;
@@ -12,6 +14,7 @@ export function turnDependencies(store: TurnDependencies['store'] & ResearchStor
   return {
     store,
     env,
+    ...(isTraceSink(store) ? { trace: store } : {}),
     composio: env.COMPOSIO_API_KEY ? createComposioClient(env.COMPOSIO_API_KEY) : undefined,
     resolveIdentity: env.CONTEXT_DEV_API_KEY
       ? (sessionId, userEvent, clue) => resolveIdentityClaim(store, sessionId, userEvent, clue, env.CONTEXT_DEV_API_KEY!)
@@ -65,37 +68,67 @@ function turnSettings(turn: PreparedTurn, env: Env, override?: LanguageModel) {
   };
 }
 
+const failureStatus = (error: unknown): TraceStatus => isTimeout(error) ? 'timeout' : 'error';
+
 /** Stream a turn's text. A tool step between two pieces of text gets a paragraph break. */
 export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): AsyncGenerator<string> {
-  for (let attempt = 1; ; attempt++) {
-    let emitted = false;
-    try {
-      const result = streamText(turnSettings(turn, env, override));
-      let pendingBreak = false;
-      for await (const part of result.fullStream) {
-        if (part.type === 'finish-step') pendingBreak = emitted;
-        else if (part.type === 'text-delta' && part.text) {
-          if (pendingBreak) { yield '\n\n'; pendingBreak = false; }
-          emitted = true;
-          yield part.text;
-        } else if (part.type === 'error') throw part.error;
+  const tracer = turnTracer(turn.trace);
+  tracer.start();
+  let reply = '';
+  let firstTokenMs: number | undefined;
+  let outcome: { status: TraceStatus; error?: unknown } = { status: 'error', error: 'The reply stream was closed before it finished' };
+  try {
+    for (let attempt = 1; ; attempt++) {
+      let emitted = false;
+      try {
+        const result = streamText({ ...turnSettings(turn, env, override), onStepEnd: tracer.step });
+        let pendingBreak = false;
+        for await (const part of result.fullStream) {
+          if (part.type === 'finish-step') pendingBreak = emitted;
+          else if (part.type === 'text-delta' && part.text) {
+            if (pendingBreak) { yield '\n\n'; reply += '\n\n'; pendingBreak = false; }
+            emitted = true;
+            firstTokenMs ??= tracer.elapsed();
+            reply += part.text;
+            yield part.text;
+          } else if (part.type === 'error') throw part.error;
+        }
+        outcome = { status: 'ok' };
+        return;
+      } catch (error) {
+        // Tools are idempotent per turn, so a stall before any text can safely run the turn again.
+        if (emitted || attempt > 1 || !isTimeout(error)) throw error;
+        tracer.stalled(attempt);
+        console.warn('Model request stalled before replying; retrying once');
       }
-      return;
-    } catch (error) {
-      // Tools are idempotent per turn, so a stall before any text can safely run the turn again.
-      if (emitted || attempt > 1 || !isTimeout(error)) throw error;
-      console.warn('Model request stalled before replying; retrying once');
     }
+  } catch (error) {
+    outcome = { status: failureStatus(error), error };
+    throw error;
+  } finally {
+    await tracer.end({ ...outcome, reply, firstTokenMs });
   }
 }
 
 /** The full result (steps, tool calls, usage) for callers that inspect it, such as the scenario replay. */
 export async function generateTurnResult(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel) {
-  try { return await generateText(turnSettings(turn, env, override)); }
-  catch (error) {
-    if (!isTimeout(error)) throw error;
-    console.warn('Model request stalled; retrying once');
-    return generateText(turnSettings(turn, env, override));
+  const tracer = turnTracer(turn.trace);
+  tracer.start();
+  const run = () => generateText({ ...turnSettings(turn, env, override), onStepEnd: tracer.step });
+  try {
+    let result: Awaited<ReturnType<typeof run>>;
+    try { result = await run(); }
+    catch (error) {
+      if (!isTimeout(error)) throw error;
+      tracer.stalled(1);
+      console.warn('Model request stalled; retrying once');
+      result = await run();
+    }
+    await tracer.end({ status: 'ok', reply: result.steps.map((step) => step.text.trim()).filter(Boolean).join('\n\n') });
+    return result;
+  } catch (error) {
+    await tracer.end({ status: failureStatus(error), error });
+    throw error;
   }
 }
 
