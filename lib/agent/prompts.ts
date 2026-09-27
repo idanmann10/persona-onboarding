@@ -108,6 +108,10 @@ function setupLine(setup: SetupStatus, voice: boolean, stalledFor = 0): string {
   if (setup.stage === 'graduated') return "Setup: they chose to skip the rest and get started. Don't ask setup questions; just help, and offer Gmail only if a request needs it.";
   if (setup.stage === 'complete') return 'Setup: done, everything is known. No more setup questions; just help.';
   const open = setup.open.map((item) => SETUP_LABELS[item]).join(', ');
+  // Once asks have gone unanswered, the next move is the finish-or-skip choice, then nothing: say so here
+  // too, or the model follows an item from this line instead of the nudge.
+  if (!voice && stalledFor === 3) return `Setup: still open: ${open}. Next up: give them the choice to finish setting you up now (about 30 seconds) or skip it for now.`;
+  if (!voice && stalledFor > 3) return `Setup: still open: ${open}. Next up: nothing; they've been asked enough, so just help.`;
   const focus = setupFocus(setup, voice ? 0 : stalledFor);
   const next = focus ? (voice ? NEXT_UP[focus].voice : NEXT_UP[focus].text) : "what's left is already on their screen; don't ask again, wait for them.";
   return `Setup: still open: ${open}. Next up: ${next}`;
