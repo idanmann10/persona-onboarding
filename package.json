@@ -16,7 +16,8 @@
     "eval:show": "bun evals/show.ts",
     "funnel": "bun scripts/funnel.ts",
     "prompt:show": "bun scripts/show-prompt.ts",
-    "ci:local": "node scripts/ci-local.mjs"
+    "ci:local": "node scripts/ci-local.mjs",
+    "trace:export": "bun scripts/export-trace.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.78",
