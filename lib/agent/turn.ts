@@ -4,7 +4,7 @@ import type { CallEndReason, SessionEvent, Toolkit } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { buildSystemPrompt } from './prompts';
-import { noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
+import { customize, customizeInput, noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore } from './actions';
 import type { AutomationStore } from '../domain/automation';
 import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
 import { personalityLine, personaSettings } from '../domain/persona';
@@ -137,9 +137,14 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
   const tools: ToolSet = {
     remember: tool({
-      description: 'Save something new or changed: a name for you (assistant_name), what to call the user (preferred_name), what they want help with (current_need), or how they want you to come across (personality). Use declined only when they refuse to share that exact thing.',
+      description: 'Save something new or changed: what to call the user (preferred_name) or what they want help with (current_need). Use declined only when they refuse to share that exact thing.',
       inputSchema: rememberInput,
       execute: (input) => remember(context, input),
+    }),
+    customize: tool({
+      description: 'Change your own name, look (avatar), personality or call voice when the user names you or asks for a change. Send only what changes.',
+      inputSchema: customizeInput,
+      execute: (input) => customize(context, input),
     }),
     note_decline: tool({
       description: 'Record that the user said no to a call, to connecting Gmail, or to connecting Google Calendar, so it is not offered again.',

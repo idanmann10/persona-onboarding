@@ -106,7 +106,8 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         state.history.push(current);
         if (event.evidence === 'declined') delete state.facts[event.key];
         else state.facts[event.key] = current;
-        if (event.sourceEventId.startsWith('settings:')) state.timeline.push({ kind: 'settings_notice', id: event.id, key: event.key, value: event.value });
+        // A change the assistant made with customize (or the retired settings menu) gets a line in the thread.
+        if (/^(customize|settings):/.test(event.sourceEventId)) state.timeline.push({ kind: 'settings_notice', id: event.id, key: event.key, value: event.value });
         break;
       }
       case 'call': {

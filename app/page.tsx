@@ -4,13 +4,12 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type Keyboard
 import type { OnboardingProgress, TimelineItem } from '@/lib/domain/project';
 import { reconcileFailedTurn } from '@/lib/ui/reconcile';
 import { startBrowserCall, type VoiceController, type VoiceCallbacks } from '@/lib/voice/client';
-import { PERSONALITIES, VOICES, isPersonalityId, isVoiceId, type PersonaSettings } from '@/lib/domain/persona';
-import { Bubble, duration, TimelineEntry, type Toolkit } from './thread';
+import type { PersonaSettings } from '@/lib/domain/persona';
+import { assistantGroupEnds, Bubble, duration, orbStyle, TimelineEntry, type Toolkit } from './thread';
 
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
 type FollowUpRequest = { kind: 'call_ended'; callId: string } | { kind: 'connection'; toolkit: Toolkit; acknowledge?: boolean };
 type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: PersonaSettings; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean };
-type SettingsChange = { assistantName?: string; personality?: string | { custom: string }; voice?: string };
 type Caption = { speaker: 'user' | 'assistant'; text: string };
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
@@ -29,14 +28,7 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState('');
-  const [capabilities, setCapabilities] = useState({ text: false, voice: false, calendar: false, gmail: false });
-  const [connections, setConnections] = useState({ calendar: false, gmail: false });
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [settings, setSettings] = useState<PersonaSettings | null>(null);
-  const [nameDraft, setNameDraft] = useState('');
-  const [customDraft, setCustomDraft] = useState('');
-  const [customOpen, setCustomOpen] = useState(false);
-  const [savingSettings, setSavingSettings] = useState(false);
+  const [avatar, setAvatar] = useState<string | undefined>();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [connecting, setConnecting] = useState<Toolkit | null>(null);
@@ -58,8 +50,7 @@ export default function Home() {
     const snapshot = await response.json() as Snapshot;
     setTimeline(snapshot.timeline ?? timelineFromMessages(snapshot.messages));
     if (snapshot.progress) setProgress(snapshot.progress);
-    if (snapshot.settings) setSettings(snapshot.settings);
-    void fetch('/api/connections', { cache: 'no-store' }).then((result) => result.ok ? result.json() as Promise<{ calendar: boolean; gmail: boolean }> : null).then((status) => { if (status) setConnections(status); }).catch(() => undefined);
+    if (snapshot.settings) setAvatar(snapshot.settings.avatar);
     return snapshot;
   }, []);
 
@@ -95,10 +86,6 @@ export default function Home() {
       })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'The conversation could not be loaded.'); })
       .finally(() => { if (active) setLoading(false); });
-    fetch('/api/capabilities', { cache: 'no-store' })
-      .then((response) => response.json() as Promise<typeof capabilities>)
-      .then((result) => { if (active) setCapabilities(result); })
-      .catch(() => undefined);
     return () => { active = false; };
   }, [refresh, runFollowUps]);
 
@@ -187,7 +174,7 @@ export default function Home() {
 
   async function startCall() {
     if (voiceRef.current) { await voiceRef.current.close(); return; }
-    if (!capabilities.voice || callPhase !== 'idle') return;
+    if (callPhase !== 'idle') return;
     setError('');
     setCaptions([]);
     let callId: string | undefined;
@@ -227,47 +214,19 @@ export default function Home() {
     }
   }
 
-  function toggleMenu() {
-    setMenuOpen((open) => {
-      if (!open) {
-        setNameDraft(settings?.assistantName ?? '');
-        setCustomDraft(settings?.personality.text ?? '');
-        setCustomOpen(settings?.personality.id === 'custom');
-      }
-      return !open;
-    });
-    setConfirmDelete(false);
-  }
-
-  async function saveSettings(change: SettingsChange) {
-    if (savingSettings) return;
-    setSavingSettings(true);
-    setError('');
-    try {
-      const response = await post('/api/settings', change);
-      if (!response.ok) throw new Error(response.status === 400 ? "That didn't look right. Use a short name or description, without links." : response.status === 429 ? 'Too many changes right now. Try again shortly.' : 'That change did not save. Please try again.');
-      const result = await response.json() as { settings: PersonaSettings; progress: OnboardingProgress };
-      setSettings(result.settings);
-      setProgress(result.progress);
-      if (change.personality !== undefined) setCustomOpen(typeof change.personality !== 'string');
-      await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'That change did not save.'); }
-    finally { setSavingSettings(false); }
-  }
-
   async function declineCall() {
     await fetch('/api/voice/offer', { method: 'DELETE' }).catch(() => undefined);
     await refresh().catch(() => undefined);
   }
 
   async function connect(toolkit: Toolkit) {
-    if (!capabilities[toolkit] || connecting) return;
+    if (connecting) return;
     setConnecting(toolkit);
     setError('');
     const popup = window.open('about:blank', 'persona-connect', 'popup,width=520,height=720');
     try {
       const response = await post('/api/connections', { toolkit });
-      if (!response.ok) throw new Error('The connection could not be started.');
+      if (!response.ok) throw new Error((await response.text().catch(() => '')).trim() || 'The connection could not be started.');
       const { redirectUrl } = await response.json() as { redirectUrl: string };
       if (popup?.closed) {
         // The user closed the sign-in window while it was loading: treat it as cancelled.
@@ -311,100 +270,48 @@ export default function Home() {
     await refresh().catch(() => undefined);
   }
 
-  async function disconnect(toolkit: Toolkit) {
-    if (connecting) return;
-    setConnecting(toolkit);
-    setError('');
-    try {
-      const response = await post('/api/connections', { toolkit }, 'DELETE');
-      if (!response.ok) throw new Error('The account could not be disconnected.');
-      await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The account could not be disconnected.'); }
-    finally { setConnecting(null); }
-  }
-
-  async function deleteConversation() {
-    if (!confirmDelete) { setConfirmDelete(true); return; }
+  /** Start over: clears the conversation and revokes connected accounts, then reloads a fresh chat. */
+  async function startOver() {
     if (callPhase !== 'idle') return;
     setDeleting(true);
     setError('');
     try {
       const response = await fetch('/api/session', { method: 'DELETE' });
-      if (!response.ok) throw new Error('The conversation could not be deleted. Please try again.');
-      window.location.assign('/');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Deletion failed.'); setDeleting(false); }
+      if (!response.ok) throw new Error((await response.text().catch(() => '')).trim() || 'The conversation could not be cleared. Please try again.');
+      window.location.reload();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Starting over failed.'); setDeleting(false); setConfirmDelete(false); }
   }
 
   const onCall = callPhase !== 'idle';
   const busy = sending || loading || deleting;
+  const look = orbStyle(avatar);
+  const groupEnds = assistantGroupEnds(timeline, thinking && !draft);
   const callLabel = callPhase === 'active' ? 'Hang up' : callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending…' : 'Call';
 
   return (
     <main className="app">
       <header className="topbar">
-        <button type="button" className="identity" onClick={toggleMenu} aria-label={`${assistantName}: name, personality and voice`}>
-          <span className="orb" aria-hidden="true" />
+        <div className="identity">
+          <span className="orb" style={look} aria-hidden="true" />
           <span className="identity-text"><strong>{assistantName}</strong><small>{callPhase === 'active' ? `On a call · ${duration(callStartedAt)}` : assistantName === 'Persona' ? 'Your new assistant' : 'Your Persona assistant'}</small></span>
-        </button>
-        <div className="topbar-actions">
-          <button className={`call-button${onCall ? ' live' : ''}`} type="button" onClick={() => void startCall()} disabled={(!capabilities.voice && !onCall) || callPhase === 'connecting' || callPhase === 'ending'} title={capabilities.voice ? 'Start or end a browser call' : 'Voice needs a server API key'}>
-            <span aria-hidden="true">✆</span> {callLabel}{!capabilities.voice && !onCall ? <span className="soon"> · setup needed</span> : null}
-          </button>
-          <button className="menu-button" type="button" aria-label="Settings" aria-expanded={menuOpen} onClick={toggleMenu}>⋯</button>
         </div>
-        {menuOpen ? (
-          <section className="menu" aria-label="Settings">
-            <div className="menu-section">
-              <strong>Your assistant</strong>
-              <p>Change these any time, or just tell {assistantName} in the chat.</p>
-              <form className="setting" onSubmit={(event) => { event.preventDefault(); void saveSettings({ assistantName: nameDraft }); }}>
-                <label className="setting-label" htmlFor="assistant-name">Name</label>
-                <div className="inline-field">
-                  <input id="assistant-name" value={nameDraft} maxLength={40} placeholder="Give me a name" autoComplete="off" onChange={(event) => setNameDraft(event.target.value)} />
-                  <button type="submit" disabled={savingSettings || !nameDraft.trim() || nameDraft.trim() === settings?.assistantName}>Save</button>
-                </div>
-              </form>
-              <div className="setting">
-                <span className="setting-label" id="personality-label">Personality</span>
-                <div className="chips" role="group" aria-labelledby="personality-label">
-                  {Object.entries(PERSONALITIES).map(([id, preset]) => (
-                    <button key={id} type="button" className={`chip${!customOpen && settings?.personality.id === id ? ' active' : ''}`} aria-pressed={!customOpen && settings?.personality.id === id} disabled={savingSettings} onClick={() => { setCustomOpen(false); if (settings?.personality.id !== id) void saveSettings({ personality: id }); }}>{preset.label}</button>
-                  ))}
-                  <button type="button" className={`chip${customOpen ? ' active' : ''}`} aria-pressed={customOpen} disabled={savingSettings} onClick={() => setCustomOpen(true)}>Your own</button>
-                </div>
-                {customOpen ? (
-                  <form className="inline-field" onSubmit={(event) => { event.preventDefault(); void saveSettings({ personality: { custom: customDraft } }); }}>
-                    <input aria-label="Describe the personality you want" value={customDraft} maxLength={160} placeholder="e.g. calm, dry humor, no exclamation marks" autoComplete="off" onChange={(event) => setCustomDraft(event.target.value)} />
-                    <button type="submit" disabled={savingSettings || customDraft.trim().length < 3 || (settings?.personality.id === 'custom' && customDraft.trim() === settings.personality.text)}>Save</button>
-                  </form>
-                ) : <small className="setting-hint">{settings && isPersonalityId(settings.personality.id) ? PERSONALITIES[settings.personality.id].hint : ''}</small>}
-              </div>
-              <div className="setting">
-                <span className="setting-label" id="voice-label">Call voice</span>
-                <div className="chips" role="group" aria-labelledby="voice-label">
-                  {Object.entries(VOICES).map(([id, voice]) => (
-                    <button key={id} type="button" className={`chip${settings?.voice === id ? ' active' : ''}`} aria-pressed={settings?.voice === id} disabled={savingSettings} onClick={() => { if (settings?.voice !== id) void saveSettings({ voice: id }); }}>{voice.label}</button>
-                  ))}
-                </div>
-                <small className="setting-hint">{[settings && isVoiceId(settings.voice) ? VOICES[settings.voice].hint : '', onCall ? 'Changes apply from your next call.' : ''].filter(Boolean).join('. ')}</small>
-              </div>
-            </div>
-            <strong>Connections</strong>
-            <p>Optional and read-only. Connect an account only when it helps.</p>
-            {(['gmail', 'calendar'] as const).map((toolkit) => (
-              <div className="menu-row" key={toolkit}>
-                <span>{TOOLKIT_NAMES[toolkit]}</span>
-                <button type="button" disabled={(!connections[toolkit] && !capabilities[toolkit]) || Boolean(connecting)} onClick={() => void (connections[toolkit] ? disconnect(toolkit) : connect(toolkit))}>
-                  {connecting === toolkit ? 'Working…' : connections[toolkit] ? 'Disconnect' : !capabilities[toolkit] ? 'Setup needed' : 'Connect'}
-                </button>
-              </div>
-            ))}
-            <div className="menu-row danger">
-              <span>{confirmDelete ? 'This also removes connected accounts.' : 'Delete this conversation'}</span>
-              <button type="button" disabled={deleting || onCall} onClick={() => void deleteConversation()}>{deleting ? 'Deleting…' : confirmDelete ? 'Confirm delete' : 'Delete'}</button>
-            </div>
-          </section>
-        ) : null}
+        <div className="topbar-actions">
+          {confirmDelete ? (
+            <span className="confirm" role="group" aria-label="Start over">
+              <span className="confirm-text">Clear the chat and disconnect accounts?</span>
+              <button type="button" className="header-link danger" disabled={deleting || onCall} onClick={() => void startOver()}>{deleting ? 'Clearing…' : 'Start over'}</button>
+              <button type="button" className="header-link" disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancel</button>
+            </span>
+          ) : (
+            <>
+              <a className="header-link" href="/inspect" target="_blank" rel="noreferrer">Agent log</a>
+              <button type="button" className="header-link" disabled={busy || onCall} onClick={() => { setError(''); setConfirmDelete(true); }}>Start over</button>
+            </>
+          )}
+          <button className={`call-button${onCall ? ' live' : ''}`} type="button" onClick={() => void startCall()} disabled={callPhase === 'connecting' || callPhase === 'ending'} title="Start or end a browser call">
+            <span aria-hidden="true">✆</span> {callLabel}
+          </button>
+        </div>
       </header>
 
       {onCall ? (
@@ -419,12 +326,13 @@ export default function Home() {
       <div className="thread" aria-live="polite">
         <div className="thread-inner">
           {loading ? <p className="loading">Loading your conversation…</p> : null}
-          {timeline.map((item) => (
-            <TimelineEntry key={item.id} item={item} assistantName={assistantName} liveCallId={liveCallId} busy={busy || Boolean(connecting) || (item.kind === 'call_offer' && onCall)} connectable={{ gmail: capabilities.gmail, calendar: capabilities.calendar }}
+          {timeline.map((item, index) => (
+            <TimelineEntry key={item.id} item={item} assistantName={assistantName} liveCallId={liveCallId} busy={busy || Boolean(connecting) || (item.kind === 'call_offer' && onCall)}
+              look={look} orb={groupEnds.has(index) ? look : undefined}
               onAnswer={() => void startCall()} onDeclineCall={() => void declineCall()} onConnect={(toolkit) => void connect(toolkit)} onDeclineConnection={(toolkit) => void declineConnection(toolkit)} onAutomation={(action, id) => void automation(action, id)} />
           ))}
-          {draft ? <><Bubble speaker="user" text={draft.user.text} /><Bubble speaker="assistant" text={draft.assistant.text} pending /></> : null}
-          {thinking && !draft ? <Bubble speaker="assistant" text="" /> : null}
+          {draft ? <><Bubble speaker="user" text={draft.user.text} /><Bubble speaker="assistant" text={draft.assistant.text} pending orb={look} /></> : null}
+          {thinking && !draft ? <Bubble speaker="assistant" text="" orb={look} /> : null}
           <div ref={endRef} />
         </div>
       </div>

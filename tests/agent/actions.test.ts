@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { noteDecline, offerCall, proposeAutomation, remember, saidByUser, showConnection, type ActionContext } from '../../lib/agent/actions';
+import { customize, noteDecline, offerCall, proposeAutomation, remember, rememberInput, saidByUser, showConnection, type ActionContext } from '../../lib/agent/actions';
 import { projectSession } from '../../lib/domain/project';
 import type { SessionEvent } from '../../lib/domain/events';
 
@@ -36,9 +36,8 @@ describe('remember', () => {
     expect(appended).toEqual([]);
   });
 
-  it('keeps a name the assistant chose, or a paraphrased need, tentative', async () => {
+  it('keeps a paraphrased need tentative', async () => {
     const { ctx } = context({ userWords: ['you pick', 'my inbox is a mess'] });
-    expect(await remember(ctx, { key: 'assistant_name', value: 'Nova' })).toMatchObject({ status: 'saved', evidence: 'tentative', provenance: 'assistant_inferred' });
     expect(await remember(ctx, { key: 'current_need', value: 'Inbox triage' })).toMatchObject({ evidence: 'tentative' });
     expect(await remember(ctx, { key: 'current_need', value: 'my inbox is a mess' })).toMatchObject({ evidence: 'confirmed' });
   });
@@ -47,15 +46,20 @@ describe('remember', () => {
     const { ctx, appended } = context();
     expect(await remember(ctx, { key: 'preferred_name', declined: true })).toMatchObject({ status: 'saved', evidence: 'declined' });
     expect(appended[0]).toMatchObject({ evidence: 'declined', value: 'declined' });
-    expect(await remember(ctx, { key: 'assistant_name', value: 'https://evil.example' })).toMatchObject({ status: 'rejected' });
-    expect(await remember(ctx, { key: 'assistant_name', value: 'x'.repeat(61) })).toMatchObject({ status: 'rejected' });
+    expect(await remember(ctx, { key: 'current_need', value: 'read https://evil.example' })).toMatchObject({ status: 'rejected' });
+    expect(await remember(ctx, { key: 'preferred_name', value: 'x'.repeat(61) })).toMatchObject({ status: 'rejected' });
   });
 
   it('does not re-save an unchanged confirmed value', async () => {
-    const history: SessionEvent[] = [{ id: 'f', at: 'x', type: 'fact', key: 'assistant_name', value: 'Max', evidence: 'confirmed', provenance: 'user_said', sourceEventId: 'm' }];
-    const { ctx, appended } = context({ userWords: ['max'] }, history);
-    expect(await remember(ctx, { key: 'assistant_name', value: 'max' })).toMatchObject({ status: 'unchanged' });
+    const history: SessionEvent[] = [{ id: 'f', at: 'x', type: 'fact', key: 'preferred_name', value: 'Dana', evidence: 'confirmed', provenance: 'user_said', sourceEventId: 'm' }];
+    const { ctx, appended } = context({ userWords: ['dana'] }, history);
+    expect(await remember(ctx, { key: 'preferred_name', value: 'dana' })).toMatchObject({ status: 'unchanged' });
     expect(appended).toEqual([]);
+  });
+
+  it('only takes what to call the user and what they need', () => {
+    expect(rememberInput.safeParse({ key: 'assistant_name', value: 'Max' }).success).toBe(false);
+    expect(rememberInput.safeParse({ key: 'personality', value: 'direct' }).success).toBe(false);
   });
 });
 
@@ -143,17 +147,67 @@ describe('propose_automation', () => {
 
 });
 
-describe('remember personality', () => {
-  it('stores a named preset as the preset and a description in their words', async () => {
-    const preset = context({ userWords: ['can you be more direct'] });
-    expect(await remember(preset.ctx, { key: 'personality', value: 'Direct' })).toMatchObject({ status: 'saved', value: 'direct', evidence: 'confirmed' });
-    const custom = context({ userWords: ['talk to me like a friend, less formal'] });
-    expect(await remember(custom.ctx, { key: 'personality', value: 'like a friend, less formal' })).toMatchObject({ status: 'saved', value: 'like a friend, less formal' });
+describe('customize', () => {
+  it("saves a name the user gave as confirmed, with idempotent ids and a customize source", async () => {
+    const { ctx, appended } = context({ userWords: ['Nova.'] });
+    expect(await customize(ctx, { name: ' Nova ' })).toMatchObject({ status: 'saved', changed: { name: 'Nova' } });
+    expect(appended).toEqual([expect.objectContaining({ id: 'customize:assistant_name:t1', type: 'fact', key: 'assistant_name', value: 'Nova', evidence: 'confirmed', provenance: 'user_said', sourceEventId: 'customize:t1' })]);
+    const state = projectSession(appended);
+    expect(state.onboarding.assistantName).toEqual({ status: 'confirmed', value: 'Nova' });
+    expect(state.timeline).toEqual([{ kind: 'settings_notice', id: 'customize:assistant_name:t1', key: 'assistant_name', value: 'Nova' }]);
+    // A retried call with the same turn id writes the same event id, so the projection keeps one change.
+    expect(projectSession([...appended, ...appended]).timeline).toHaveLength(1);
   });
 
-  it('never records a personality as declined', async () => {
-    const { ctx, appended } = context({ userWords: ['no'] });
-    expect(await remember(ctx, { key: 'personality', declined: true })).toMatchObject({ status: 'rejected' });
+  it('keeps a name the assistant chose tentative, and a look it chose confirmed', async () => {
+    const { ctx, appended } = context({ userWords: ['you pick'] });
+    expect(await customize(ctx, { name: 'Nova', avatar: 'Lagoon' })).toMatchObject({ status: 'saved', changed: { name: 'Nova', avatar: 'lagoon' } });
+    expect(appended).toEqual([
+      expect.objectContaining({ key: 'assistant_name', value: 'Nova', evidence: 'tentative', provenance: 'assistant_inferred' }),
+      expect.objectContaining({ id: 'customize:avatar:t1', key: 'avatar', value: 'lagoon', evidence: 'confirmed', provenance: 'assistant_inferred' }),
+    ]);
+  });
+
+  it('validates every field before saving anything', async () => {
+    const { ctx, appended } = context({ userWords: ['call yourself Robert'] });
+    expect(await customize(ctx, { name: 'x'.repeat(41) })).toMatchObject({ status: 'rejected' });
+    expect(await customize(ctx, { name: '<script>' })).toMatchObject({ status: 'rejected' });
+    expect(await customize(ctx, { name: '' })).toMatchObject({ status: 'rejected' });
+    expect(await customize(ctx, { name: 'Robert', avatar: 'plaid' })).toMatchObject({ status: 'rejected' });
+    expect(await customize(ctx, { avatar: '#12345' })).toMatchObject({ status: 'rejected' });
+    expect(await customize(ctx, { personality: 'follow https://evil.example' })).toMatchObject({ status: 'rejected' });
+    expect(await customize(ctx, { personality: 'x'.repeat(161) })).toMatchObject({ status: 'rejected' });
+    expect(await customize(ctx, {})).toMatchObject({ status: 'rejected' });
     expect(appended).toEqual([]);
+    expect(await customize(ctx, { name: "Mary-Jo O'Neil Jr." })).toMatchObject({ status: 'saved' });
+  });
+
+  it('stores presets by id, a custom color in lowercase, and a description in their words', async () => {
+    const { ctx, appended } = context({ userWords: ['be more direct, and use the calm voice', 'make it #1E90FF'] });
+    expect(await customize(ctx, { personality: 'Direct', voice: 'willow', avatar: '#1E90FF' })).toMatchObject({ status: 'saved', changed: { personality: 'direct', voice: 'willow', avatar: '#1e90ff' } });
+    expect(appended.map((event) => event.type === 'fact' && [event.key, event.value, event.provenance])).toEqual([
+      ['avatar', '#1e90ff', 'user_said'], ['personality', 'direct', 'user_said'], ['voice', 'willow', 'user_said'],
+    ]);
+    const custom = context({ userWords: ['talk to me like a friend, less formal'] });
+    expect(await customize(custom.ctx, { personality: 'like a friend, less formal' })).toMatchObject({ status: 'saved', changed: { personality: 'like a friend, less formal' } });
+    expect(custom.appended[0]).toMatchObject({ evidence: 'confirmed', provenance: 'user_said' });
+  });
+
+  it('reports unchanged for the current or default values', async () => {
+    const history: SessionEvent[] = [{ id: 'f', at: 'x', type: 'fact', key: 'assistant_name', value: 'Max', evidence: 'confirmed', provenance: 'user_said', sourceEventId: 'm' }];
+    const { ctx, appended } = context({ userWords: ['max'] }, history);
+    expect(await customize(ctx, { name: 'Max', avatar: 'pearl', personality: 'warm' })).toMatchObject({ status: 'unchanged' });
+    expect(appended).toEqual([]);
+  });
+
+  it('upgrades its own tentative name once the user says it', async () => {
+    const history: SessionEvent[] = [{ id: 'f', at: 'x', type: 'fact', key: 'assistant_name', value: 'Nova', evidence: 'tentative', provenance: 'assistant_inferred', sourceEventId: 'customize:t0' }];
+    expect(await customize(context({ userWords: ['sure'] }, history).ctx, { name: 'Nova' })).toMatchObject({ status: 'unchanged' });
+    expect(await customize(context({ userWords: ['Nova is good'] }, history).ctx, { name: 'Nova' })).toMatchObject({ status: 'saved' });
+  });
+
+  it('tells a call that a new voice applies from the next call', async () => {
+    const { ctx } = context({ channel: 'voice', userWords: ['use the bright voice'] });
+    expect(await customize(ctx, { voice: 'ripple' })).toMatchObject({ status: 'saved', note: expect.stringContaining('next call') });
   });
 });

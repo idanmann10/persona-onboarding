@@ -24,7 +24,7 @@ Provider keys go in the ignored `.env.local` or the host's secret manager, never
 - **Gmail and Calendar:** Composio needs `COMPOSIO_API_KEY` plus one managed-auth config ID per toolkit.
 - **Public research:** Context.dev needs `CONTEXT_DEV_API_KEY`.
 
-Without an OpenAI key the UI still loads: Persona's greeting shows, unsent text stays as a draft, and the Call button reads "setup needed".
+Without an OpenAI key the UI still loads: Persona's greeting shows, unsent text stays as a draft, and pressing Call shows the server's error instead of connecting.
 
 To inspect the timeline cards without keys, open the app once, then run `bun scripts/seed-demo.ts`. It seeds the newest local session with a named assistant, a call offer, a call that ended mid-sentence, the follow-up text, and a Connect Gmail card, and it refuses non-local databases.
 
