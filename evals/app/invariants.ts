@@ -51,6 +51,9 @@ export function checkInvariants(trace: ScenarioTrace): CheckResult[] {
   })();
   results.push({ id: 'no_call_offer_after_decline', passed: !offeredAfterDecline, detail: offeredAfterDecline });
 
+  const unanswered = trace.steps.find((step) => step.kind === 'user' && !step.output);
+  results.push({ id: 'every_message_answered', passed: !unanswered, detail: unanswered ? `step ${unanswered.index}: ${unanswered.input}` : undefined });
+
   const unauthorizedRead = trace.reads.find((read) => !read.allowed);
   results.push({ id: 'reads_only_connected_accounts', passed: !unauthorizedRead, detail: unauthorizedRead?.slug });
   return results;

@@ -42,6 +42,8 @@ describe('app-level replay', () => {
       { text: 'Tap Answer when you are ready.' },
     ]) });
     expect(trace.steps.map((step) => step.tools.map((tool) => tool.name))).toEqual([['remember'], ['offer_call']]);
+    // The session starts like the app's: the opening message asked for a name.
+    expect(trace.events[0]).toMatchObject({ type: 'message', origin: 'greeting' });
     expect(trace.steps[0].tools[0].output).toMatchObject({ status: 'saved', evidence: 'confirmed', provenance: 'user_said' });
     expect(trace.finalProgress).toMatchObject({ assistantName: { status: 'confirmed', value: 'Max' }, call: 'offered' });
     expect(checkInvariants(trace).filter((result) => !result.passed)).toEqual([]);

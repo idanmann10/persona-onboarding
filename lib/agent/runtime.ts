@@ -19,6 +19,14 @@ export function turnDependencies(store: TurnDependencies['store'] & ResearchStor
   };
 }
 
+/** Model steps per turn. Saving several facts and showing a card can take one step each. */
+export const MAX_STEPS = 6;
+
+/** The last step may not call tools, so a turn that spent its budget on tools still ends in a reply. */
+function lastStepWrites({ stepNumber }: { stepNumber: number }) {
+  return stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none' as const } : undefined;
+}
+
 function modelSettings(env: Env, override?: LanguageModel) {
   if (override) return { model: override };
   const effort = env.OPENAI_REASONING_EFFORT;
@@ -32,7 +40,7 @@ function modelSettings(env: Env, override?: LanguageModel) {
 export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): AsyncGenerator<string> {
   const result = streamText({
     ...modelSettings(env, override), system: turn.instructions, messages: turn.messages, tools: turn.tools,
-    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: stepCountIs(4),
+    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: stepCountIs(MAX_STEPS), prepareStep: lastStepWrites,
   });
   let emitted = false;
   let pendingBreak = false;
@@ -50,7 +58,7 @@ export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, ov
 export function generateTurnResult(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel) {
   return generateText({
     ...modelSettings(env, override), system: turn.instructions, messages: turn.messages, tools: turn.tools,
-    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: stepCountIs(4),
+    allowSystemInMessages: turn.allowSystemInMessages, stopWhen: stepCountIs(MAX_STEPS), prepareStep: lastStepWrites,
   });
 }
 

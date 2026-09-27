@@ -6,6 +6,7 @@ import { prepareTurn, type TurnTrigger } from '../../lib/agent/turn';
 import { describeTrigger, isSilent } from '../../lib/agent/follow-up';
 import { generateTurnResult } from '../../lib/agent/runtime';
 import { PROMPT_VERSION } from '../../lib/agent/prompts';
+import { greetingEvent } from '../../lib/agent/session';
 import { createMemoryStore } from './memory-store';
 import { createFixtureComposio, FIXTURE_VERSION, type FixtureRead } from './fixtures';
 
@@ -57,6 +58,8 @@ export interface StepTrace {
   connected: Toolkit[];
   followUp?: 'message' | 'silent';
   usage?: { inputTokens?: number; outputTokens?: number };
+  /** Model steps the turn took (tool steps plus the reply). */
+  modelSteps?: number;
 }
 
 export interface ScenarioTrace {
@@ -97,13 +100,19 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
   const now = () => new Date(clock().getTime() + (tick += 1_000));
   const deps = { store, env, composio, now };
   const steps: StepTrace[] = [];
+  // Start where a real session starts: the opening message is on screen, and accounts connected
+  // before the scenario have the event the app records when a connection completes.
+  await store.appendEvent(SESSION, greetingEvent(now()));
+  for (const name of scenario.setup.connected) {
+    await store.appendEvent(SESSION, { id: `connection:${name}:setup:connected`, at: now().toISOString(), type: 'connection', toolkit: name, phase: 'connected' });
+  }
 
   async function runTurn(turnId: string, trigger?: TurnTrigger) {
     const turn = await prepareTurn(deps, SESSION, await store.readEvents(), { turnId, trigger });
     const result = await generateTurnResult(turn, env, options.model);
     const tools: ToolTrace[] = result.steps.flatMap((step) => step.toolResults.map((toolResult) => ({ name: toolResult.toolName, input: toolResult.input, output: toolResult.output })));
     const text = result.steps.map((step) => step.text.trim()).filter(Boolean).join('\n\n');
-    return { text, tools, usage: { inputTokens: result.totalUsage?.inputTokens, outputTokens: result.totalUsage?.outputTokens } };
+    return { text, tools, usage: { inputTokens: result.totalUsage?.inputTokens, outputTokens: result.totalUsage?.outputTokens }, modelSteps: result.steps.length };
   }
 
   for (const [index, step] of scenario.steps.entries()) {
@@ -111,9 +120,9 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
     if ('user' in step) {
       const turnId = `${scenario.id}-u${index}`;
       await store.appendEvent(SESSION, { id: turnId, at: now().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: step.user });
-      const { text, tools, usage } = await runTurn(turnId);
+      const { text, tools, usage, modelSteps } = await runTurn(turnId);
       if (text) await store.appendEvent(SESSION, { id: `answer:${turnId}`, at: now().toISOString(), type: 'message', speaker: 'assistant', channel: 'text', text });
-      steps.push({ index, kind: 'user', input: step.user, output: text || null, tools, connected: connectedNow(), usage });
+      steps.push({ index, kind: 'user', input: step.user, output: text || null, tools, connected: connectedNow(), usage, modelSteps });
       continue;
     }
     if ('decline' in step) {
@@ -144,14 +153,14 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
     }
     const trigger = describeTrigger(projectSession(await store.readEvents()), request);
     if (!trigger) throw new Error(`Scenario ${scenario.id} step ${index} produced no follow-up trigger`);
-    const { text, tools, usage } = await runTurn(trigger.id, trigger);
+    const { text, tools, usage, modelSteps } = await runTurn(trigger.id, trigger);
     const silent = isSilent(text);
     const at = now().toISOString();
     if (!silent) await store.appendEvent(SESSION, { id: `answer:${trigger.id}`, at, type: 'message', speaker: 'assistant', channel: 'text', text: text.trim(), origin: 'follow_up' });
     await store.appendEvent(SESSION, { id: `decision:${trigger.id}`, at, type: 'decision', trigger: trigger.id, outcome: silent ? 'silent' : 'messaged' });
     steps.push({
       index, kind: 'call' in step ? 'call' : 'connect', input: 'call' in step ? step.call.map(([speaker, text]) => `${speaker}: ${text}`).join(' | ') + ` [${step.end}]` : step.connect,
-      output: silent ? null : text.trim(), tools, connected: connectedNow(), followUp: silent ? 'silent' : 'message', usage,
+      output: silent ? null : text.trim(), tools, connected: connectedNow(), followUp: silent ? 'silent' : 'message', usage, modelSteps,
     });
   }
   const events = await store.readEvents();
