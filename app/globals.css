@@ -51,7 +51,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .live-time { margin-left: auto; font-variant-numeric: tabular-nums; color: #b9b8b3; }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(68, 200, 103, .6); animation: pulse 1.8s infinite; }
 @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(68, 200, 103, 0); } 100% { box-shadow: 0 0 0 0 rgba(68, 200, 103, 0); } }
-.captions { margin-top: 8px; min-height: 42px; max-height: 7.5em; overflow: hidden; }
+.captions { margin-top: 8px; min-height: 42px; max-height: 7.5em; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
 .captions p { margin: 4px 0 0; font-size: 14px; line-height: 1.45; color: #e8e7e2; }
 .captions p b { color: #9d9c97; font-weight: 600; margin-right: 4px; }
 .captions .muted { color: #9d9c97; }

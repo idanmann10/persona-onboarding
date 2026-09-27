@@ -12,7 +12,9 @@ export const IP_LIMITS: Record<IpScope, [number, number]> = {
   voice: [12, 3_600],
   tool: [300, 3_600],
   follow_up: [60, 3_600],
-  voice_event: [4_000, 3_600],
+  // Every call the voice limit allows, at full length: 12 calls x 12 min x ~90 posts a minute
+  // (transcript batches every 700 ms while someone talks, plus typed text and phase changes).
+  voice_event: [15_000, 3_600],
 };
 
 /**

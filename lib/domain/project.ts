@@ -108,6 +108,9 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         break;
       }
       case 'call': {
+        // Once a call has ended nothing reopens it: not a `started` that raced the hang-up, not a second end.
+        const earlier = event.callId ? calls.get(event.callId) : undefined;
+        if (earlier && ENDED.includes(earlier.phase)) break;
         state.call = { phase: event.phase, callId: event.callId ?? state.call.callId, reason: event.reason, offerPending: event.phase === 'offered' };
         if (event.phase === 'offered') {
           callOffer = { kind: 'call_offer', id: event.id, status: 'pending' };
@@ -119,7 +122,6 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
           if (callOffer?.status === 'pending') callOffer.status = 'answered';
           const record = callFor(event.callId, event.id);
           if (!ENDED.includes(event.phase)) record.lastActivityAt = event.at;
-          else if (ENDED.includes(record.phase)) break;
           record.phase = event.phase;
           if (event.phase === 'started') record.startedAt ??= event.at;
           if (ENDED.includes(event.phase)) { record.endedAt ??= event.at; record.reason ??= event.reason; }

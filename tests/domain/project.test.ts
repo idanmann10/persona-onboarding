@@ -42,6 +42,16 @@ describe('projectSession', () => {
     expect(state.call.phase).toBe('ended');
   });
 
+  it('keeps an ended call ended when a late start arrives after it', () => {
+    const state = projectSession([
+      { id: 'call:live_1:accepted', at, type: 'call', phase: 'accepted', callId: 'live_1' },
+      { id: 'call:live_1:dropped', at, type: 'call', phase: 'dropped', callId: 'live_1', reason: 'page_closed' },
+      { id: 'call:live_1:started', at: '2026-09-27T12:00:01.000Z', type: 'call', phase: 'started', callId: 'live_1' },
+    ]);
+    expect(state.calls[0]).toMatchObject({ phase: 'dropped', reason: 'page_closed' });
+    expect(state.call.phase).toBe('dropped');
+  });
+
   it('ignores a repeated event ID and replays deterministically', () => {
     const events = [message('m1', 'hello'), message('m1', 'hello')];
     const state = projectSession(events);
