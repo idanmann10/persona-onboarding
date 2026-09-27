@@ -40,6 +40,14 @@ export function createStore(sql: ReturnType<typeof postgres>) {
       const rows = await sql`SELECT payload FROM persona_events WHERE session_id = ${id} ORDER BY seq`;
       return rows.map((row) => row.payload as SessionEvent);
     },
+    hasEvent: async (id: string, eventId: string): Promise<boolean> => {
+      const rows = await sql`SELECT 1 FROM persona_events WHERE session_id = ${id} AND event_id = ${eventId} LIMIT 1`;
+      return rows.length > 0;
+    },
+    getCallLease: async (id: string): Promise<{ callId?: string; active: boolean } | undefined> => {
+      const rows = await sql`SELECT call_id, expires_at > now() AS active FROM persona_call_leases WHERE session_id = ${id} LIMIT 1`;
+      return rows[0] ? { callId: (rows[0].call_id as string | null) || undefined, active: rows[0].active as boolean } : undefined;
+    },
     readGraphFacts: async (id: string): Promise<Array<Pick<KnowledgeFact, 'value' | 'evidence' | 'provenance' | 'sourceUrl'> & { key: string }>> => {
       const rows = await sql`SELECT predicate AS key, object_value AS value, evidence, provenance, source_url AS "sourceUrl"
         FROM persona_graph_facts WHERE session_id = ${id} ORDER BY created_at, id`;
@@ -108,13 +116,21 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     releaseCallLease: async (sessionId: string, id: string): Promise<void> => {
       await sql`DELETE FROM persona_call_leases WHERE session_id = ${sessionId} AND (lease_id = ${id} OR call_id = ${id})`;
     },
-    consumeQuota: async (sessionId: string, scope: 'chat' | 'voice' | 'research', limit: number, windowSeconds: number): Promise<boolean> => {
+    consumeQuota: async (sessionId: string, scope: 'chat' | 'voice' | 'research' | 'tool', limit: number, windowSeconds: number): Promise<boolean> => {
       const windowStart = new Date(Math.floor(Date.now() / (windowSeconds * 1000)) * windowSeconds * 1000).toISOString();
       const rows = await sql`INSERT INTO persona_rate_limits (session_id, scope, window_start, count)
         VALUES (${sessionId}, ${scope}, ${windowStart}, 1)
         ON CONFLICT (session_id, scope, window_start) DO UPDATE SET count = persona_rate_limits.count + 1
         WHERE persona_rate_limits.count < ${limit} RETURNING count`;
       return rows.length > 0;
+    },
+    reserve: async (sessionId: string, key: string): Promise<boolean> => {
+      const rows = await sql`INSERT INTO persona_reservations (session_id, reservation_key)
+        VALUES (${sessionId}, ${key}) ON CONFLICT DO NOTHING RETURNING reservation_key`;
+      return rows.length > 0;
+    },
+    releaseReservation: async (sessionId: string, key: string): Promise<void> => {
+      await sql`DELETE FROM persona_reservations WHERE session_id = ${sessionId} AND reservation_key = ${key}`;
     },
     reserveIdentityClaim: async (sessionId: string, userEventId: string): Promise<boolean> => {
       const rows = await sql`INSERT INTO persona_identity_reservations (session_id, user_event_id)

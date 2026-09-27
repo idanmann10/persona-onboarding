@@ -72,3 +72,10 @@ CREATE TABLE IF NOT EXISTS persona_identity_reservations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (session_id, user_event_id)
 );
+
+CREATE TABLE IF NOT EXISTS persona_reservations (
+  session_id UUID NOT NULL REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  reservation_key TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (session_id, reservation_key)
+);
