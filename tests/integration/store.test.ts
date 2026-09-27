@@ -3,13 +3,16 @@ import postgres from 'postgres';
 import type { SessionEvent } from '../../lib/domain/events';
 import { createStore } from '../../lib/db/store';
 import { runTextTurn } from '../../lib/agent/chat';
-import { getGuestSession } from '../../lib/agent/session';
+import { getGuestSession, GREETING_TEXT } from '../../lib/agent/session';
 import { createSessionHandler } from '../../lib/http/session';
 import { createChatHandler } from '../../lib/http/chat';
 import { createVoiceSessionHandler } from '../../lib/http/voice';
 import { createVoiceEventHandler } from '../../lib/http/voice-events';
 import { projectSession } from '../../lib/domain/project';
 import { resolveIdentityClaim } from '../../lib/research/service';
+import { createFollowUpHandler } from '../../lib/http/follow-up';
+import { createVoiceToolHandler } from '../../lib/http/voice-tool';
+import { createCallOfferHandler } from '../../lib/http/call-offer';
 
 const database = `persona_test_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 const adminUrl = new URL(process.env.TEST_DATABASE_ADMIN_URL || 'postgres://localhost/postgres');
@@ -68,7 +71,7 @@ describe('Postgres session store', () => {
     const first = await getGuestSession(store);
     expect(first.created).toBe(true);
     const second = await getGuestSession(store, first.id);
-    expect(second).toEqual({ id: first.id, created: false, events: [] });
+    expect(second).toEqual({ id: first.id, created: false, events: [expect.objectContaining({ id: 'greeting:v1', speaker: 'assistant', origin: 'greeting', text: GREETING_TEXT })] });
     const invalid = await getGuestSession(store, crypto.randomUUID());
     expect(invalid.created).toBe(true);
     expect(invalid.id).not.toBe(first.id);
@@ -92,6 +95,7 @@ describe('Postgres session store', () => {
     const reloaded = await sessionHandler(new Request('http://localhost/api/session', { headers: { cookie: cookieHeader } }));
     const snapshot = await reloaded.json();
     expect(snapshot.messages).toEqual([
+      { id: 'greeting:v1', role: 'assistant', text: GREETING_TEXT },
       { id: 'm3', role: 'user', text: 'hello' },
       { id: 'answer:m3', role: 'assistant', text: 'I can help with that.' },
     ]);
@@ -121,7 +125,15 @@ describe('Postgres session store', () => {
     await store.releaseCallLease(session.id, 'live_test');
     for (let i = 0; i < 3; i++) await store.consumeQuota(session.id, 'voice', 3, 600);
     expect((await handler(request(session.id))).status).toBe(429);
-    expect(await result.json()).toEqual({ session: { id: 'live_test' }, transport: { type: 'webrtc', sdp: 'answer-sdp' } });
+    const answer = await result.json();
+    expect(answer).toMatchObject({ session: { id: 'live_test' }, transport: { type: 'webrtc', sdp: 'answer-sdp' }, delegation: true });
+    expect(answer.greeting).toMatch(/^Greet the caller now in English\. .*ask what you should call them/);
+    expect(answer.limits).toMatchObject({ checkInAfterMs: 20_000, closeAfterMs: 30_000, maxDurationMs: 720_000 });
+    const liveSession = (sent as { session: { model: string; input: Array<{ role: string }>; delegation: { type: string; responses: { model: string; tools: Array<{ name: string }> } } } }).session;
+    expect(liveSession.model).toBe('gpt-live-1');
+    expect(liveSession.input[0].role).toBe('developer');
+    expect(liveSession.delegation).toMatchObject({ type: 'responses', responses: { model: 'gpt-6-luna' } });
+    expect(liveSession.delegation.responses.tools.map((tool) => tool.name)).toEqual(['remember']);
     expect(JSON.stringify(sent)).toContain('I need help preparing for Friday');
     expect(JSON.stringify(sent)).toContain('preferred_pace');
     expect(JSON.stringify(sent)).toContain('I might need a short brief');
@@ -289,5 +301,110 @@ describe('Postgres session store', () => {
     expect(await store.readEvents(id)).toEqual([]);
     expect(await store.readGraphFacts(id)).toEqual([]);
     expect(await store.listConnectionAccounts(id)).toEqual([]);
+  });
+
+  async function liveCall(store: ReturnType<typeof createStore>, callId = 'live_call') {
+    const session = await getGuestSession(store);
+    expect(await store.acquireCallLease(session.id, `lease-${callId}`)).toBe(true);
+    expect(await store.bindCallLease(session.id, `lease-${callId}`, callId)).toBe(true);
+    await store.appendEvent(session.id, { id: `call:${callId}:accepted`, at: new Date().toISOString(), type: 'call', phase: 'accepted', callId });
+    return session.id;
+  }
+  const request = (url: string, sessionId: string, body: unknown, origin = 'http://localhost', method = 'POST') =>
+    new Request(url, { method, headers: { origin, cookie: `persona_session=${sessionId}` }, body: body === undefined ? undefined : JSON.stringify(body) });
+
+  it('texts once after a mid-sentence hangup, including when the tab closed before asking', async () => {
+    const store = createStore(sql);
+    const sessionId = await liveCall(store);
+    const events = createVoiceEventHandler(store);
+    expect((await events(request('http://localhost/api/voice/event', sessionId, { callId: 'live_call', kind: 'started' }))).status).toBe(204);
+    expect((await events(request('http://localhost/api/voice/event', sessionId, { callId: 'live_call', kind: 'transcripts', fragments: [
+      { eventId: 'a1', speaker: 'assistant', text: "What's eating your week?", startMs: 0, endMs: 900 },
+      { eventId: 'u1', speaker: 'user', text: 'honestly the investor updates, every month I', startMs: 1_200, endMs: 3_000 },
+    ] }))).status).toBe(204);
+    expect((await events(request('http://localhost/api/voice/event', sessionId, { callId: 'live_call', kind: 'transcripts', fragments: [{ eventId: 'bad', speaker: 'robot', text: 'x', startMs: 0, endMs: 1 }] }))).status).toBe(400);
+    const run: Array<{ id: string; instruction: string }> = [];
+    const followUp = createFollowUpHandler(store, async (_history, _id, trigger) => { run.push(trigger); return 'Hey, looks like we got cut off. You were saying the investor updates eat your month. Want me to take a first pass at the next one?'; });
+    expect((await followUp(request('http://localhost/api/agent/follow-up', sessionId, { kind: 'call_ended', callId: 'live_call' }))).status).toBe(409);
+    expect((await events(request('http://localhost/api/voice/event', sessionId, { callId: 'live_call', kind: 'ended', reason: 'user_hangup' }))).status).toBe(204);
+    const pending = await (await createSessionHandler(store)(request('http://localhost/api/session', sessionId, undefined, 'http://localhost', 'GET'))).json();
+    expect(pending.pendingFollowUps).toEqual([{ kind: 'call_ended', callId: 'live_call' }]);
+    const first = await followUp(request('http://localhost/api/agent/follow-up', sessionId, { kind: 'call_ended', callId: 'live_call' }));
+    expect(await first.json()).toMatchObject({ status: 'messaged', message: { id: 'answer:followup:call:live_call', role: 'assistant' } });
+    expect(run).toHaveLength(1);
+    expect(run[0].instruction).toContain('the user hung up');
+    expect(run[0].instruction).toContain('every month I');
+    const retry = await followUp(request('http://localhost/api/agent/follow-up', sessionId, { kind: 'call_ended', callId: 'live_call' }));
+    expect(await retry.json()).toMatchObject({ status: 'messaged' });
+    expect(run).toHaveLength(1);
+    const snapshot = await (await createSessionHandler(store)(request('http://localhost/api/session', sessionId, undefined, 'http://localhost', 'GET'))).json();
+    expect(snapshot.pendingFollowUps).toEqual([]);
+    expect(snapshot.timeline.at(-1)).toMatchObject({ kind: 'message', speaker: 'assistant', origin: 'follow_up' });
+    const call = snapshot.timeline.find((item: { kind: string }) => item.kind === 'call');
+    expect(call.call).toMatchObject({ phase: 'ended', reason: 'user_hangup' });
+    expect(call.call.utterances.map((utterance: { text: string }) => utterance.text)).toEqual(["What's eating your week?", 'honestly the investor updates, every month I']);
+    expect((await followUp(request('http://localhost/api/agent/follow-up', sessionId, { kind: 'call_ended', callId: 'live_call' }, 'http://evil.example'))).status).toBe(403);
+  });
+
+  it('records silence after a natural goodbye and lets a failed run retry', async () => {
+    const store = createStore(sql);
+    const sessionId = await liveCall(store, 'live_bye');
+    const events = createVoiceEventHandler(store);
+    await events(request('http://localhost/api/voice/event', sessionId, { callId: 'live_bye', kind: 'started' }));
+    await events(request('http://localhost/api/voice/event', sessionId, { callId: 'live_bye', kind: 'ended', reason: 'remote_hangup' }));
+    let attempts = 0;
+    const flaky = createFollowUpHandler(store, async () => { attempts += 1; if (attempts === 1) throw new Error('model down'); return '<silent>'; });
+    await expect(flaky(request('http://localhost/api/agent/follow-up', sessionId, { kind: 'call_ended', callId: 'live_bye' }))).rejects.toThrow('model down');
+    expect(await (await flaky(request('http://localhost/api/agent/follow-up', sessionId, { kind: 'call_ended', callId: 'live_bye' }))).json()).toEqual({ status: 'silent' });
+    const state = projectSession(await store.readEvents(sessionId));
+    expect(state.decisions['followup:call:live_bye']).toBe('silent');
+    expect(state.messages.filter((message) => message.origin === 'follow_up')).toEqual([]);
+  });
+
+  it('marks a call lost when its lease is gone without an end report', async () => {
+    const store = createStore(sql);
+    const sessionId = await liveCall(store, 'live_lost');
+    await store.releaseCallLease(sessionId, 'live_lost');
+    const snapshot = await (await createSessionHandler(store)(request('http://localhost/api/session', sessionId, undefined, 'http://localhost', 'GET'))).json();
+    expect(snapshot.timeline.find((item: { kind: string }) => item.kind === 'call').call).toMatchObject({ phase: 'dropped', reason: 'lost' });
+    expect(snapshot.pendingFollowUps).toEqual([{ kind: 'call_ended', callId: 'live_lost' }]);
+  });
+
+  it('runs voice tool calls with the same evidence gates as text, only for the owning call', async () => {
+    const store = createStore(sql);
+    const sessionId = await liveCall(store, 'live_tool');
+    const stranger = (await getGuestSession(store)).id;
+    await createVoiceEventHandler(store)(request('http://localhost/api/voice/event', sessionId, { callId: 'live_tool', kind: 'transcripts', fragments: [{ eventId: 'u1', speaker: 'user', text: "Oh, I'm Dana.", startMs: 0, endMs: 900 }] }));
+    const tools = createVoiceToolHandler(store, { OPENAI_API_KEY: 'k', COMPOSIO_API_KEY: 'c', COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'ac' }, { executeRead: async () => { throw new Error('should not read'); } });
+    const call = (id: string, body: Record<string, unknown>) => tools(request('http://localhost/api/voice/tool', id, { callId: 'live_tool', callItemId: 'call_1', ...body }));
+    expect((await call(stranger, { name: 'remember', arguments: '{}' })).status).toBe(404);
+    expect((await call(sessionId, { name: 'send_email', arguments: '{}' })).status).toBe(400);
+    const saved = await call(sessionId, { name: 'remember', arguments: JSON.stringify({ key: 'preferred_name', value: 'Dana' }) });
+    expect(JSON.parse((await saved.json()).output)).toMatchObject({ status: 'saved', evidence: 'confirmed', provenance: 'user_said' });
+    const invented = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_2', name: 'remember', arguments: JSON.stringify({ key: 'preferred_name', value: 'Jordan' }) }));
+    expect(JSON.parse((await invented.json()).output)).toMatchObject({ status: 'rejected' });
+    const search = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_3', name: 'search_gmail', arguments: JSON.stringify({ query: 'in:inbox' }) }));
+    expect(JSON.parse((await search.json()).output)).toMatchObject({ status: 'not_connected' });
+    const card = await tools(request('http://localhost/api/voice/tool', sessionId, { callId: 'live_tool', callItemId: 'call_4', name: 'show_connection', arguments: JSON.stringify({ toolkit: 'gmail', reason: 'See who is waiting on you' }) }));
+    expect(await card.json()).toMatchObject({ ui: { type: 'connection_offer', toolkit: 'gmail' } });
+    const state = projectSession(await store.readEvents(sessionId));
+    expect(state.onboarding.preferredName).toEqual({ status: 'confirmed', value: 'Dana' });
+    expect(state.onboarding.gmail).toBe('offered');
+  });
+
+  it('keeps text typed during a call in the thread and lets the user decline a call offer', async () => {
+    const store = createStore(sql);
+    const sessionId = await liveCall(store, 'live_typed');
+    const events = createVoiceEventHandler(store);
+    expect((await events(request('http://localhost/api/voice/event', sessionId, { callId: 'live_typed', kind: 'typed', messageId: 'typed-1', text: 'dana@example.com' }))).status).toBe(204);
+    expect(projectSession(await store.readEvents(sessionId)).messages.at(-1)).toMatchObject({ id: 'typed-1', speaker: 'user', text: 'dana@example.com' });
+    const other = (await getGuestSession(store)).id;
+    await store.appendEvent(other, { id: 'call-offer:t1', at: new Date().toISOString(), type: 'call', phase: 'offered' });
+    const decline = createCallOfferHandler(store);
+    expect((await decline(request('http://localhost/api/voice/offer', other, undefined, 'http://evil.example', 'DELETE'))).status).toBe(403);
+    expect((await decline(request('http://localhost/api/voice/offer', other, undefined, 'http://localhost', 'DELETE'))).status).toBe(204);
+    const state = projectSession(await store.readEvents(other));
+    expect(state.onboarding.call).toBe('declined');
+    expect(state.timeline).toContainEqual({ kind: 'call_offer', id: 'call-offer:t1', status: 'declined' });
   });
 });

@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { createConnectionHandlers } from '../../lib/http/connections';
 
 describe('connection HTTP contracts', () => {
-  const store = { sessionExists: async (id: string) => id === 'owner', getActiveConnection: async (_id: string, toolkit: string) => toolkit === 'calendar' ? 'ca_one' : undefined };
+  const events: Array<{ id: string; type: string; phase?: string; toolkit?: string }> = [];
+  const store = {
+    sessionExists: async (id: string) => id === 'owner',
+    getActiveConnection: async (_id: string, toolkit: string) => toolkit === 'calendar' ? 'ca_one' : undefined,
+    getConnectionAttempt: async () => ({ toolkit: 'calendar' as const }),
+    appendEvent: async (_id: string, event: { id: string; type: string; phase?: string; toolkit?: string }) => { events.push(event); },
+  };
   const attemptId = '123e4567-e89b-42d3-a456-426614174000';
   let disconnected = false;
   const service = { start: async () => ({ attemptId, redirectUrl: 'https://connect.composio.dev/start' }), finish: async () => 'calendar' as const, disconnect: async () => { disconnected = true; } };
@@ -20,8 +26,29 @@ describe('connection HTTP contracts', () => {
     const status = await handlers.status(new Request('https://persona.example/api/connections', { headers: { cookie: 'persona_session=owner' } }));
     expect(await status.json()).toEqual({ calendar: true, gmail: false });
     const callback = await handlers.callback(new Request(`https://persona.example/api/connections/callback?attempt=${attemptId}&connected_account_id=ca_stranger`, { headers: { cookie: 'persona_session=owner' } }));
-    expect(callback.status).toBe(303);
-    expect(callback.headers.get('location')).toBe('https://persona.example/?connection=calendar');
+    expect(callback.status).toBe(200);
+    const page = await callback.text();
+    expect(page).toContain('"status":"connected"');
+    expect(page).toContain('https://persona.example/?connection=calendar');
+    expect(page).toContain('postMessage(message, "https://persona.example")');
+    expect(events.at(-1)).toMatchObject({ type: 'connection', toolkit: 'calendar', phase: 'connected' });
+  });
+
+  it('records a failed callback so the assistant can react, and never binds the account', async () => {
+    const failing = createConnectionHandlers(store, { ...service, finish: async () => { throw new Error('not active'); } }, 'https://persona.example');
+    const callback = await failing.callback(new Request(`https://persona.example/api/connections/callback?attempt=${attemptId}`, { headers: { cookie: 'persona_session=owner' } }));
+    expect(await callback.text()).toContain('"status":"failed"');
+    expect(events.at(-1)).toMatchObject({ type: 'connection', toolkit: 'calendar', phase: 'failed' });
+  });
+
+  it('records "Not now" on a connect card only for the owning session', async () => {
+    const request = (cookie: string, origin: string, toolkit = 'gmail') => new Request('https://persona.example/api/connections/decline', { method: 'POST', headers: { cookie: `persona_session=${cookie}`, origin }, body: JSON.stringify({ toolkit }) });
+    const before = events.length;
+    expect((await handlers.decline(request('stranger', 'https://persona.example'))).status).toBe(401);
+    expect((await handlers.decline(request('owner', 'https://evil.example'))).status).toBe(403);
+    expect((await handlers.decline(request('owner', 'https://persona.example', 'other'))).status).toBe(400);
+    expect((await handlers.decline(request('owner', 'https://persona.example'))).status).toBe(204);
+    expect(events.slice(before)).toEqual([expect.objectContaining({ type: 'connection', toolkit: 'gmail', phase: 'declined' })]);
   });
 
   it('requires the owning session and same origin to disconnect', async () => {

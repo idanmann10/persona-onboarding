@@ -1,12 +1,28 @@
-import type { SessionEvent } from '../domain/events';
+import type { CallEndReason, SessionEvent } from '../domain/events';
 import { readSessionCookie } from './session';
 
 interface Store {
   sessionExists(id: string): Promise<boolean>;
-  readEvents(id: string): Promise<SessionEvent[]>;
+  hasEvent(id: string, eventId: string): Promise<boolean>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   releaseCallLease(id: string, callId: string): Promise<void>;
   refreshCallLease(id: string, callId: string): Promise<boolean>;
+}
+
+/** End reasons a browser may report; `lost` is only ever inferred by the server. */
+const CLIENT_REASONS = new Set<CallEndReason>(['user_hangup', 'remote_hangup', 'connection_lost', 'inactive', 'max_duration', 'expired', 'content', 'page_closed', 'setup_failed']);
+const MAX_BATCH = 40;
+
+type Fragment = { eventId: string; speaker: 'user' | 'assistant'; text: string; startMs: number; endMs: number };
+
+function parseFragment(value: unknown): Fragment | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const body = value as Record<string, unknown>;
+  const validTime = (time: unknown) => typeof time === 'number' && Number.isFinite(time) && time >= 0 && time <= 3_600_000;
+  if (typeof body.eventId !== 'string' || !/^[\w:-]{1,100}$/.test(body.eventId) ||
+      (body.speaker !== 'user' && body.speaker !== 'assistant') || typeof body.text !== 'string' || !body.text || body.text.length > 500 ||
+      !validTime(body.startMs) || !validTime(body.endMs) || (body.endMs as number) < (body.startMs as number)) return undefined;
+  return { eventId: body.eventId, speaker: body.speaker, text: body.text, startMs: body.startMs as number, endMs: body.endMs as number };
 }
 
 export function createVoiceEventHandler(store: Store) {
@@ -19,24 +35,41 @@ export function createVoiceEventHandler(store: Store) {
     if (!payload || typeof payload !== 'object') return new Response('Invalid event', { status: 400 });
     const body = payload as Record<string, unknown>;
     if (typeof body.callId !== 'string' || !/^live_[\w-]{1,100}$/.test(body.callId)) return new Response('Invalid call ID', { status: 400 });
-    const history = await store.readEvents(sessionId);
-    if (!history.some((event) => event.id === `call:${body.callId}:accepted`)) return new Response('Call not found', { status: 404 });
-    if (body.kind === 'heartbeat') return new Response(null, { status: await store.refreshCallLease(sessionId, body.callId) ? 204 : 409 });
+    const callId = body.callId;
+    if (!(await store.hasEvent(sessionId, `call:${callId}:accepted`))) return new Response('Call not found', { status: 404 });
+    if (body.kind === 'heartbeat') return new Response(null, { status: await store.refreshCallLease(sessionId, callId) ? 204 : 409 });
     const at = new Date().toISOString();
-    let event: SessionEvent;
-    if (body.kind === 'started' || body.kind === 'ended' || body.kind === 'dropped') {
-      event = { id: `call:${body.callId}:${body.kind}`, at, type: 'call', phase: body.kind, callId: body.callId };
-    } else if (body.kind === 'transcript') {
-      const validTime = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 3_600_000;
-      if (typeof body.eventId !== 'string' || !/^[\w:-]{1,100}$/.test(body.eventId) ||
-          (body.speaker !== 'user' && body.speaker !== 'assistant') || typeof body.text !== 'string' || !body.text || body.text.length > 500 ||
-          !validTime(body.startMs) || !validTime(body.endMs) || (body.endMs as number) < (body.startMs as number)) {
-        return new Response('Invalid transcript fragment', { status: 400 });
+    const fragmentEvent = (fragment: Fragment): SessionEvent => ({ id: `voice:${callId}:${fragment.eventId}`, at, type: 'voice_fragment', callId, speaker: fragment.speaker, text: fragment.text, startMs: fragment.startMs, endMs: fragment.endMs, final: false });
+    if (body.kind === 'transcripts') {
+      if (!Array.isArray(body.fragments) || !body.fragments.length || body.fragments.length > MAX_BATCH) return new Response('Invalid transcript batch', { status: 400 });
+      const fragments = body.fragments.map(parseFragment);
+      if (fragments.some((fragment) => !fragment)) return new Response('Invalid transcript fragment', { status: 400 });
+      for (const fragment of fragments as Fragment[]) await store.appendEvent(sessionId, fragmentEvent(fragment));
+      return new Response(null, { status: 204 });
+    }
+    if (body.kind === 'transcript') {
+      const fragment = parseFragment(body);
+      if (!fragment) return new Response('Invalid transcript fragment', { status: 400 });
+      await store.appendEvent(sessionId, fragmentEvent(fragment));
+      return new Response(null, { status: 204 });
+    }
+    if (body.kind === 'typed') {
+      if (typeof body.messageId !== 'string' || !/^[\w:-]{1,100}$/.test(body.messageId) || typeof body.text !== 'string' || !body.text.trim() || body.text.length > 2_000) {
+        return new Response('Invalid typed message', { status: 400 });
       }
-      event = { id: `voice:${body.callId}:${body.eventId}`, at, type: 'voice_fragment', callId: body.callId, speaker: body.speaker, text: body.text, startMs: body.startMs as number, endMs: body.endMs as number, final: false };
-    } else return new Response('Invalid event kind', { status: 400 });
-    await store.appendEvent(sessionId, event);
-    if (body.kind === 'ended' || body.kind === 'dropped') await store.releaseCallLease(sessionId, body.callId);
-    return new Response(null, { status: 204 });
+      await store.appendEvent(sessionId, { id: body.messageId, at, type: 'message', speaker: 'user', channel: 'text', text: body.text.trim() });
+      return new Response(null, { status: 204 });
+    }
+    if (body.kind === 'started' || body.kind === 'ended' || body.kind === 'dropped') {
+      const reason = typeof body.reason === 'string' && CLIENT_REASONS.has(body.reason as CallEndReason) ? body.reason as CallEndReason : undefined;
+      if (body.kind !== 'started' && await store.hasEvent(sessionId, `call:${callId}:${body.kind === 'ended' ? 'dropped' : 'ended'}`)) {
+        await store.releaseCallLease(sessionId, callId);
+        return new Response(null, { status: 204 });
+      }
+      await store.appendEvent(sessionId, { id: `call:${callId}:${body.kind}`, at, type: 'call', phase: body.kind, callId, ...(body.kind !== 'started' && reason ? { reason } : {}) });
+      if (body.kind !== 'started') await store.releaseCallLease(sessionId, callId);
+      return new Response(null, { status: 204 });
+    }
+    return new Response('Invalid event kind', { status: 400 });
   };
 }
