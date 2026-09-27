@@ -16,6 +16,7 @@ interface Store extends IpQuotaStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   getCallLease?(id: string): Promise<{ callId?: string; active: boolean } | undefined>;
   listAutomations?(id: string): Promise<AutomationRecord[]>;
+  getSessionAccount?(id: string): Promise<{ email: string } | undefined>;
 }
 
 export function readSessionCookie(request: Request): string | undefined {
@@ -80,9 +81,10 @@ export function createSessionHandler(store: Store, env: Record<string, string | 
     }
     const automations = store.listAutomations ? await store.listAutomations(session.id) : [];
     const automationDue = automations.some((automation) => automation.status === 'active' && automation.nextRunAt && Date.parse(automation.nextRunAt) <= Date.now());
+    const account = store.getSessionAccount ? await store.getSessionAccount(session.id) : undefined;
     return new Response(JSON.stringify({
       messages, voiceFragments, timeline: projection.timeline, progress: projection.onboarding, settings: personaSettings(projection, env.OPENAI_VOICE),
-      pendingFollowUps: pendingFollowUps(projection), automationDue,
+      pendingFollowUps: pendingFollowUps(projection), automationDue, account: account ? { email: account.email } : null,
     }), { headers });
   };
 }

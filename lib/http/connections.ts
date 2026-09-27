@@ -1,4 +1,5 @@
 import { readSessionCookie } from './session';
+import { signInWithGmail } from '../auth/identity';
 import type { Toolkit } from '../integrations/connections';
 import type { SessionEvent } from '../domain/events';
 
@@ -104,6 +105,7 @@ export function createConnectionHandlers(store: Store, service: Service, appBase
       try {
         const toolkit = await service.finish(id, attemptId);
         await store.appendEvent(id, { id: `connection:${toolkit}:${attemptId}:connected`, at: new Date().toISOString(), type: 'connection', toolkit, phase: 'connected' });
+        if (toolkit === 'gmail') return await signInWithGmail(request, id, attemptId, callbackPage(appBaseUrl, toolkit, 'connected'));
         return callbackPage(appBaseUrl, toolkit, 'connected');
       } catch (error) {
         console.error('Connection callback failed', error);

@@ -27,6 +27,20 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     createSession: async (id: string) => {
       await sql`INSERT INTO persona_sessions (id) VALUES (${id}) ON CONFLICT (id) DO NOTHING`;
     },
+    /**
+     * Makes this session the main session of a verified email unless the email already has one, and
+     * returns the email's main session. Undefined when this session is already main for another email.
+     */
+    claimMainSession: async (email: string, sessionId: string): Promise<string | undefined> => {
+      await sql`INSERT INTO persona_users (email, main_session_id) VALUES (${email}, ${sessionId}) ON CONFLICT DO NOTHING`;
+      const rows = await sql`SELECT main_session_id FROM persona_users WHERE email = ${email} LIMIT 1`;
+      return rows[0]?.main_session_id as string | undefined;
+    },
+    /** The account whose main session this is, if any. */
+    getSessionAccount: async (sessionId: string): Promise<{ email: string } | undefined> => {
+      const rows = await sql`SELECT email FROM persona_users WHERE main_session_id = ${sessionId} LIMIT 1`;
+      return rows[0] ? { email: rows[0].email as string } : undefined;
+    },
     sessionExists: async (id: string) => {
       const rows = await sql`SELECT 1 FROM persona_sessions WHERE id = ${id} LIMIT 1`;
       return rows.length > 0;

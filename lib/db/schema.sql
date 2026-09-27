@@ -134,3 +134,11 @@ CREATE TABLE IF NOT EXISTS persona_traces (
   data JSONB NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS persona_traces_session ON persona_traces (session_id, id);
+
+-- One person, one main session: the verified Gmail address (lowercased) of whoever connected Gmail first.
+-- Deleting the main session ("Start over") deletes the row, so the address can start fresh.
+CREATE TABLE IF NOT EXISTS persona_users (
+  email TEXT PRIMARY KEY CHECK (email = lower(email)),
+  main_session_id UUID NOT NULL UNIQUE REFERENCES persona_sessions(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
