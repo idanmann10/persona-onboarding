@@ -13,7 +13,7 @@
     ],
     "expect": {
       "tools": [
-        "remember",
+        "customize",
         "offer_call"
       ],
       "facts": {
@@ -97,6 +97,7 @@
     ],
     "expect": {
       "tools": [
+        "customize",
         "remember"
       ],
       "facts": {
@@ -352,6 +353,7 @@
     ],
     "expect": {
       "tools": [
+        "customize",
         "remember"
       ],
       "facts": {
@@ -472,7 +474,7 @@
         "personality": "direct"
       },
       "tools": [
-        "remember"
+        "customize"
       ],
       "mentions": [],
       "notMentions": []

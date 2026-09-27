@@ -50,7 +50,7 @@ describe('Persona prompt contract', () => {
 
   it('reads a bare name after the greeting as the assistant\'s name, and a first-person name as the user\'s', () => {
     const prompt = buildSystemPrompt({ facts: [], capabilities: ['text'], onboarding: progress() });
-    expect(prompt).toMatch(/a name at the start of their first reply .* is your name: save it as assistant_name/);
+    expect(prompt).toMatch(/a name at the start of their first reply .* is your name: set it with customize/);
     expect(prompt).toMatch(/After you ask what to call them, a bare name is theirs/);
     expect(prompt).toMatch(/save preferred_name only when they say the name is theirs/);
   });
@@ -62,6 +62,15 @@ describe('Persona prompt contract', () => {
     expect(prompt).toMatch(/Never leave template placeholders/);
     expect(prompt).toMatch(/One button per message/);
     expect(prompt).toMatch(/If they asked for something, help with that instead and leave the call for later/);
+  });
+
+  it('keeps remember for the user and customize for the assistant, with no settings menu', () => {
+    const prompt = buildSystemPrompt({ facts: [], capabilities: ['text'], onboarding: progress() });
+    expect(prompt).toMatch(/Use remember only for something new or changed about them: what to call them and what they need/);
+    expect(prompt).toMatch(/Use customize when they name you or ask to change your name, look, personality .* or call voice, and switch right away/);
+    expect(prompt).toMatch(/When they first name you, you may also give yourself a look .* they can ask for another color/);
+    expect(prompt).not.toContain('⋯');
+    expect(prompt).not.toContain('assistant_name');
   });
 
   it('uses the chosen personality, and the warm default otherwise', () => {
