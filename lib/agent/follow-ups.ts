@@ -34,8 +34,6 @@ export interface WakeTrigger {
   detail: string;
   /** Accounts the follow-up may read (Gmail just connected). */
   include?: Array<'gmail' | 'calendar'>;
-  /** The call ended with a goodbye: at most one short line toward the recurring task. */
-  afterGoodbye?: boolean;
 }
 
 const DAY_MS = 86_400_000;
@@ -68,11 +66,11 @@ export function pendingTriggers(state: SessionProjection, now: Date): WakeTrigge
     const reason = endReason(call);
     const cutOff = cutOffLine(call);
     const lastUser = [...call.utterances].reverse().find((utterance) => utterance.speaker === 'user')?.text ?? '';
-    const afterGoodbye = reason === 'goodbye' || GOODBYE.test(lastUser);
+    const endedWithGoodbye = reason === 'goodbye' || GOODBYE.test(lastUser);
     const detail = reason === 'setup_failed' || (!call.startedAt && !call.utterances.length)
       ? 'a call they started never connected'
-      : `the browser call ended because ${END_REASONS[reason]}${callDuration(call.startedAt, call.endedAt) ? `, after ${callDuration(call.startedAt, call.endedAt)}` : ''}${cutOff ? `; their last line looks cut off: "${cutOff}"` : ''}${afterGoodbye ? '; it ended with a goodbye' : ''}`;
-    triggers.push({ id: `call:${call.callId}`, kind: 'call_ended', at: call.endedAt!, detail, ...(afterGoodbye ? { afterGoodbye } : {}) });
+      : `the browser call ended because ${END_REASONS[reason]}${callDuration(call.startedAt, call.endedAt) ? `, after ${callDuration(call.startedAt, call.endedAt)}` : ''}${cutOff ? `; their last line looks cut off: "${cutOff}"` : ''}${endedWithGoodbye ? '; it ended with a goodbye' : ''}`;
+    triggers.push({ id: `call:${call.callId}`, kind: 'call_ended', at: call.endedAt!, detail });
   }
   for (const item of state.timeline) {
     if (item.kind !== 'connection_notice' || item.phase === 'disconnected' || !recent(item.at)) continue;
@@ -96,15 +94,13 @@ export function pendingTriggers(state: SessionProjection, now: Date): WakeTrigge
 }
 
 /**
- * The code guardrails, before any model runs. Undefined lets the assistant decide; otherwise the reason
- * it may not write now, and for quiet hours, when to try again.
+ * The code guardrails, before any model runs: only safety limits. Whether a message is worth sending (after
+ * a goodbye, say) is the assistant's call, made from its onboarding prompt. Undefined lets it decide;
+ * otherwise the reason it may not write now, and for quiet hours, when to try again.
  */
 export function guard(trigger: WakeTrigger, user: UserState, state: SessionProjection, now: Date): { reason: string; retryAt?: string } | undefined {
-  const stop = saidStop(state);
   const fresh = now.getTime() - Date.parse(trigger.at) < FRESH_MS && trigger.kind !== 'check_in';
-  if (stop === 'stop') return { reason: 'they asked not to be messaged' };
-  // After a goodbye, only the call's own wake-up, within a few minutes, may add one line toward the recurring task.
-  if (stop === 'goodbye' && !(trigger.kind === 'call_ended' && trigger.afterGoodbye && fresh)) return { reason: 'their last words were a goodbye' };
+  if (saidStop(state) === 'stop') return { reason: 'they asked not to be messaged' };
   if (state.calls.some((call) => call.phase === 'accepted' || call.phase === 'started')) return { reason: 'a call is live; the call handles it' };
   if (user.engagement.unpromptedLast24h >= DAILY_UNPROMPTED_LIMIT) return { reason: `already ${DAILY_UNPROMPTED_LIMIT} unprompted messages in the last day` };
   // Quiet hours protect people who've stepped away; someone who hung up or opened the page a minute ago is still here.
@@ -112,21 +108,13 @@ export function guard(trigger: WakeTrigger, user: UserState, state: SessionProje
   return undefined;
 }
 
-/** The recurring task is the clear next step: an account is connected and no task was proposed, approved or turned down yet. */
-export function recurringIsNext(user: UserState): boolean {
-  return (user.accounts.gmail === 'connected' || user.accounts.calendar === 'connected') && user.activation.recurring.status === 'none';
-}
-
 /** The app note a wake-up adds after the conversation (also printed by scripts/show-prompt.ts). */
-export function wakeNote(trigger: WakeTrigger, user?: UserState): string {
-  const afterGoodbye = !trigger.afterGoodbye ? ''
-    : user && recurringIsNext(user)
-      ? 'They said goodbye, and there is one clear next step: their account is connected and they have no recurring task yet. Write one short line that recaps the call in a few words, and put up the preview card with propose_automation, built from what they need (e.g. a weekday-morning rundown of who is waiting on them). Nothing else, no question beyond the card.'
-      : 'They said goodbye and there is no clear next step toward a recurring task: call stay_quiet.';
+export function wakeNote(trigger: WakeTrigger, state?: SessionProjection): string {
   return [
     'App note, not from the user: the app woke you; they did not write.',
     `What happened: ${trigger.detail}.`,
-    afterGoodbye || 'Decide, as your onboarding guidance says: write one short message (a bubble or two), or call stay_quiet with a short reason. Silence is the default.',
+    ...(state && saidStop(state) === 'goodbye' ? ['Their last words were a goodbye.'] : []),
+    'Decide, as your onboarding guidance says: write one short message (a bubble or two), or call stay_quiet with a short reason. Silence is the default.',
     "If you write, pick the thread back up like a person, then the point. Don't mention this note.",
   ].join('\n');
 }
@@ -154,7 +142,7 @@ export async function wake(deps: FollowUpDeps, sessionId: string, trigger: WakeT
       if (blocked.retryAt) await deps.store.appendEvent(sessionId, { id: `check-in:quiet:${trigger.id}`, at: now.toISOString(), type: 'check_in', wakeAt: blocked.retryAt, reason: `after quiet hours: ${trigger.detail}` });
       return await record('quiet', blocked.retryAt ? `moved to ${localClock(new Date(blocked.retryAt), user.now.timezone).local}` : blocked.reason, blocked.reason);
     }
-    const turn = await prepareTurn(deps, sessionId, events, { turnId: id, trigger: { id, instruction: wakeNote(trigger, user), ...(trigger.include ? { include: trigger.include } : {}) } });
+    const turn = await prepareTurn(deps, sessionId, events, { turnId: id, trigger: { id, instruction: wakeNote(trigger, state), ...(trigger.include ? { include: trigger.include } : {}) } });
     const result = await generateTurnResult(turn, deps.env, deps.model);
     const quiet = result.steps.flatMap((step) => step.toolResults).find((item) => item.toolName === 'stay_quiet');
     if (quiet) return await record('quiet', String((quiet.input as { reason?: unknown } | undefined)?.reason ?? 'chose to stay quiet'));

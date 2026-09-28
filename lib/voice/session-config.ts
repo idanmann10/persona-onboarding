@@ -50,19 +50,23 @@ function stillOpen(user: UserState): string[] {
       : item === 'gmail' ? 'whether they want to connect Gmail so you can show them something real' : SETUP_LABELS[item]);
 }
 
-/** The call's goals in order (the open basics, the first win, then the recurring task) and the one to aim for now. */
+/**
+ * The call's goals in order (the open basics, the first win, then the recurring task) and the one to aim
+ * for now. Onboarding goals only: once they're settled in, a call is about whatever they called about.
+ */
 export function callGoals(user: UserState): { steps: string[]; target: string } {
-  const onboarding = user.lifecycle.stage === 'onboarding' && !user.lifecycle.skippedSetup;
-  const basics = onboarding ? stillOpen(user) : [];
+  const inOnboarding = user.lifecycle.stage === 'onboarding';
+  // Skipping setup ends the questions, not the steering toward value.
+  const basics = inOnboarding && !user.lifecycle.skippedSetup ? stillOpen(user) : [];
   const gmail = user.accounts.gmail === 'connected';
   const won = Boolean(user.activation.firstValueAt);
-  const firstWin = won ? '' : gmail
+  const firstWin = !inOnboarding || won ? '' : gmail
     ? 'the first win: look in their inbox (or calendar) for what they need and tell them one specific thing, like who is waiting on them'
     : user.setup.gmail.status === 'declined'
       ? 'the first win: help with what they tell you right now, something real and specific'
       : "the first win: when their need touches email, put the Connect Gmail button on their screen (show_connection), then read their inbox once they're in";
   const task = user.activation.recurring;
-  const recurring = task.status === 'active' ? '' : task.status === 'proposed'
+  const recurring = !inOnboarding || task.status === 'active' ? '' : task.status === 'proposed'
     ? 'their first recurring task: the preview card is waiting in the chat, so tell them to tap Approve'
     : task.status === 'declined' ? '' : 'their first recurring task: offer to make the win happen on its own (propose_automation puts a preview card in the chat, e.g. a weekday-morning rundown of who is waiting on them), and tell them to tap Approve';
   const steps = [...(basics.length ? [`the basics, one at a time and only when it fits: ${basics.join('; ')}`] : []), firstWin, recurring].filter(Boolean);
