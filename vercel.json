@@ -5,6 +5,13 @@
   "buildCommand": "echo 'no build'",
   "outputDirectory": "public",
   "rewrites": [
-    { "source": "/:path*", "destination": "https://persona-app-production-7359.up.railway.app/:path*" }
+    {
+      "source": "/",
+      "destination": "https://persona-app-production-7359.up.railway.app/"
+    },
+    {
+      "source": "/:path*",
+      "destination": "https://persona-app-production-7359.up.railway.app/:path*"
+    }
   ]
 }
