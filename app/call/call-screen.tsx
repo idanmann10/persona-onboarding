@@ -79,8 +79,7 @@ export function CallScreen(props: CallScreenProps) {
     setLeaving(true);
     const timer = setTimeout(() => { setMounted(false); setLeaving(false); setConnected(false); }, (connected ? ENDED_HOLD_MS : 0) + EXIT_MS);
     return () => clearTimeout(timer);
-    // Only the phase drives this; `mounted`, `leaving` and `connected` are its own bookkeeping.
-  }, [live, props.phase]);
+  }, [live, props.phase]); // Only the phase drives this; `mounted`, `leaving` and `connected` are its own bookkeeping.
 
   if (!mounted) return null;
   return <CallView key={generation} {...props} leaving={leaving} ended={leaving && connected} />;
@@ -131,9 +130,10 @@ function CallView({ phase, name, avatarUrl, startedAt, feed, timeline, signingIn
   const running = [...feed.state.tools].reverse().find((tool) => tool.status === 'running');
   const recent = feed.state.tools.at(-1);
   const tool = running ?? (recent && now - recent.updatedAt < TOOL_LINGER_MS ? recent : undefined);
-  const activity = signingIn && active
-    ? { state: 'running' as const, text: 'Waiting while you sign in to Google…' }
-    : tool ? { state: tool.status, text: tool.status === 'running' ? toolStatus(tool.name, tool.arguments).running : tool.status === 'done' ? toolStatus(tool.name, tool.arguments).done : "That didn't go through" } : undefined;
+  const activity = signingIn && active ? { state: 'running' as const, text: 'Waiting while you sign in to Google…' }
+    : tool?.status === 'failed' ? { state: tool.status, text: "That didn't go through" }
+      : tool ? { state: tool.status, text: toolStatus(tool.name, tool.arguments)[tool.status === 'running' ? 'running' : 'done'] }
+        : undefined;
 
   const speakingLine = !active ? '' : speaking === 'assistant' ? `${name} is speaking` : speaking === 'user' ? 'You’re speaking' : muted ? 'You’re muted' : 'Listening';
 
@@ -204,7 +204,8 @@ function CallView({ phase, name, avatarUrl, startedAt, feed, timeline, signingIn
           </div>
 
           <span className="cs-spacer" aria-hidden="true" />
-          <Captions captions={feed.state.captions} name={name} phase={phase} now={now} />
+          <Captions captions={feed.state.captions} name={name} now={now}
+            hint={leaving ? '' : phase === 'connecting' ? 'Setting up your microphone…' : `Say hello, or tap Keyboard to type. ${name} hears both.`} />
 
           {offers.map((toolkit) => (
             <div className="cs-offer cs-glass" key={toolkit}>
@@ -277,7 +278,7 @@ function Control({ label, children, onClick, disabled, pressed, expanded, tone, 
   );
 }
 
-function Captions({ captions, name, phase, now }: { captions: CallCaption[]; name: string; phase: Phase; now: number }) {
+function Captions({ captions, name, now, hint }: { captions: CallCaption[]; name: string; now: number; hint: string }) {
   const ref = useRef<HTMLDivElement>(null);
   // Follow new lines unless the user scrolled up to reread.
   const following = useRef(true);
@@ -304,9 +305,7 @@ function Captions({ captions, name, phase, now }: { captions: CallCaption[]; nam
             <b>{caption.speaker === 'user' ? (caption.typed ? 'You typed' : 'You') : name}</b>
             <span>{caption.text}</span>
           </p>
-        )) : (
-          <p className="cs-line cs-hint">{phase === 'connecting' ? 'Setting up your microphone…' : `Say hello, or tap Keyboard to type. ${name} hears both.`}</p>
-        )}
+        )) : hint ? <p className="cs-line cs-hint">{hint}</p> : null}
       </div>
     </div>
   );
