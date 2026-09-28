@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 
-export type IpScope = 'session' | 'chat' | 'voice' | 'tool' | 'follow_up' | 'voice_event' | 'sign_in' | 'sign_up' | 'sign_in_email';
+export type IpScope = 'session' | 'chat' | 'voice' | 'tool' | 'follow_up' | 'voice_event' | 'sign_in' | 'sign_up' | 'sign_in_email' | 'look' | 'paint';
 
 /**
  * Per-client limits across all guest sessions, so churning cookies cannot mint unlimited sessions or
@@ -20,6 +20,9 @@ export const IP_LIMITS: Record<IpScope, [number, number]> = {
   sign_in: [30, 900],
   sign_up: [10, 3_600],
   sign_in_email: [10, 900],
+  // The look picker: picking a stock portrait is cheap; painting a described one is a billed image.
+  look: [120, 3_600],
+  paint: [12, 3_600],
 };
 
 /**
