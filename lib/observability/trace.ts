@@ -105,6 +105,8 @@ export const isTraceSink = (value: unknown): value is TraceSink =>
 export function describeTurn(sink: TraceSink, sessionId: string, turn: {
   turnId: string; trigger?: { id: string; instruction: string }; channel: string; model?: string;
   instructions: string; messages: unknown[]; tools: Record<string, unknown>; userText?: string;
+  /** Estimated tokens per prompt section and what the replayed conversation held (lib/agent/budget.ts). */
+  context?: Record<string, unknown>;
 }): TurnTrace {
   return {
     sink, sessionId, turnId: turn.turnId, name: turnName(turn.trigger?.id),
@@ -115,6 +117,7 @@ export function describeTurn(sink: TraceSink, sessionId: string, turn: {
       messageCount: turn.messages.length,
       tools: Object.keys(turn.tools),
       channel: turn.channel,
+      ...(turn.context ? { context: turn.context } : {}),
       ...(turn.trigger ? { triggerId: turn.trigger.id, trigger: clip(turn.trigger.instruction, 2_000) } : turn.userText ? { userText: clip(turn.userText, 1_200) } : {}),
     },
   };

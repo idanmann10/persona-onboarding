@@ -18,14 +18,23 @@ import { showConnection } from './show-connection';
 import { readCalendarWindow, searchGmail } from './read-account';
 import { resolveIdentity } from './resolve-identity';
 import { soulNote } from './soul-note';
+import { forgetMemory, recallMemory, saveMemory } from './memory';
+import { BUDGET, clipToTokens, estimateTokens } from '../budget';
 
 export type { ToolContext, ToolStore } from './types';
 
 /** Every tool the assistant has, text and call alike. Order is the order models see them. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const AGENT_TOOLS: ReadonlyArray<AgentTool<any>> = [
-  remember, customize, noteDecline, graduate, offerCall, proposeAutomation, showConnection, searchGmail, readCalendarWindow, resolveIdentity, soulNote,
+  remember, saveMemory, recallMemory, forgetMemory, customize, noteDecline, graduate, offerCall, proposeAutomation, showConnection, searchGmail, readCalendarWindow, resolveIdentity, soulNote,
 ];
+
+/** A tool result as the model sees it: past its budget it's cut, with a note saying so (the trace keeps all of it). */
+export function capToolResult(output: unknown): string {
+  const text = JSON.stringify(output ?? null);
+  if (estimateTokens(text) <= BUDGET.toolResult) return text;
+  return `${clipToTokens(text, BUDGET.toolResult)} [result cut to fit; ask for less, e.g. a narrower search]`;
+}
 
 export const VOICE_TOOL_NAMES = AGENT_TOOLS.filter((item) => item.channels.includes('voice')).map((item) => item.name);
 
@@ -66,7 +75,14 @@ export function textToolSet(ctx: ToolContext): ToolSet {
   const set: ToolSet = {};
   for (const item of AGENT_TOOLS) {
     if (!item.channels.includes('text') || (item.offered && !item.offered(ctx))) continue;
-    set[item.name] = tool({ description: item.description, inputSchema: item.input, execute: (input: unknown) => item.execute(ctx, input) });
+    set[item.name] = tool({
+      description: item.description, inputSchema: item.input, execute: (input: unknown) => item.execute(ctx, input),
+      // Most results are a status line; a read can be bulky, and a bulky result would ride along every later step.
+      toModelOutput: ({ output }) => {
+        const text = capToolResult(output);
+        return text.length === JSON.stringify(output ?? null).length ? { type: 'json', value: (output ?? null) as never } : { type: 'text', value: text };
+      },
+    });
   }
   return set;
 }

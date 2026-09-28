@@ -2,7 +2,7 @@ import type { SessionEvent, Toolkit } from '../domain/events';
 import { projectSession } from '../domain/project';
 import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
-import { runVoiceTool, toolContext, VOICE_TOOL_NAMES } from '../agent/tools';
+import { capToolResult, runVoiceTool, toolContext, VOICE_TOOL_NAMES } from '../agent/tools';
 import type { AccountReadClient } from '../agent/tools/accounts';
 import { withVoiceToolTrace } from '../observability/voice-tool-trace';
 import type { TraceSink } from '../observability/trace';
@@ -42,6 +42,6 @@ export function createVoiceToolHandler(store: Store, env: Record<string, string 
     const state = projectSession(await store.readEvents(sessionId));
     const ctx = await toolContext({ store, env, composio }, sessionId, state, { channel: 'voice', turnId: `${callId}:${callItemId}` });
     const { output, ui } = await runVoiceTool(ctx, name, args);
-    return Response.json({ output: JSON.stringify(output), ...(ui ? { ui } : {}) });
+    return Response.json({ output: capToolResult(output), ...(ui ? { ui } : {}) });
   });
 }

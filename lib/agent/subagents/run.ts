@@ -25,11 +25,13 @@ export const AGENT_LABELS: Record<Exclude<AgentName, 'assistant'>, string> = { c
  */
 export async function runSubagent<T>(deps: SubagentDeps, run: {
   agent: Exclude<AgentName, 'assistant'>; sessionId: string; turnId: string; system: string; input: unknown; schema: z.ZodType<T>;
+  /** The agent log's name for this run when it isn't the agent's usual job (the memory compacting history). */
+  name?: string;
 }): Promise<T | undefined> {
   const prompt = JSON.stringify(run.input, null, 1);
   const model = deps.env.OPENAI_SUBAGENT_MODEL || deps.env.OPENAI_TEXT_MODEL || 'gpt-6-luna';
   const tracer = turnTracer(deps.trace ? {
-    sink: deps.trace, sessionId: run.sessionId, turnId: run.turnId, name: AGENT_LABELS[run.agent],
+    sink: deps.trace, sessionId: run.sessionId, turnId: run.turnId, name: run.name ?? AGENT_LABELS[run.agent],
     data: { model, promptVersion: `${run.agent}/${SOUL_VERSION}`, instructions: run.system, messageCount: 1, tools: [], channel: 'background', agent: run.agent, trigger: clip(prompt, 4_000) },
   } : undefined);
   tracer.start();
@@ -43,7 +45,7 @@ export async function runSubagent<T>(deps: SubagentDeps, run: {
     await tracer.end({ status: 'ok', reply: JSON.stringify(output, null, 1) });
     return output;
   } catch (error) {
-    console.warn(`${AGENT_LABELS[run.agent]} failed`, error instanceof Error ? error.message : error);
+    console.warn(`${run.name ?? AGENT_LABELS[run.agent]} failed`, error instanceof Error ? error.message : error);
     await tracer.end({ status: failureStatus(error), error });
     return undefined;
   }

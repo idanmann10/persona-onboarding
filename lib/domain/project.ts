@@ -1,6 +1,7 @@
-import type { AgentName, CallEndReason, SessionEvent, Toolkit } from './events';
+import type { AgentName, CallEndReason, MemoryKind, MemorySource, Provenance, SessionEvent, Toolkit } from './events';
 import { groupUtterances, type Utterance } from '../voice/transcript';
 import { setupStatus, type SetupStatus } from './onboarding';
+import { memoryIdFor } from './memory';
 
 type FactEvent = Extract<SessionEvent, { type: 'fact' }>;
 type FactRecord = Omit<FactEvent, 'evidence'> & { evidence: FactEvent['evidence'] | 'superseded' };
@@ -42,6 +43,24 @@ export interface OnboardingProgress {
   automation: { status: 'none' | 'proposed' | 'active' | 'declined' | 'disabled'; title?: string; schedule?: string };
 }
 
+/** One memory as it stands now. A replaced or forgotten memory stays here for the record but is never recalled. */
+export interface MemoryRecord {
+  memoryId: string;
+  text: string;
+  kind: MemoryKind;
+  labels: string[];
+  confidence: 'low' | 'medium' | 'high';
+  source: MemorySource;
+  provenance: Provenance;
+  by: AgentName;
+  at: string;
+  eventId: string;
+  replaces: string[];
+  status: 'live' | 'replaced' | 'forgotten';
+  replacedBy?: string;
+  forgotten?: { reason: string; at: string; by: AgentName };
+}
+
 export interface SessionProjection {
   messages: MessageEvent[];
   facts: Record<string, FactRecord>;
@@ -61,7 +80,8 @@ export interface SessionProjection {
   /** What the agents learned and decided along the way (memory, labels, soul notes, coach decisions). */
   memory: {
     soulNotes: Record<AgentName, Array<Of<'soul_note'>>>;
-    notes: Array<Of<'note'>>;
+    /** Every memory ever saved, oldest first, with its current status (see lib/domain/memory.ts). */
+    memories: MemoryRecord[];
     /** Active labels by lowercased label; a `remove` drops one. */
     labels: Record<string, Of<'label'>>;
     /** Loops by id, oldest first; `open` is false once closed. */
@@ -82,7 +102,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
     connections: { gmail: 'none', calendar: 'none' }, apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
-    memory: { soulNotes: { assistant: [], coach: [], memory: [] }, notes: [], labels: {}, loops: [], readLines: 0, coach: [], asks: [] },
+    memory: { soulNotes: { assistant: [], coach: [], memory: [] }, memories: [], labels: {}, loops: [], readLines: 0, coach: [], asks: [] },
     activity: { visits: [], reads: [], runs: [] },
     onboarding: {
       assistantName: { status: 'unknown' }, preferredName: { status: 'unknown' }, need: { status: 'unknown' },
@@ -111,6 +131,16 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
     if (turn) turnCards.set(turn, [...(turnCards.get(turn) ?? []), item]);
   };
   const connectionOffers: Partial<Record<Toolkit, Extract<TimelineItem, { kind: 'connection_offer' }>>> = {};
+  const memories = new Map<string, MemoryRecord>();
+  const keep = (record: MemoryRecord) => {
+    if (memories.has(record.memoryId)) return;
+    for (const id of record.replaces) {
+      const old = memories.get(id);
+      if (old?.status === 'live') { old.status = 'replaced'; old.replacedBy = record.memoryId; }
+    }
+    memories.set(record.memoryId, record);
+    state.memory.memories.push(record);
+  };
   for (const event of events) {
     if (seen.has(event.id)) continue;
     seen.add(event.id);
@@ -202,8 +232,22 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         state.memory.soulNotes[event.agent]?.push(event);
         break;
       case 'note':
-        state.memory.notes.push(event);
+        keep({
+          memoryId: memoryIdFor(event.id), text: event.text, kind: event.kind, labels: [], confidence: event.provenance === 'user_said' ? 'high' : 'medium',
+          source: event.source, provenance: event.provenance, by: 'memory', at: event.at, eventId: event.id, replaces: [], status: 'live',
+        });
         break;
+      case 'memory':
+        keep({
+          memoryId: event.memoryId, text: event.text, kind: event.kind, labels: event.labels, confidence: event.confidence, source: event.source,
+          provenance: event.provenance, by: event.by, at: event.at, eventId: event.id, replaces: event.replaces ?? [], status: 'live',
+        });
+        break;
+      case 'forget': {
+        const memory = memories.get(event.memoryId);
+        if (memory && memory.status !== 'forgotten') { memory.status = 'forgotten'; memory.forgotten = { reason: event.reason, at: event.at, by: event.by }; }
+        break;
+      }
       case 'label': {
         const key = event.label.toLocaleLowerCase();
         if (event.action === 'remove') delete state.memory.labels[key];

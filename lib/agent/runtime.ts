@@ -39,8 +39,8 @@ export function timeoutFor(env: Env) {
 const isTimeout = (error: unknown) => error instanceof Error && /time(d)? ?out/i.test(`${error.name} ${error.message}`);
 
 /** Tools whose only effect is a saved fact or a card on screen: a reply beside them needs no further step. */
-const CARD_TOOLS = new Set(['remember', 'customize', 'note_decline', 'graduate', 'offer_call', 'show_connection', 'propose_automation', 'soul_note']);
-const CARD_DONE = new Set(['saved', 'unchanged', 'offered', 'already_offered', 'shown', 'already_shown', 'proposed', 'already_proposed', 'already_connected', 'already_on_call']);
+const CARD_TOOLS = new Set(['remember', 'save_memory', 'forget_memory', 'customize', 'note_decline', 'graduate', 'offer_call', 'show_connection', 'propose_automation', 'soul_note']);
+const CARD_DONE = new Set(['saved', 'unchanged', 'updated', 'merged', 'forgotten', 'offered', 'already_offered', 'shown', 'already_shown', 'proposed', 'already_proposed', 'already_connected', 'already_on_call']);
 
 /**
  * A step that wrote the reply and only put up cards is the whole turn. Another step would only repeat
