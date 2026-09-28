@@ -9,12 +9,12 @@ import { assistantGroupEnds, Bubble, duration, TimelineEntry, type Face, type To
 import { Avatar } from './components/avatar';
 import { ConnectionsSheet, prefetchApps } from './components/connections-sheet';
 import { AppsIcon, ArrowUpIcon, PersonaMark, PhoneIcon } from './components/icons';
+import { useFollowUps } from './use-follow-ups';
 
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
-type FollowUpRequest = { kind: 'call_ended'; callId: string } | { kind: 'connection'; toolkit: Toolkit; acknowledge?: boolean };
 /** `avatarUrl` is the assistant's photo, served by `/api/session`. */
 type Settings = PersonaSettings & { avatarUrl?: string };
-type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: Settings; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean; account?: { email: string } | null };
+type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: Settings; automationDue?: boolean; account?: { email: string } | null };
 type Caption = { speaker: 'user' | 'assistant'; text: string };
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
@@ -54,8 +54,6 @@ export default function Home() {
   const topRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const appsButtonRef = useRef<HTMLButtonElement>(null);
-  const followUpsRunning = useRef(false);
-  const followUpQueue = useRef<FollowUpRequest[]>([]);
 
   const assistantName = progress && (progress.assistantName.status === 'confirmed' || progress.assistantName.status === 'tentative') && progress.assistantName.value ? progress.assistantName.value : 'Persona';
 
@@ -71,29 +69,14 @@ export default function Home() {
     return snapshot;
   }, []);
 
-  const runFollowUps = useCallback(async (requests: FollowUpRequest[]) => {
-    // Queue rather than drop: a connection can finish while a call's follow-up is still running.
-    followUpQueue.current.push(...requests);
-    if (followUpsRunning.current) return;
-    followUpsRunning.current = true;
-    try {
-      for (let request = followUpQueue.current.shift(); request; request = followUpQueue.current.shift()) {
-        setThinking(!('acknowledge' in request && request.acknowledge));
-        const response = await post('/api/agent/follow-up', request).catch(() => undefined);
-        if (response?.ok) await refresh();
-      }
-    } finally {
-      followUpsRunning.current = false;
-      setThinking(false);
-    }
-  }, [refresh]);
+  // Follow-ups are decided and written on the server; the page watches for them (see use-follow-ups.ts).
+  const { writing, expect: expectFollowUp } = useFollowUps(refresh, sending || loading);
 
   useEffect(() => {
     let active = true;
     refresh()
       .then(async (snapshot) => {
         if (!active || !snapshot) return;
-        if (snapshot.pendingFollowUps?.length) await runFollowUps(snapshot.pendingFollowUps);
         if (snapshot.automationDue) {
           setThinking(true);
           const response = await post('/api/automations', { action: 'run_due' }).catch(() => undefined);
@@ -104,7 +87,7 @@ export default function Home() {
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'The conversation could not be loaded.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [refresh, runFollowUps]);
+  }, [refresh]);
 
   // Once the session exists, and after every connection change, warm the Apps sheet so it opens instantly.
   useEffect(() => { if (!loading) prefetchApps(appsVersion); }, [loading, appsVersion]);
@@ -114,7 +97,7 @@ export default function Home() {
     if (loading) return;
     endRef.current?.scrollIntoView({ behavior: scrolledOnce.current ? 'smooth' : 'auto', block: 'end' });
     scrolledOnce.current = true;
-  }, [timeline, draft, thinking, loading]);
+  }, [timeline, draft, thinking, writing, loading]);
 
   useEffect(() => {
     if (callPhase !== 'active') return;
@@ -154,15 +137,14 @@ export default function Home() {
       setAppsVersion((value) => value + 1);
       void refresh().then(() => {
         if (!toolkit) return;
-        if (voiceRef.current && event.data.status === 'connected') {
-          voiceRef.current.notify(`The user just connected ${TOOLKIT_NAMES[toolkit]}, and the app confirmed it. Tell them briefly and offer to take a look for them.`);
-          void runFollowUps([{ kind: 'connection', toolkit, acknowledge: true }]);
-        } else void runFollowUps([{ kind: 'connection', toolkit }]);
+        // On a call the live model says it; in text the server's coach decides on a follow-up.
+        if (voiceRef.current && event.data.status === 'connected') voiceRef.current.notify(`The user just connected ${TOOLKIT_NAMES[toolkit]}, and the app confirmed it. Tell them briefly and offer to take a look for them.`);
+        else expectFollowUp();
       });
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [refresh, runFollowUps]);
+  }, [refresh, expectFollowUp]);
 
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
@@ -182,7 +164,7 @@ export default function Home() {
     setSending(true);
     setDraft({ user: { id, role: 'user', text }, assistant: { id: answerId, role: 'assistant', text: '' } });
     try {
-      const response = await post('/api/chat', { id, text });
+      const response = await post('/api/chat', { id, text, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
       if (!response.ok) throw new Error(response.status === 503 ? 'The text model is not configured yet.' : response.status === 429 ? 'Too many messages right now. Please try again shortly.' : 'The reply could not be started.');
       if (!response.body) throw new Error('The reply stream is unavailable.');
       const reader = response.body.getReader();
@@ -225,7 +207,7 @@ export default function Home() {
           setCallPhase('idle');
           setLiveCallId(undefined);
           setCaptions([]);
-          void refresh().then(() => { if (callId) void runFollowUps([{ kind: 'call_ended', callId }]); }).catch(() => undefined);
+          void refresh().then(() => { if (callId) expectFollowUp(); }).catch(() => undefined);
         }
       },
       onCaption: (fragment) => setCaptions((current) => {
@@ -342,7 +324,8 @@ export default function Home() {
   const onCall = callPhase !== 'idle';
   const busy = sending || loading || deleting;
   const face: Face = { name: assistantName, avatarUrl };
-  const groupEnds = assistantGroupEnds(timeline, thinking && !draft);
+  const typing = (thinking || writing) && !draft;
+  const groupEnds = assistantGroupEnds(timeline, typing);
   const callLabel = callPhase === 'active' ? 'Hang up' : callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending…' : 'Call';
   const subtitle = callPhase === 'active' ? `On a call · ${duration(callStartedAt)}` : assistantName === 'Persona' ? 'Your new assistant' : 'Your Persona assistant';
 
@@ -407,7 +390,7 @@ export default function Home() {
               onAnswer={() => void startCall()} onDeclineCall={() => void declineCall()} onConnect={(toolkit) => void connect(toolkit)} onDeclineConnection={(toolkit) => void declineConnection(toolkit)} onAutomation={(action, id) => void automation(action, id)} />
           ))}
           {draft ? <><Bubble speaker="user" text={draft.user.text} /><Bubble speaker="assistant" text={draft.assistant.text} pending face={face} typingLabel={`${assistantName} is typing`} /></> : null}
-          {thinking && !draft ? <Bubble speaker="assistant" text="" face={face} typingLabel={`${assistantName} is typing`} /> : null}
+          {typing ? <Bubble speaker="assistant" text="" face={face} typingLabel={`${assistantName} is typing`} /> : null}
           <div className="thread-end" ref={endRef} />
         </div>
       </div>
