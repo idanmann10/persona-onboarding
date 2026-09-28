@@ -5,7 +5,7 @@
 
 /** The one style every portrait shares. `{name}` and `{description}` are filled in per portrait. */
 export const AVATAR_STYLE_PROMPT = 'A friendly avatar portrait of an AI personal assistant named {name}: {description}. '
-  + 'Soft 3D illustrated character, head and shoulders, centered, looking at the viewer, warm soft light, clean light background, '
+  + 'Soft 3D illustrated character, head and shoulders filling most of the frame, centered, looking at the viewer, warm soft light, plain soft pastel background, '
   + 'gentle pastel palette, rounded shapes, premium Apple-like polish. No text, no logos, no watermark.';
 
 /** ChatGPT's image model first; gpt-image-2 when the account can't use it. OPENAI_IMAGE_MODEL overrides the first. */
@@ -28,6 +28,8 @@ export interface GenerateOptions {
   env?: Record<string, string | undefined>;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /** 'low' (the default) keeps an in-chat painting to a few seconds; the stock portraits, painted once, use 'high'. */
+  quality?: 'low' | 'medium' | 'high';
 }
 
 const oneLine = (value: string, limit: number) => value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit);
@@ -78,7 +80,7 @@ export async function generateAvatar(input: { name: string; description: string 
     for (let attempt = 0; attempt < 2; attempt++) {
       const body = {
         model, prompt, n: 1, size: '1024x1024',
-        ...(formatted ? { quality: 'low', output_format: 'webp' } : { response_format: 'b64_json' }),
+        ...(formatted ? { quality: options.quality ?? 'low', output_format: 'webp' } : { response_format: 'b64_json' }),
       };
       let response: Response;
       try {
