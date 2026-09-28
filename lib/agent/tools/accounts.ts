@@ -1,7 +1,7 @@
-import { tool, type ToolSet } from 'ai';
-import { z } from 'zod';
-import { readCalendarWindow, searchMailbox } from '../integrations/reads';
-import type { Toolkit } from '../integrations/connections';
+import { readCalendarWindow, searchMailbox } from '../../integrations/reads';
+import type { Toolkit } from '../../integrations/connections';
+
+/** Gmail and Calendar reads: when a request is about an account, and the read itself. Used by search_gmail and read_calendar_window. */
 
 const RELEVANT: Record<Toolkit, RegExp> = {
   // English plus the words people use in Spanish, French, German and Portuguese.
@@ -51,28 +51,4 @@ export async function runGmailSearch(client: AccountReadClient, accountId: strin
     await recorded(record, 'gmail', messages);
     return { status: 'ok', messages };
   } catch (error) { console.error('Gmail read failed', error); return { status: 'unavailable' }; }
-}
-
-export const calendarReadInput = z.object({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) });
-export const gmailSearchInput = z.object({ query: z.string().min(1).max(120).describe('A Gmail search query, e.g. "in:inbox is:unread newer_than:7d".') });
-
-export function createAccountTools(client: AccountReadClient, sessionId: string, relevant: Toolkit[], accounts: Partial<Record<Toolkit, string>>, record?: ReadRecorder): ToolSet {
-  const result: ToolSet = {};
-  if (accounts.calendar && relevant.includes('calendar')) {
-    const accountId = accounts.calendar;
-    result.read_calendar_window = tool({
-      description: 'Read at most ten events from the connected primary calendar within a 30-day window, only to answer the current calendar request. No writes.',
-      inputSchema: calendarReadInput,
-      execute: (input) => runCalendarRead(client, accountId, sessionId, input, record),
-    });
-  }
-  if (accounts.gmail && relevant.includes('gmail')) {
-    const accountId = accounts.gmail;
-    result.search_gmail = tool({
-      description: 'Search at most five connected Gmail message summaries (sender, subject, preview, unread) for the current email request. No message bodies, no writes.',
-      inputSchema: gmailSearchInput,
-      execute: (input) => runGmailSearch(client, accountId, sessionId, input, record),
-    });
-  }
-  return result;
 }

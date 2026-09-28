@@ -11,20 +11,20 @@ import { turnTracer } from '../observability/turn-trace';
 type ResearchStore = Parameters<typeof resolveIdentityClaim>[0];
 type Env = Record<string, string | undefined>;
 
-/** Provider wiring for a turn: only what the configured environment enables. */
-export function turnDependencies(store: TurnDependencies['store'] & ResearchStore, env: Env = process.env): TurnDependencies {
+/** Provider wiring for a turn: only what the configured environment enables. Keeps the store's own type, so the background agents can use it too. */
+export function turnDependencies<Store extends TurnDependencies['store'] & ResearchStore>(store: Store, env: Env = process.env): TurnDependencies & { store: Store } {
   return {
     store,
     env,
     ...(isTraceSink(store) ? { trace: store } : {}),
-    composio: env.COMPOSIO_API_KEY ? createComposioClient(env.COMPOSIO_API_KEY) : undefined,
+    ...(env.COMPOSIO_API_KEY ? { composio: createComposioClient(env.COMPOSIO_API_KEY) } : {}),
     // Exa finds the person; Context.dev (optional) researches a confident match.
-    resolveIdentity: env.EXA_API_KEY
-      ? (sessionId, userEvent, clue) => resolveIdentityClaim(store, sessionId, userEvent, clue, {
+    ...(env.EXA_API_KEY ? {
+      resolveIdentity: (sessionId: string, userEvent: Parameters<NonNullable<TurnDependencies['resolveIdentity']>>[1], clue: { first: string; last: string; company: string }) => resolveIdentityClaim(store, sessionId, userEvent, clue, {
         lookup: (person) => lookupPersonCandidate(person, env.EXA_API_KEY!),
         research: async (candidate) => env.CONTEXT_DEV_API_KEY ? researchMatchedPerson(candidate, env.CONTEXT_DEV_API_KEY) : null,
-      })
-      : undefined,
+      }),
+    } : {}),
   };
 }
 
@@ -32,14 +32,14 @@ export function turnDependencies(store: TurnDependencies['store'] & ResearchStor
 export const MAX_STEPS = 6;
 
 /** A stalled request fails in under a minute instead of leaving the user watching dots; it is retried once. */
-function timeoutFor(env: Env) {
+export function timeoutFor(env: Env) {
   const stepMs = Number(env.MODEL_STEP_TIMEOUT_MS) || 45_000;
   return { stepMs, totalMs: Math.max(stepMs * 2, 100_000) };
 }
 const isTimeout = (error: unknown) => error instanceof Error && /time(d)? ?out/i.test(`${error.name} ${error.message}`);
 
 /** Tools whose only effect is a saved fact or a card on screen: a reply beside them needs no further step. */
-const CARD_TOOLS = new Set(['remember', 'customize', 'note_decline', 'graduate', 'offer_call', 'show_connection', 'propose_automation']);
+const CARD_TOOLS = new Set(['remember', 'customize', 'note_decline', 'graduate', 'offer_call', 'show_connection', 'propose_automation', 'soul_note']);
 const CARD_DONE = new Set(['saved', 'unchanged', 'offered', 'already_offered', 'shown', 'already_shown', 'proposed', 'already_proposed', 'already_connected', 'already_on_call']);
 
 /**
@@ -58,11 +58,12 @@ function lastStepWrites({ stepNumber }: { stepNumber: number }) {
   return stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none' as const } : undefined;
 }
 
-function modelSettings(env: Env, override?: LanguageModel) {
+/** The model and its effort. Subagents pass their own model and 'low'; replies use the configured effort. */
+export function modelSettings(env: Env, override?: LanguageModel, options: { model?: string; effort?: string } = {}) {
   if (override) return { model: override };
-  const effort = env.OPENAI_REASONING_EFFORT;
+  const effort = options.effort ?? env.OPENAI_REASONING_EFFORT;
   return {
-    model: openai(env.OPENAI_TEXT_MODEL!) as LanguageModel,
+    model: openai(options.model ?? env.OPENAI_TEXT_MODEL!) as LanguageModel,
     providerOptions: { openai: { reasoningEffort: effort === 'none' || effort === 'medium' || effort === 'high' ? effort : 'low' } },
   };
 }
@@ -74,7 +75,7 @@ function turnSettings(turn: PreparedTurn, env: Env, override?: LanguageModel) {
   };
 }
 
-const failureStatus = (error: unknown): TraceStatus => isTimeout(error) ? 'timeout' : 'error';
+export const failureStatus = (error: unknown): TraceStatus => isTimeout(error) ? 'timeout' : 'error';
 
 /** Stream a turn's text. A tool step between two pieces of text gets a paragraph break. */
 export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): AsyncGenerator<string> {
