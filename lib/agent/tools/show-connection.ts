@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { TOOLKIT_NAMES, TOOLKIT_WORDS, timestamp } from './gates';
 import { defineTool } from './types';
 
+const ASKED_FOR_BUTTON = /\b(button|connect|link|card|see it|don'?t see|where|show|again|resend|put it (back|up)|yes|yeah|yep|sure|ok(ay)?|fine|do it)\b/i;
+
 /** A Connect button for Gmail or Calendar. Nothing is connected until Google's sign-in finishes in this browser. */
 export const showConnection = defineTool({
   name: 'show_connection',
@@ -20,8 +22,12 @@ export const showConnection = defineTool({
     if (ctx.accounts[toolkit]) return { status: 'already_connected' };
     const phase = ctx.state.connections[toolkit];
     if (phase === 'offered') return { status: 'already_shown', note: `The Connect ${name} button is already on screen.` };
-    if (phase === 'declined' && !TOOLKIT_WORDS[toolkit].test(ctx.userWords.at(-1) ?? '')) {
-      return { status: 'declined_recently', note: `They chose not to connect ${name}. Help without it unless they ask.` };
+    if (phase === 'declined') {
+      const said = ctx.userWords.at(-1) ?? '';
+      // A tapped "Not now" is "not yet": looking for the button again, or saying yes to it, brings it back. A
+      // said or typed no stays closed until they bring the account up themselves.
+      const back = TOOLKIT_WORDS[toolkit].test(said) || (ctx.state.declinedBy[toolkit] === 'tapped' && ASKED_FOR_BUTTON.test(said));
+      if (!back) return { status: 'declined_recently', note: `They chose not to connect ${name}. Help without it unless they ask for it.` };
     }
     await ctx.store.appendEvent(ctx.sessionId, { id: `connection-offer:${toolkit}:${ctx.turnId}`, at: timestamp(ctx), type: 'connection', toolkit, phase: 'offered', reason: input.reason.slice(0, 200) });
     return { status: 'shown', note: `A Connect ${name} button is now on screen, right below your message. Nothing is connected until they finish Google's sign-in.` };

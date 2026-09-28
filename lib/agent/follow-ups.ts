@@ -142,8 +142,17 @@ export async function wake(deps: FollowUpDeps, sessionId: string, trigger: WakeT
       if (blocked.retryAt) await deps.store.appendEvent(sessionId, { id: `check-in:quiet:${trigger.id}`, at: now.toISOString(), type: 'check_in', wakeAt: blocked.retryAt, reason: `after quiet hours: ${trigger.detail}` });
       return await record('quiet', blocked.retryAt ? `moved to ${localClock(new Date(blocked.retryAt), user.now.timezone).local}` : blocked.reason, blocked.reason);
     }
-    const turn = await prepareTurn(deps, sessionId, events, { turnId: id, trigger: { id, instruction: wakeNote(trigger, state), ...(trigger.include ? { include: trigger.include } : {}) } });
-    const result = await generateTurnResult(turn, deps.env, deps.model);
+    // While the model decides and writes, the open page shows typing dots (a `reach:` reservation; see
+    // /api/agent/updates). The `wake:` one above is the permanent once-per-trigger lock, so it can't be that signal.
+    const writing = `reach:${trigger.id}`;
+    await deps.store.reserve(sessionId, writing);
+    let result: Awaited<ReturnType<typeof generateTurnResult>>;
+    try {
+      const turn = await prepareTurn(deps, sessionId, events, { turnId: id, trigger: { id, instruction: wakeNote(trigger, state), ...(trigger.include ? { include: trigger.include } : {}) } });
+      result = await generateTurnResult(turn, deps.env, deps.model);
+    } finally {
+      await deps.store.releaseReservation(sessionId, writing);
+    }
     const quiet = result.steps.flatMap((step) => step.toolResults).find((item) => item.toolName === 'stay_quiet');
     if (quiet) return await record('quiet', String((quiet.input as { reason?: unknown } | undefined)?.reason ?? 'chose to stay quiet'));
     const text = undash(result.steps.map((step) => step.text.trim()).filter(Boolean).join('\n\n'));

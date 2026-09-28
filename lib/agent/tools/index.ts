@@ -1,7 +1,9 @@
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 import type { SessionEvent, Toolkit } from '../../domain/events';
-import type { SessionProjection } from '../../domain/project';
+import { projectSession, type SessionProjection } from '../../domain/project';
+import { buildUserState } from '../../domain/user-state';
+import { onboardingGoals } from '../goals';
 import type { AutomationStore } from '../../domain/automation';
 import { availableCapabilities } from '../../domain/capabilities';
 import { generateAvatar } from '../../avatars/generate';
@@ -72,13 +74,30 @@ export async function toolContext(deps: ToolDeps, sessionId: string, state: Sess
   };
 }
 
+/** Tools that can move onboarding along: their result carries the next goal, from the state they just changed. */
+const MOVES_SETUP = new Set(['remember', 'customize', 'note_decline', 'graduate', 'show_connection', 'offer_call', 'propose_automation']);
+
+/**
+ * The goal line in the prompt is read once, at the start of a turn (or a call). When a tool changes where
+ * things stand (they skipped Gmail, named you, approved a card), the result says what to aim at now, so the
+ * reply keeps going from the new state instead of the old one.
+ */
+async function withAim(ctx: ToolContext, name: string, output: ToolResult): Promise<ToolResult> {
+  if (!MOVES_SETUP.has(name) || !ctx.store.readEvents) return output;
+  try {
+    const user = buildUserState(projectSession(await ctx.store.readEvents(ctx.sessionId)), ctx.now?.() ?? new Date());
+    const goals = onboardingGoals(user, { channel: ctx.channel, voice: ctx.capabilities.voice });
+    return goals.target ? { ...output, aim_now: goals.target } : output;
+  } catch { return output; }
+}
+
 /** The tools a text turn offers now, as AI SDK tools. */
 export function textToolSet(ctx: ToolContext): ToolSet {
   const set: ToolSet = {};
   for (const item of AGENT_TOOLS) {
     if (!item.channels.includes('text') || (item.offered && !item.offered(ctx))) continue;
     set[item.name] = tool({
-      description: item.description, inputSchema: item.input, execute: (input: unknown) => item.execute(ctx, input),
+      description: item.description, inputSchema: item.input, execute: async (input: unknown) => withAim(ctx, item.name, await item.execute(ctx, input)),
       // Most results are a status line; a read can be bulky, and a bulky result would ride along every later step.
       toModelOutput: ({ output }) => {
         const text = capToolResult(output);
@@ -104,7 +123,7 @@ export async function runVoiceTool(ctx: ToolContext, name: string, args: unknown
   if (item.offered && !item.offered(ctx)) return { output: { status: 'not_available', note: 'That tool is not available right now.' } };
   const parsed = item.input.safeParse(args);
   if (!parsed.success) return { output: { status: 'invalid_arguments' } };
-  const output = await item.execute(ctx, parsed.data);
+  const output = await withAim(ctx, item.name, await item.execute(ctx, parsed.data));
   const ui = item.voiceUi?.(output, parsed.data);
   return { output, ...(ui ? { ui } : {}) };
 }

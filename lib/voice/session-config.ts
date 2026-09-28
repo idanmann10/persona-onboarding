@@ -42,9 +42,9 @@ type InputMessage = { type: 'message'; role: 'developer' | 'user' | 'assistant';
 type Capabilities = { gmail: boolean; calendar: boolean };
 
 /** The call's goals in order (the open basics, the first win, then the recurring task) and the one to aim for now. */
-export function callGoals(user: UserState): { steps: string[]; target: string } {
+export function callGoals(user: UserState): { steps: string[]; target: string; ask?: string } {
   const goals = onboardingGoals(user, { channel: 'voice' });
-  return { steps: goals.steps, target: goals.target ?? 'whatever they called about; leave them with one clear next step' };
+  return { steps: goals.steps, target: goals.target ?? 'whatever they called about; leave them with one clear next step', ...(goals.ask ? { ask: goals.ask } : {}) };
 }
 
 /**
@@ -102,8 +102,8 @@ ${productMemory()}
 ${known.join('\n')}
 
 # How the call goes
-1. Your hello is said the moment the call starts. Don't say hello again: listen for their answer.
-2. Follow their lead first, then steer toward your goal. One question at a time.
+1. Your hello, with your first ask, is said the moment the call starts. If they only say hello back or "hey", don't just say hi: answer in a word and go for your aim in the same breath.
+2. Follow their lead first, then steer toward your goal. One question at a time. Every turn of yours either helps with what they said or moves the aim forward; never just acknowledge and wait.
 3. If an important name is unclear, ask about that part ("Dana with one n?") and use their correction.
 4. Ending: when they say bye, or want to switch to text, say a short goodbye with what happens next in the chat, then call end_call. Never keep them on the line after a goodbye.
 
@@ -181,7 +181,10 @@ export function greetingLine(state: SessionProjection, now = new Date()): string
   const previous = state.calls.at(-1);
   const back = previous && (previous.reason === 'connection_lost' || previous.reason === 'lost');
   const hello = `Hey${user.identity.callThem ? ` ${user.identity.callThem.name}` : ''}, ${user.assistant.name ? `it's ${user.assistant.name}` : "it's me"}${back ? ', glad the line is back' : ''}.`;
-  const hook = user.openLoops.length || user.setup.need.value ? ' Want to pick up where we left off?' : " What's on your mind?";
+  // The hello asks the call's first goal, so the call opens with a direction, not a blank "what's up".
+  const ask = callGoals(user).ask;
+  const hook = user.openLoops.length ? ` Want to pick up where we left off${user.openLoops[0] ? ` with ${user.openLoops[0].text.replace(/[.?!]+$/, '').slice(0, 60)}` : ''}?`
+    : ask ? ` ${ask[0].toUpperCase()}${ask.slice(1)}` : " What's on your mind?";
   const line = `${hello}${hook}`;
   return language === 'English' ? line : `Say this in ${language}: ${line}`;
 }

@@ -7,6 +7,8 @@ import type { AccountReadClient } from './accounts';
 
 export interface ToolStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
+  /** Lets a tool that moved setup forward report the updated next goal (see withAim). */
+  readEvents?(id: string): Promise<SessionEvent[]>;
 }
 
 /**

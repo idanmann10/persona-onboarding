@@ -10,7 +10,7 @@ import { BUDGET, compactionBudget, clipToTokens, estimateTokens } from './budget
  * (lib/agent/subagents/memory.ts), so a turn never waits on compaction.
  */
 
-export type Line = { speaker: 'user' | 'assistant'; text: string; voice: boolean; at?: string; id?: string; origin?: string };
+export type Line = { speaker: 'user' | 'assistant'; text: string; voice: boolean; at?: string; id?: string; origin?: string; /** An app line (a card, a tap), never the user's words. */ card?: boolean };
 
 const MESSAGE_LIMIT = 40;
 /** One line never takes more than this, however long it was. */
@@ -18,13 +18,35 @@ const LINE_CHARS = 4_000;
 /** The history diet: lines older than the newest few that are this bulky keep only their start. */
 const DIET = { recent: 6, lineTokens: 250 };
 
-/** Every line of the conversation in order, typed or spoken. */
-export function conversationLines(state: SessionProjection): Line[] {
+/**
+ * Every line of the conversation in order, typed or spoken. With `cards`, also the cards put on screen and
+ * what they tapped, as bracketed app lines: only for what a prompt replays, never as the user's words.
+ */
+export function conversationLines(state: SessionProjection, options: { cards?: boolean } = {}): Line[] {
   const lines: Line[] = [];
   const at = new Map(state.messages.map((message) => [message.id, message.at]));
   for (const item of state.timeline) {
     if (item.kind === 'message' && item.text.trim()) lines.push({ speaker: item.speaker, text: item.text, voice: item.channel === 'voice', at: at.get(item.id), id: item.id, ...(item.origin ? { origin: item.origin } : {}) });
     if (item.kind === 'call') for (const utterance of item.call.utterances) lines.push({ speaker: utterance.speaker, text: utterance.text, voice: true, at: item.call.startedAt, id: `call:${item.call.callId}` });
+    // Cards and what they did with them, as app lines in brackets, so the model knows what was on screen
+    // (without them it once denied putting up a button the user had just tapped Not now on).
+    const card = (speaker: Line['speaker'], text: string) => { if (options.cards) lines.push({ speaker, text: `[${text}]`, voice: false, id: `card:${item.id}:${speaker}`, card: true }); };
+    if (item.kind === 'connection_offer') {
+      const name = item.toolkit === 'gmail' ? 'Gmail' : 'Google Calendar';
+      card('assistant', `put a Connect ${name} button on screen`);
+      if (item.status === 'declined') card('user', `tapped Not now on the Connect ${name} button`);
+    }
+    if (item.kind === 'connection_notice' && item.phase !== 'disconnected') card('user', item.phase === 'connected' ? `connected ${item.toolkit === 'gmail' ? 'Gmail' : 'Google Calendar'}` : `the ${item.toolkit === 'gmail' ? 'Gmail' : 'Google Calendar'} sign-in didn't finish`);
+    if (item.kind === 'call_offer') {
+      card('assistant', 'put an Answer button on screen for a short call');
+      if (item.status === 'declined') card('user', 'tapped Not now on the call');
+    }
+    if (item.kind === 'automation') {
+      card('assistant', `put a recurring-task preview on screen: "${item.title}", ${item.schedule}`);
+      if (item.status === 'active') card('user', 'approved it');
+      if (item.status === 'declined') card('user', 'tapped Not now on it');
+      if (item.status === 'disabled') card('user', 'turned it off');
+    }
   }
   return lines;
 }
@@ -50,12 +72,16 @@ export interface HistoryWindow {
 
 /** What a prompt replays: the lines after the summary's watermark, newest first until the budget is spent. */
 export function historyWindow(state: SessionProjection, budget: number = BUDGET.text.history): HistoryWindow {
-  const lines = conversationLines(state);
-  const watermark = Math.min(state.memory.summary?.lines ?? 0, lines.length);
+  const lines = conversationLines(state, { cards: true });
+  // The summary's watermark counts spoken and typed lines only; find where it falls among lines with cards.
+  const words = lines.filter((line) => !line.card).length;
+  const watermark = Math.min(state.memory.summary?.lines ?? 0, words);
+  let first = 0;
+  for (let seen = 0; first < lines.length && seen < watermark; first++) if (!lines[first].card) seen++;
   const kept: Line[] = [];
   let tokens = 0;
   let trimmed = 0;
-  for (let index = lines.length - 1; index >= watermark && kept.length < MESSAGE_LIMIT; index--) {
+  for (let index = lines.length - 1; index >= first && kept.length < MESSAGE_LIMIT; index--) {
     const raw = { ...lines[index], text: lines[index].text.slice(0, LINE_CHARS) };
     const line = index < lines.length - DIET.recent ? diet(raw) : raw;
     const cost = estimateTokens(line.text);
@@ -64,7 +90,8 @@ export function historyWindow(state: SessionProjection, budget: number = BUDGET.
     kept.unshift(line);
     tokens += cost;
   }
-  const start = lines.length - kept.length;
+  // `start` counts spoken and typed lines, like the watermark (callers slice the words-only lines with it).
+  const start = words - kept.filter((line) => !line.card).length;
   return { start, lines: kept, tokens, trimmed, dropped: start - watermark };
 }
 
