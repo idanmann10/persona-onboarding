@@ -1,6 +1,5 @@
 import type { SessionEvent } from '../domain/events';
-import { projectSession, type SessionProjection } from '../domain/project';
-import type { FollowUpRequest } from '../agent/follow-up';
+import { projectSession } from '../domain/project';
 import type { AutomationRecord } from '../domain/automation';
 import { personaSettings } from '../domain/persona';
 import { openMainSession, signedInUser, type LoginStore, type MainSessionStore } from '../auth/login';
@@ -12,26 +11,6 @@ const VISIT_GAP_MS = 30 * 60_000;
 interface Store extends LoginStore, MainSessionStore {
   getCallLease?(id: string): Promise<{ callId?: string; active: boolean } | undefined>;
   listAutomations?(id: string): Promise<AutomationRecord[]>;
-}
-
-const FOLLOW_UP_WINDOW_MS = 24 * 3_600_000;
-
-/**
- * Follow-ups still owed: a call or connection whose assistant reaction never ran, for example because
- * the tab closed during the call. The client asks for them on load; the server decides what to say.
- */
-export function pendingFollowUps(state: SessionProjection, now = Date.now()): FollowUpRequest[] {
-  const pending: FollowUpRequest[] = [];
-  for (const call of state.calls) {
-    if ((call.phase === 'ended' || call.phase === 'dropped') && !state.decisions[`followup:call:${call.callId}`] &&
-        call.endedAt && now - Date.parse(call.endedAt) < FOLLOW_UP_WINDOW_MS) pending.push({ kind: 'call_ended', callId: call.callId });
-  }
-  for (const toolkit of ['gmail', 'calendar'] as const) {
-    const notice = [...state.timeline].reverse().find((item) => item.kind === 'connection_notice' && item.toolkit === toolkit);
-    if (notice && notice.kind === 'connection_notice' && notice.phase !== 'disconnected' && !state.decisions[`followup:${notice.id}`] &&
-        (!notice.at || now - Date.parse(notice.at) < FOLLOW_UP_WINDOW_MS)) pending.push({ kind: 'connection', toolkit });
-  }
-  return pending;
 }
 
 export function createSessionHandler(store: Store, env: Record<string, string | undefined> = {}) {
@@ -74,7 +53,7 @@ export function createSessionHandler(store: Store, env: Record<string, string | 
     const account = { email: user.email, ...(user.fullName ? { name: user.fullName } : {}), ...(user.picture ? { picture: user.picture } : {}) };
     return new Response(JSON.stringify({
       messages, voiceFragments, timeline: projection.timeline, progress: projection.onboarding, settings: personaSettings(projection, env.OPENAI_VOICE),
-      pendingFollowUps: pendingFollowUps(projection), automationDue, account,
+      automationDue, account,
     }), { headers });
   };
 }

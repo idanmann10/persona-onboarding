@@ -2,11 +2,12 @@ import type { LanguageModel } from 'ai';
 import { z } from 'zod';
 import type { CallEndReason, SessionEvent, Toolkit } from '../../lib/domain/events';
 import { projectSession } from '../../lib/domain/project';
-import { prepareTurn, type TurnTrigger } from '../../lib/agent/turn';
-import { describeTrigger, isSilent } from '../../lib/agent/follow-up';
+import { prepareTurn } from '../../lib/agent/turn';
+import { afterTurn, reconcile } from '../../lib/agent/follow-ups';
 import { generateTurnResult } from '../../lib/agent/runtime';
 import { PROMPT_VERSION } from '../../lib/agent/prompts';
-import { greetingEvent } from '../../lib/agent/session';
+import { writeFirstMessage } from '../../lib/agent/first-message';
+import type { TraceEntry } from '../../lib/observability/trace';
 import { createMemoryStore } from './memory-store';
 import { createFixtureComposio, FIXTURE_VERSION, type FixtureRead } from './fixtures';
 
@@ -49,6 +50,26 @@ export function parseScenarios(input: unknown): Scenario[] {
 }
 
 export interface ToolTrace { name: string; input: unknown; output: unknown }
+
+/** The tools a follow-up turn used, from the agent log it wrote (the follow-up runs inside the app's own pipeline). */
+export function followUpTools(traces: TraceEntry[]): ToolTrace[] {
+  const parse = (value: unknown) => { try { return typeof value === 'string' ? JSON.parse(value) : value; } catch { return value; } };
+  return traces.filter((entry) => entry.kind === 'step' && entry.turnId.startsWith('followup:'))
+    .flatMap((entry) => (Array.isArray(entry.data?.tools) ? entry.data.tools : []) as Array<{ name: string; input?: unknown; preview?: unknown }>)
+    .map((item) => ({ name: item.name, input: parse(item.input), output: parse(item.preview) }));
+}
+
+/**
+ * What the app does after a call ends or an account connects: the onboarding coach decides, and a
+ * follow-up is written only if it (and the code guardrails) say so. Returns the message, if any.
+ */
+export async function settleFollowUps(deps: Parameters<typeof reconcile>[0], sessionId: string, store: { events: SessionEvent[]; traces: TraceEntry[] }) {
+  const events = store.events.length;
+  const traces = store.traces.length;
+  await reconcile(deps, sessionId);
+  const message = store.events.slice(events).find((event): event is Extract<SessionEvent, { type: 'message' }> => event.type === 'message' && event.origin === 'follow_up');
+  return { text: message?.text ?? null, tools: followUpTools(store.traces.slice(traces)) };
+}
 export interface StepTrace {
   index: number;
   kind: 'user' | 'call' | 'connect' | 'decline';
@@ -100,17 +121,19 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
   };
   let tick = 0;
   const now = () => new Date(clock().getTime() + (tick += 1_000));
-  const deps = { store, env, composio, now };
+  // The trace sink collects the follow-up turns' tool calls; the scripted model (if any) runs the background agents too.
+  const deps = { store, env, composio, now, trace: store, ...(options.model ? { model: options.model } : {}) };
   const steps: StepTrace[] = [];
   // Start where a real session starts: the opening message is on screen, and accounts connected
   // before the scenario have the event the app records when a connection completes.
-  await store.appendEvent(SESSION, greetingEvent(now()));
+  // The assistant writes its own first message, as the app does when a conversation opens.
+  await writeFirstMessage(deps, SESSION);
   for (const name of scenario.setup.connected) {
     await store.appendEvent(SESSION, { id: `connection:${name}:setup:connected`, at: now().toISOString(), type: 'connection', toolkit: name, phase: 'connected' });
   }
 
-  async function runTurn(turnId: string, trigger?: TurnTrigger) {
-    const turn = await prepareTurn(deps, SESSION, await store.readEvents(), { turnId, trigger });
+  async function runTurn(turnId: string) {
+    const turn = await prepareTurn(deps, SESSION, await store.readEvents(), { turnId });
     const result = await generateTurnResult(turn, env, options.model);
     const tools: ToolTrace[] = result.steps.flatMap((step) => step.toolResults.map((toolResult) => ({ name: toolResult.toolName, input: toolResult.input, output: toolResult.output })));
     const text = result.steps.map((step) => step.text.trim()).filter(Boolean).join('\n\n');
@@ -124,6 +147,8 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
       await store.appendEvent(SESSION, { id: turnId, at: now().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: step.user });
       const { text, tools, usage, modelSteps } = await runTurn(turnId);
       if (text) await store.appendEvent(SESSION, { id: `answer:${turnId}`, at: now().toISOString(), type: 'message', speaker: 'assistant', channel: 'text', text });
+      // As the chat route does after the stream: the onboarding coach and the memory.
+      await afterTurn(deps, SESSION, turnId);
       steps.push({ index, kind: 'user', input: step.user, output: text || null, tools, connected: connectedNow(), usage, modelSteps });
       continue;
     }
@@ -135,7 +160,6 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
       steps.push({ index, kind: 'decline', input: step.decline, output: null, tools: [], connected: connectedNow() });
       continue;
     }
-    let request: Parameters<typeof describeTrigger>[1];
     if ('call' in step) {
       const callId = `live_${scenario.id}_${index}`;
       await store.appendEvent(SESSION, { id: `call:${callId}:accepted`, at: now().toISOString(), type: 'call', phase: 'accepted', callId });
@@ -147,22 +171,14 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
       }
       const reason: CallEndReason = step.end;
       await store.appendEvent(SESSION, { id: `call:${callId}:${reason === 'connection_lost' ? 'dropped' : 'ended'}`, at: now().toISOString(), type: 'call', phase: reason === 'connection_lost' ? 'dropped' : 'ended', callId, reason });
-      request = { kind: 'call_ended', callId };
     } else {
       connected[step.connect] = `ca_fixture_${step.connect}`;
       await store.appendEvent(SESSION, { id: `connection:${step.connect}:${scenario.id}-${index}:connected`, at: now().toISOString(), type: 'connection', toolkit: step.connect, phase: 'connected' });
-      request = { kind: 'connection', toolkit: step.connect };
     }
-    const trigger = describeTrigger(projectSession(await store.readEvents()), request);
-    if (!trigger) throw new Error(`Scenario ${scenario.id} step ${index} produced no follow-up trigger`);
-    const { text, tools, usage, modelSteps } = await runTurn(trigger.id, trigger);
-    const silent = isSilent(text);
-    const at = now().toISOString();
-    if (!silent) await store.appendEvent(SESSION, { id: `answer:${trigger.id}`, at, type: 'message', speaker: 'assistant', channel: 'text', text: text.trim(), origin: 'follow_up' });
-    await store.appendEvent(SESSION, { id: `decision:${trigger.id}`, at, type: 'decision', trigger: trigger.id, outcome: silent ? 'silent' : 'messaged' });
+    const { text, tools } = await settleFollowUps(deps, SESSION, store);
     steps.push({
       index, kind: 'call' in step ? 'call' : 'connect', input: 'call' in step ? step.call.map(([speaker, text]) => `${speaker}: ${text}`).join(' | ') + ` [${step.end}]` : step.connect,
-      output: silent ? null : text.trim(), tools, connected: connectedNow(), followUp: silent ? 'silent' : 'message', usage, modelSteps,
+      output: text, tools, connected: connectedNow(), followUp: text ? 'message' : 'silent',
     });
   }
   const events = await store.readEvents();

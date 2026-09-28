@@ -1,4 +1,4 @@
-import type { CallEndReason, SessionEvent, Toolkit } from './events';
+import type { AgentName, CallEndReason, SessionEvent, Toolkit } from './events';
 import { groupUtterances, type Utterance } from '../voice/transcript';
 import { setupStatus, type SetupStatus } from './onboarding';
 
@@ -7,6 +7,7 @@ type FactRecord = Omit<FactEvent, 'evidence'> & { evidence: FactEvent['evidence'
 type CallPhase = Extract<SessionEvent, { type: 'call' }>['phase'] | 'idle';
 type ConnectionPhase = Extract<SessionEvent, { type: 'connection' }>['phase'];
 type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
+type Of<T extends SessionEvent['type']> = Extract<SessionEvent, { type: T }>;
 
 export type SlotStatus = 'unknown' | 'tentative' | 'confirmed' | 'declined';
 
@@ -57,6 +58,22 @@ export interface SessionProjection {
   onboarding: OnboardingProgress;
   /** The brief's goal: the four things known, or the user skipped ahead. */
   setup: SetupStatus;
+  /** What the agents learned and decided along the way (memory, labels, soul notes, coach decisions). */
+  memory: {
+    soulNotes: Record<AgentName, Array<Of<'soul_note'>>>;
+    notes: Array<Of<'note'>>;
+    /** Active labels by lowercased label; a `remove` drops one. */
+    labels: Record<string, Of<'label'>>;
+    /** Loops by id, oldest first; `open` is false once closed. */
+    loops: Array<{ loopId: string; text: string; at: string; open: boolean }>;
+    summary?: Of<'summary'>;
+    /** Conversation lines the memory has already read. */
+    readLines: number;
+    coach: Array<Of<'coach'>>;
+    asks: Array<Of<'setup_ask'>>;
+  };
+  /** When things happened, for engagement and lifecycle: the first event, returns, and account reads. */
+  activity: { firstAt?: string; visits: string[]; reads: Array<Of<'account_read'>>; runs: Array<{ id: string; phase: 'ran' | 'failed'; at: string; title: string }> };
 }
 
 const ENDED: CallPhase[] = ['ended', 'dropped'];
@@ -65,6 +82,8 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
     connections: { gmail: 'none', calendar: 'none' }, apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
+    memory: { soulNotes: { assistant: [], coach: [], memory: [] }, notes: [], labels: {}, loops: [], readLines: 0, coach: [], asks: [] },
+    activity: { visits: [], reads: [], runs: [] },
     onboarding: {
       assistantName: { status: 'unknown' }, preferredName: { status: 'unknown' }, need: { status: 'unknown' },
       gmail: 'not_offered', call: 'not_offered', automation: { status: 'none' },
@@ -95,6 +114,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
   for (const event of events) {
     if (seen.has(event.id)) continue;
     seen.add(event.id);
+    state.activity.firstAt ??= event.at;
     switch (event.type) {
       case 'message': {
         state.messages.push(event);
@@ -172,6 +192,42 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
       case 'decision':
         state.decisions[event.trigger] = event.outcome;
         break;
+      case 'visit':
+        state.activity.visits.push(event.at);
+        break;
+      case 'account_read':
+        state.activity.reads.push(event);
+        break;
+      case 'soul_note':
+        state.memory.soulNotes[event.agent]?.push(event);
+        break;
+      case 'note':
+        state.memory.notes.push(event);
+        break;
+      case 'label': {
+        const key = event.label.toLocaleLowerCase();
+        if (event.action === 'remove') delete state.memory.labels[key];
+        else state.memory.labels[key] = event;
+        break;
+      }
+      case 'loop': {
+        const loop = state.memory.loops.find((item) => item.loopId === event.loopId);
+        if (event.action === 'close') { if (loop) loop.open = false; }
+        else if (!loop) state.memory.loops.push({ loopId: event.loopId, text: event.text, at: event.at, open: true });
+        break;
+      }
+      case 'summary':
+        if (!state.memory.summary || event.lines >= state.memory.summary.lines) state.memory.summary = event;
+        break;
+      case 'memory_run':
+        state.memory.readLines = Math.max(state.memory.readLines, event.lines);
+        break;
+      case 'coach':
+        state.memory.coach.push(event);
+        break;
+      case 'setup_ask':
+        state.memory.asks.push(event);
+        break;
       case 'automation': {
         let card = state.automations.find((item) => item.automationId === event.automationId);
         if (event.phase === 'proposed') {
@@ -184,6 +240,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
           if (event.phase === 'approved') { card.status = 'active'; card.nextRunAt = event.nextRunAt; }
           else if (event.phase === 'declined' || event.phase === 'disabled') { card.status = event.phase; delete card.nextRunAt; }
           else if (event.phase === 'ran' || event.phase === 'failed') {
+            state.activity.runs.push({ id: event.id, phase: event.phase, at: event.at, title: event.title });
             // A run only happens for an approved task, whatever the approval path; a disabled card keeps no schedule.
             if (card.status === 'proposed') card.status = 'active';
             if (card.status === 'active' && event.nextRunAt) card.nextRunAt = event.nextRunAt;

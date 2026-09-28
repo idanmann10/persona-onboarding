@@ -28,7 +28,8 @@ function parseFragment(value: unknown): Fragment | undefined {
   return { eventId: body.eventId, speaker: body.speaker, text: body.text, startMs: body.startMs as number, endMs: body.endMs as number };
 }
 
-export function createVoiceEventHandler(store: Store) {
+/** `onEnded` runs when a call ends or drops, so the route can let the onboarding coach decide on a follow-up. */
+export function createVoiceEventHandler(store: Store, onEnded?: (sessionId: string) => void) {
   return async (request: Request): Promise<Response> => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
     const sessionId = await signedInSession(store, request);
@@ -79,7 +80,10 @@ export function createVoiceEventHandler(store: Store) {
         return new Response(null, { status: 204 });
       }
       await store.appendEvent(sessionId, { id: `call:${callId}:${body.kind}`, at, type: 'call', phase: body.kind, callId, ...(body.kind !== 'started' && reason ? { reason } : {}) });
-      if (body.kind !== 'started') await store.releaseCallLease(sessionId, callId);
+      if (body.kind !== 'started') {
+        await store.releaseCallLease(sessionId, callId);
+        onEnded?.(sessionId);
+      }
       return new Response(null, { status: 204 });
     }
     return new Response('Invalid event kind', { status: 400 });

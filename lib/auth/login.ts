@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { SessionEvent } from '../domain/events';
-import { greetingEvent } from '../agent/session';
 import { withinIpLimit, type IpQuotaStore } from '../http/client-key';
 import { AUTH_COOKIE, readCookie } from './cookie';
 import { recordFacts, locationFacts, profileFacts, type FactStore } from './profile';
@@ -70,8 +69,8 @@ export async function openMainSession(store: MainSessionStore, user: SignedInUse
   if (user.sessionId) return { id: user.sessionId, created: false, events: await store.readEvents(user.sessionId) };
   if (!(await withinIpLimit(store, request, 'session'))) return 'limited';
   const session = await store.claimMainSession(user.accountId, user.emailVerified ? user.email : undefined, crypto.randomUUID());
-  if (session.created) await store.appendEvent(session.id, greetingEvent());
   let events = await store.readEvents(session.id);
   if (await recordFacts(store, session.id, [...profileFacts(user), ...locationFacts(request)], events, 'signin:profile')) events = await store.readEvents(session.id);
+  // No greeting here: the assistant writes its own first message from these facts (POST /api/agent/greeting).
   return { ...session, events };
 }

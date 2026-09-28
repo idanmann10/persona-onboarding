@@ -51,8 +51,12 @@ export function clip(value: unknown, max = 600): string {
 /** The label a reviewer sees for a turn, from what woke the assistant. */
 export function turnName(triggerId?: string): string {
   if (!triggerId) return 'Reply';
-  if (triggerId.startsWith('followup:call:')) return 'After the call';
-  if (triggerId.startsWith('followup:')) return 'After connecting';
+  if (triggerId.startsWith('followup:call:')) return 'Follow-up after the call';
+  if (triggerId.startsWith('followup:connection:')) return 'Follow-up after connecting';
+  if (triggerId.startsWith('followup:visit:')) return 'Welcome back';
+  if (triggerId.startsWith('followup:wake:')) return 'Scheduled check-in';
+  if (triggerId.startsWith('followup:task:')) return 'Follow-up after a task';
+  if (triggerId.startsWith('followup:')) return 'Follow-up';
   if (triggerId.startsWith('automation:')) return 'Recurring task';
   return 'Reply';
 }
