@@ -98,16 +98,6 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .live-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 0 rgba(255, 59, 48, .55); animation: pulse 1.6s ease-out infinite; }
 @keyframes pulse { 70% { box-shadow: 0 0 0 7px rgba(255, 59, 48, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); } }
 
-/* Live call bar: floating glass under the header. */
-.live-call { max-width: 728px; margin: 10px auto 0; padding: 12px 16px 14px; border-radius: 22px; width: calc(100% - 32px); }
-.live-head { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
-.live-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.live-time { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--ink-mute); }
-.captions { margin-top: 8px; min-height: 42px; max-height: 7.5em; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
-.captions p { margin: 4px 0 0; font-size: 14px; line-height: 1.45; color: var(--ink); }
-.captions p b { color: var(--ink-mute); font-weight: 600; margin-right: 4px; }
-.captions p.assistant b { color: var(--blue); }
-.captions .muted { color: var(--ink-mute); }
 
 /* Thread: iMessage bubbles. */
 .loading { align-self: center; margin: 24px 0; color: var(--grey); font-size: 13px; }
