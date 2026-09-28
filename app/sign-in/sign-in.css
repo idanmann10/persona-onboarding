@@ -1,0 +1,120 @@
+/* Sign-in: one calm column on the white canvas, the brand mark on a glass tile, one Google button. */
+.signin {
+  position: relative;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: calc(40px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+  overflow: hidden;
+  background: var(--canvas);
+}
+.signin-glow {
+  position: absolute;
+  inset: -12% -20% auto;
+  height: 75%;
+  pointer-events: none;
+  background:
+    radial-gradient(42% 46% at 38% 50%, rgba(10, 132, 255, .13), transparent 70%),
+    radial-gradient(36% 40% at 66% 44%, rgba(52, 199, 89, .08), transparent 70%);
+  filter: blur(8px);
+}
+.signin-panel {
+  position: relative;
+  width: min(100%, 380px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: signin-in .5s cubic-bezier(.2, .8, .2, 1) both;
+}
+.signin-tile {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 22px;
+  color: var(--ink);
+}
+.signin-mark { width: 38px; height: 38px; }
+.signin-word { margin: 14px 0 0; font-size: 17px; font-weight: 600; letter-spacing: -.03em; color: var(--ink-mute); }
+.signin-panel h1 {
+  margin: 10px 0 0;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+.signin-error {
+  width: 100%;
+  margin: 22px 0 -6px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: #fff1f0;
+  border: 1px solid #ffd6d3;
+  color: var(--red-ink);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.google-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 48px;
+  margin-top: 30px;
+  padding: 0 20px;
+  border: 1px solid #747775;
+  border-radius: 999px;
+  background: #fff;
+  color: #1f1f1f;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 6px 18px rgba(0, 0, 0, .06);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  text-decoration: none;
+  transition: background .15s ease, box-shadow .15s ease, transform .1s ease;
+}
+.google-button:hover:not(:disabled) { background: var(--surface-alt); box-shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 8px 22px rgba(0, 0, 0, .08); }
+.google-button:active:not(:disabled) { transform: scale(.985); }
+.google-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.google-mark { width: 20px; height: 20px; flex: none; }
+.signin-note {
+  max-width: 300px;
+  margin: 14px 0 0;
+  color: var(--grey);
+  font-size: 12px;
+  line-height: 1.45;
+  text-wrap: balance;
+}
+.signin-test { margin-top: 18px; color: var(--blue); font-size: 13px; font-weight: 500; text-decoration: none; }
+.signin-test:hover { text-decoration: underline; }
+.signin-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  color: var(--grey-2);
+  font-size: 12px;
+}
+.signin-footer a { color: var(--grey); text-decoration: none; }
+.signin-footer a:hover { color: var(--ink-mute); }
+
+@keyframes signin-in { from { opacity: 0; transform: translateY(10px); } }
+
+@media (max-width: 420px) {
+  .signin { justify-content: flex-start; padding-top: calc(18vh + env(safe-area-inset-top)); }
+  .signin-tile { width: 68px; height: 68px; border-radius: 20px; }
+  .signin-mark { width: 34px; height: 34px; }
+  .signin-panel h1 { font-size: 27px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signin-panel { animation: none; }
+}

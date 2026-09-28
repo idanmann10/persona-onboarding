@@ -50,7 +50,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .thread { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; }
 .thread-inner { display: flex; flex-direction: column; gap: 2px; max-width: 760px; margin: 0 auto; padding: calc(var(--top-h, 68px) + 20px) 16px calc(var(--bottom-h, 104px) + 12px); }
 .thread-end { flex: none; height: 0; scroll-margin-bottom: calc(var(--bottom-h, 104px) + 12px); }
-.composer-area { position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; padding: 16px 16px calc(10px + env(safe-area-inset-bottom)); background: linear-gradient(to top, rgba(255, 255, 255, .92) 30%, rgba(255, 255, 255, 0)); pointer-events: none; }
+.composer-area { position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; padding: 16px 16px calc(10px + env(safe-area-inset-bottom)); pointer-events: none;
+  /* Opaque behind the note so scrolled-up bubbles never show through it; the glass composer still floats over a fade. */
+  background: linear-gradient(to top, var(--canvas) 36%, rgba(255, 255, 255, .85) 64%, rgba(255, 255, 255, 0)); }
 .composer-inner { max-width: 728px; margin: 0 auto; pointer-events: auto; }
 
 /* Header */
@@ -110,19 +112,25 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 /* Thread: iMessage bubbles. */
 .loading { align-self: center; margin: 24px 0; color: var(--grey); font-size: 13px; }
 .row { display: flex; }
-.row.assistant { align-items: flex-end; gap: 8px; }
+/* The avatar lane is 24px + a 10px gap, so the tail's 7px hook never reaches the avatar. */
+.row.assistant { align-items: flex-end; gap: 10px; }
+.row .avatar-tiny { position: relative; z-index: 1; }
 .row.user { justify-content: flex-end; }
 .row.user + .row.assistant, .row.assistant + .row.user { margin-top: 10px; }
 .bubble { position: relative; max-width: min(75%, 520px); padding: 8px 13px 9px; border-radius: 18px; font-size: 16px; line-height: 1.35; letter-spacing: -.011em; white-space: pre-wrap; overflow-wrap: anywhere; }
 .row.assistant .bubble { background: var(--received); color: var(--ink); }
 .row.user .bubble { background: var(--blue); color: #fff; }
-/* The tail sits on the last bubble of each run, like iMessage. */
+/*
+ * The tail sits on the last bubble of each run, like iMessage: ::before is the bubble-coloured hook and
+ * ::after a canvas-coloured cut that carves its curve. The cut is only as wide as its 10px radius, so it
+ * never paints over the avatar or pushes past the thread's edge.
+ */
 .row.user:not(:has(+ .row.user)) .bubble::before, .row.assistant:not(:has(+ .row.assistant)) .bubble:not(.typing)::before { content: ""; position: absolute; bottom: 0; width: 20px; height: 18px; }
-.row.user:not(:has(+ .row.user)) .bubble::after, .row.assistant:not(:has(+ .row.assistant)) .bubble:not(.typing)::after { content: ""; position: absolute; bottom: 0; width: 26px; height: 18px; background: var(--canvas); }
+.row.user:not(:has(+ .row.user)) .bubble::after, .row.assistant:not(:has(+ .row.assistant)) .bubble:not(.typing)::after { content: ""; position: absolute; bottom: 0; width: 10px; height: 18px; background: var(--canvas); }
 .row.user:not(:has(+ .row.user)) .bubble::before { right: -7px; background: var(--blue); border-bottom-left-radius: 16px 14px; }
-.row.user:not(:has(+ .row.user)) .bubble::after { right: -26px; border-bottom-left-radius: 10px; }
+.row.user:not(:has(+ .row.user)) .bubble::after { right: -10px; border-bottom-left-radius: 10px; }
 .row.assistant:not(:has(+ .row.assistant)) .bubble:not(.typing)::before { left: -7px; background: var(--received); border-bottom-right-radius: 16px 14px; }
-.row.assistant:not(:has(+ .row.assistant)) .bubble:not(.typing)::after { left: -26px; border-bottom-right-radius: 10px; }
+.row.assistant:not(:has(+ .row.assistant)) .bubble:not(.typing)::after { left: -10px; border-bottom-right-radius: 10px; }
 .row.user:not(:has(+ .row.user)), .row.assistant:not(:has(+ .row.assistant)) { margin-bottom: 4px; }
 .bubble.pending { opacity: .9; }
 .bubble.typing { display: inline-flex; align-items: center; gap: 4px; padding: 12px 14px; }
@@ -131,7 +139,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .bubble.typing span:nth-child(3) { animation-delay: .3s; }
 @keyframes dots { 0%, 60%, 100% { opacity: .35; } 30% { opacity: 1; } }
 .system-line { align-self: center; max-width: 90%; margin: 12px 0; color: var(--grey); font-size: 12px; font-weight: 500; text-align: center; }
-.bubble-label { margin: 12px 0 2px 36px; color: var(--grey); font-size: 11px; font-weight: 600; letter-spacing: .01em; }
+.bubble-label { margin: 12px 0 2px 47px;color: var(--grey); font-size: 11px; font-weight: 600; letter-spacing: .01em; }
 
 /* Cards: clean white, hairline, 16px radius. */
 .event-card { align-self: center; width: min(100%, 420px); margin: 14px 0; padding: 16px; border: 1px solid var(--hairline); border-radius: 16px; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 6px 20px rgba(0, 0, 0, .04); }
@@ -154,7 +162,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 /* Composer: a floating glass bar. */
 .composer { display: flex; align-items: flex-end; gap: 8px; padding: 5px 5px 5px 18px; border-radius: 24px; transition: box-shadow .15s ease; }
 .composer:focus-within { box-shadow: 0 0 0 .5px rgba(0, 0, 0, .12), 0 0 0 4px rgba(10, 132, 255, .16), 0 8px 24px rgba(0, 0, 0, .10), inset 0 1px 0 rgba(255, 255, 255, .9); }
-.composer textarea { flex: 1; min-height: 36px; max-height: 160px; padding: 8px 0; resize: none; outline: none; border: 0; background: transparent; font-size: 16px; line-height: 1.35; }
+/* field-sizing grows the box with what's typed, up to max-height; browsers without it keep one scrolling row. */
+.composer textarea { flex: 1; min-height: 36px; max-height: 160px; padding: 8px 0; field-sizing: content; resize: none; outline: none; border: 0; background: transparent; font-size: 16px; line-height: 1.35; }
 .composer textarea::placeholder { color: var(--grey); }
 .send-button { width: 34px; height: 34px; flex: none; display: grid; place-items: center; margin-bottom: 1px; border: 0; border-radius: 50%; background: var(--blue); color: #fff; transition: background .15s ease, transform .1s ease; }
 .send-button:active:not(:disabled) { transform: scale(.94); }
@@ -200,7 +209,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
   .brand-word { display: none; }
   .topbar-inner { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "brand identity call" "actions actions actions"; gap: 10px 12px; padding: 10px 16px; }
   .topbar-actions { justify-self: stretch; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
-  .confirm { justify-content: flex-start; }
+  /* One row on a phone: the question wraps beside its buttons instead of pushing Cancel to a third line. */
+  .confirm { flex-wrap: nowrap; justify-content: flex-start; min-width: 0; }
+  .confirm-text { min-width: 0; line-height: 1.25; }
   .pill { height: 30px; padding: 0 12px; }
   .account-email { display: none; }
   .call-button { height: 34px; padding: 0 14px 0 12px; }

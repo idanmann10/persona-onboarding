@@ -1,11 +1,10 @@
-import { readSessionCookie } from './session';
-import { signInWithGmail } from '../auth/identity';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { fallbackAppName, isAppSlug, isBuiltinApp, listApps, type AppEntry, type BuiltinApp } from '../domain/apps';
 import type { SessionEvent } from '../domain/events';
+import { SNAPSHOT_APPS } from '../integrations/catalog';
 
-interface Store extends IpQuotaStore {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends IpQuotaStore, LoginStore {
   getActiveConnection(id: string, toolkit: string): Promise<string | undefined>;
   getConnectionAttempt(sessionId: string, attemptId: string): Promise<{ toolkit: string; status?: string } | undefined>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -21,12 +20,6 @@ interface Catalog {
   list(): Promise<AppEntry[]>;
   find(slug: string): Promise<AppEntry | undefined>;
 }
-
-/** What the Apps sheet shows when Composio's catalog can't be reached. */
-const BUILTIN_APPS: AppEntry[] = [
-  { slug: 'gmail', name: 'Gmail', logo: 'https://logos.composio.dev/api/gmail', category: 'Email' },
-  { slug: 'calendar', name: 'Google Calendar', logo: 'https://logos.composio.dev/api/googlecalendar', category: 'Scheduling' },
-];
 
 /**
  * The OAuth callback page. Opened as a popup (the normal path, so a live call survives), it tells the
@@ -52,10 +45,7 @@ export function callbackPage(appBaseUrl: string, toolkit: string | undefined, st
 }
 
 export function createConnectionHandlers(store: Store, service: Service, appBaseUrl: string, catalog?: Catalog) {
-  const ownedSession = async (request: Request) => {
-    const id = readSessionCookie(request);
-    return id && await store.sessionExists(id) ? id : undefined;
-  };
+  const ownedSession = (request: Request) => signedInSession(store, request);
   const bodyToolkit = async (request: Request): Promise<unknown> => {
     try { return ((await request.json()) as { toolkit?: unknown }).toolkit; } catch { return undefined; }
   };
@@ -94,23 +84,37 @@ export function createConnectionHandlers(store: Store, service: Service, appBase
     }
   };
   return {
-    /** GET /api/connections[?q=]: the Apps sheet. `gmail`/`calendar` booleans stay for older clients. */
+    /**
+     * GET /api/connections[?q=]: apps with the session's status. The Apps sheet lists and searches the
+     * bundled snapshot itself and only asks here with `q` when the snapshot has no match, so only a
+     * search reads the live catalog; without `q` this answers from the snapshot. `gmail`/`calendar`
+     * booleans stay for older clients.
+     */
     status: async (request: Request): Promise<Response> => {
       const id = await ownedSession(request);
       if (!id) return new Response('Session required', { status: 401 });
-      const connected = await connectedToolkits(id);
-      let entries = BUILTIN_APPS;
-      if (catalog) {
-        try { entries = await catalog.list(); }
-        catch (error) { console.error('App catalog unavailable', error); }
-      }
-      for (const builtin of BUILTIN_APPS) if (!entries.some((app) => app.slug === builtin.slug)) entries = [builtin, ...entries];
-      const query = new URL(request.url).searchParams.get('q')?.slice(0, 100);
+      const query = new URL(request.url).searchParams.get('q')?.slice(0, 100).trim();
+      const [connected, live] = await Promise.all([
+        connectedToolkits(id),
+        query && catalog ? catalog.list().catch((error) => { console.error('App catalog unavailable', error); return undefined; }) : undefined,
+      ]);
+      let entries: readonly AppEntry[] = live ?? SNAPSHOT_APPS;
+      for (const app of SNAPSHOT_APPS) if (isBuiltinApp(app.slug) && !entries.some((entry) => entry.slug === app.slug)) entries = [app, ...entries];
       return Response.json({
         calendar: connected.includes('calendar'),
         gmail: connected.includes('gmail'),
-        apps: listApps(entries, connected, query),
+        // No-auth toolkits have nothing to connect: a Connect button there could only fail.
+        apps: listApps(entries.filter((app) => !app.noAuth), connected, query),
       }, { headers: { 'Cache-Control': 'no-store' } });
+    },
+    /**
+     * GET /api/connections/status: only the slugs this session has connected. One database read and no
+     * Composio call, so the page can prefetch it and the Apps sheet opens with it already known.
+     */
+    connected: async (request: Request): Promise<Response> => {
+      const id = await ownedSession(request);
+      if (!id) return new Response('Session required', { status: 401 });
+      return Response.json({ connected: await connectedToolkits(id) }, { headers: { 'Cache-Control': 'no-store' } });
     },
     /** POST /api/connections {toolkit}: a Composio sign-in link for any catalog app. */
     start: async (request: Request): Promise<Response> => {
@@ -188,9 +192,7 @@ export function createConnectionHandlers(store: Store, service: Service, appBase
       // ---- Success path: the account is connected; everything that reacts to it lives in onConnected. ----
       try { await onConnected(id, toolkit, attemptId); }
       catch (error) { console.error('Connection success follow-up failed', error); }
-      const page = callbackPage(appBaseUrl, toolkit, 'connected');
-      // A verified Gmail address makes this session the person's main session (never throws).
-      return toolkit === 'gmail' ? signInWithGmail(request, id, attemptId, page) : page;
+      return callbackPage(appBaseUrl, toolkit, 'connected');
     },
   };
 }

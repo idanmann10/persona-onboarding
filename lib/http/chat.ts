@@ -1,10 +1,9 @@
 import type { SessionEvent } from '../domain/events';
 import { runTextTurn } from '../agent/chat';
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 
-interface Store extends IpQuotaStore {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends IpQuotaStore, LoginStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   readEvents(id: string): Promise<SessionEvent[]>;
   consumeQuota(id: string, scope: 'chat', limit: number, windowSeconds: number): Promise<boolean>;
@@ -12,8 +11,8 @@ interface Store extends IpQuotaStore {
 
 export function createChatHandler(store: Store, respond: (history: SessionEvent[], sessionId: string) => AsyncIterable<string>) {
   return async (request: Request): Promise<Response> => {
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) {
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) {
       return new Response('Session required', { status: 401 });
     }
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Origin mismatch', { status: 403 });

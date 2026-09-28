@@ -1,0 +1,8 @@
+.page { max-width: 640px; margin: 0 auto; padding: 48px 16px 96px; line-height: 1.6; font-size: 15px; }
+.page h1 { margin: 24px 0 4px; font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+.page h2 { margin: 32px 0 8px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.page p, .page li { color: var(--ink); }
+.page ul { padding-left: 20px; }
+.page a { color: var(--blue); }
+.back { font-weight: 600; text-decoration: none; }
+.updated { margin: 0; color: var(--ink-mute); font-size: 13px; }
