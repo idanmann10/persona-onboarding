@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react';
-import { AVATARS, DEFAULT_AVATAR, DEFAULT_LOOK, avatarUrl, type PersonaSettings } from '@/lib/domain/persona';
+import { AVATARS, DEFAULT_AVATAR, DEFAULT_LOOK, VOICES, avatarUrl, type PersonaSettings, type VoiceId } from '@/lib/domain/persona';
 import { Avatar } from './avatar';
 import { CheckIcon, CloseIcon, PaintIcon } from './icons';
 
@@ -15,17 +15,22 @@ const STOCK: Look[] = [
 
 const DESCRIPTION_LIMIT = 200;
 
+/** "feminine, Irish" as "Irish · feminine": the accent first, since that's what sets most of them apart. */
+const voiceSounds = (id: VoiceId) => VOICES[id].sounds.split(', ').reverse().join(' · ');
+
 interface LookPickerProps {
   name: string;
   /** The saved look: a stock id, `default` or `img:<uuid>`. */
   current: string;
   /** Looks painted earlier in this conversation (`img:<uuid>`), newest first, so going back costs nothing. */
   painted: string[];
+  /** The call voice: the one they picked, or the one that came with the look. */
+  voice: string;
   onSaved(settings: PersonaSettings): void;
   onClose(): void;
 }
 
-async function saveLook(body: { avatar: string } | { paint: string }): Promise<PersonaSettings> {
+async function saveLook(body: { avatar: string } | { paint: string } | { voice: VoiceId }): Promise<PersonaSettings> {
   const response = await fetch('/api/persona', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error((await response.text().catch(() => '')).trim() || 'That did not go through. Please try again.');
   return (await response.json() as { settings: PersonaSettings }).settings;
@@ -33,10 +38,10 @@ async function saveLook(body: { avatar: string } | { paint: string }): Promise<P
 
 /**
  * The look picker, opened from the assistant's portrait in the header: every stock portrait with the
- * current one marked (a tap saves it), the user's earlier paintings, and "describe a new look", which
- * paints one with the same image model the customize tool uses.
+ * current one marked (a tap saves it), the user's earlier paintings, "describe a new look", which paints one
+ * with the same image model the customize tool uses, and every call voice GPT-Live offers.
  */
-export function LookPicker({ name, current, painted, onSaved, onClose }: LookPickerProps) {
+export function LookPicker({ name, current, painted, voice, onSaved, onClose }: LookPickerProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const gridRef = useRef<HTMLUListElement>(null);
   const [selected, setSelected] = useState(current);
@@ -44,6 +49,8 @@ export function LookPicker({ name, current, painted, onSaved, onClose }: LookPic
   const [description, setDescription] = useState('');
   const [painting, setPainting] = useState(false);
   const [error, setError] = useState('');
+  const [selectedVoice, setSelectedVoice] = useState(voice);
+  const [savingVoice, setSavingVoice] = useState<string | null>(null);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -57,6 +64,8 @@ export function LookPicker({ name, current, painted, onSaved, onClose }: LookPic
 
   // A change made elsewhere (the chat's customize tool) while the picker is open.
   useEffect(() => { setSelected(current); }, [current]);
+  // A voice that follows the look changes with it.
+  useEffect(() => { setSelectedVoice(voice); }, [voice]);
 
   const yours: Look[] = [...new Set([...(current.startsWith('img:') ? [current] : []), ...painted])]
     .map((id) => ({ id, label: 'Painted', url: avatarUrl(id) }));
@@ -82,6 +91,17 @@ export function LookPicker({ name, current, painted, onSaved, onClose }: LookPic
     try { onSaved(await saveLook({ avatar: id })); }
     catch (cause) { setSelected(previous); setError(cause instanceof Error ? cause.message : 'That look could not be saved.'); }
     finally { setSaving(null); }
+  }
+
+  async function pickVoice(id: VoiceId) {
+    if (savingVoice || id === selectedVoice) return;
+    const previous = selectedVoice;
+    setSelectedVoice(id);
+    setSavingVoice(id);
+    setError('');
+    try { onSaved(await saveLook({ voice: id })); }
+    catch (cause) { setSelectedVoice(previous); setError(cause instanceof Error ? cause.message : 'That voice could not be saved.'); }
+    finally { setSavingVoice(null); }
   }
 
   async function paint(event: FormEvent) {
@@ -118,8 +138,8 @@ export function LookPicker({ name, current, painted, onSaved, onClose }: LookPic
       <div className="sheet-panel">
         <div className="sheet-head">
           <div>
-            <h2 id="look-title">Look</h2>
-            <p>Pick a portrait for {name}, or describe a new one.</p>
+            <h2 id="look-title">Look and voice</h2>
+            <p>Pick a portrait and a call voice for {name}.</p>
           </div>
           <button type="button" className="icon-button" aria-label="Close" onClick={close}><CloseIcon width={18} height={18} /></button>
         </div>
@@ -167,6 +187,30 @@ export function LookPicker({ name, current, painted, onSaved, onClose }: LookPic
             </div>
             <small className="look-paint-note">{painting ? 'About half a minute. You can close this; the new look shows up when it is ready.' : 'Painted for you in about half a minute.'}</small>
           </form>
+
+          <section className="look-voices" aria-labelledby="voice-title">
+            <div className="look-voices-head">
+              <h3 id="voice-title">Call voice</h3>
+              <small>Used from the next call.</small>
+            </div>
+            <ul className="voice-grid" aria-label="Call voices">
+              {(Object.keys(VOICES) as VoiceId[]).map((id) => {
+                const active = id === selectedVoice;
+                return (
+                  <li key={id}>
+                    <button type="button" className="voice-option" aria-pressed={active} disabled={Boolean(savingVoice) && !active} onClick={() => void pickVoice(id)}>
+                      <span className="voice-option-text">
+                        <strong>{VOICES[id].label}</strong>
+                        <small>{VOICES[id].hint}</small>
+                        <small>{voiceSounds(id)}</small>
+                      </span>
+                      {active ? <span className="voice-check" aria-hidden="true">{savingVoice === id ? <span className="look-spinner" /> : <CheckIcon width={11} height={11} />}</span> : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         </div>
       </div>
     </dialog>

@@ -11,12 +11,34 @@ export type PersonalityId = keyof typeof PERSONALITIES;
 export const DEFAULT_PERSONALITY: PersonalityId = 'warm';
 export const CUSTOM_PERSONALITY_LIMIT = 160;
 
-/** GPT-Live call voices, described the way Arlo describes the same presets. */
+/**
+ * Every voice GPT-Live accepts (each one checked against the API): its own set first, then the Realtime
+ * classics it also takes. `sounds` says who each one fits, so the assistant can match its voice to its name
+ * and look; bossa and tempo speak Brazilian Portuguese.
+ */
 export const VOICES = {
-  marin: { label: 'Natural', hint: 'Natural and balanced' },
-  willow: { label: 'Calm', hint: 'Warm and unhurried' },
-  ripple: { label: 'Bright', hint: 'Friendly and energetic' },
-  stone: { label: 'Grounded', hint: 'Steady and direct' },
+  marin: { label: 'Marin', hint: 'Natural and balanced', sounds: 'feminine, North American' },
+  gleam: { label: 'Gleam', hint: 'Bright and upbeat', sounds: 'feminine, North American' },
+  meridian: { label: 'Meridian', hint: 'Relaxed and friendly', sounds: 'masculine, North American' },
+  willow: { label: 'Willow', hint: 'Warm and unhurried', sounds: 'feminine, Irish' },
+  stone: { label: 'Stone', hint: 'Steady and direct', sounds: 'masculine, Irish' },
+  vesper: { label: 'Vesper', hint: 'Smooth and thoughtful', sounds: 'masculine, British' },
+  quartz: { label: 'Quartz', hint: 'Light and cheerful', sounds: 'feminine, Australian' },
+  ripple: { label: 'Ripple', hint: 'Friendly and energetic', sounds: 'masculine, Australian' },
+  delta: { label: 'Delta', hint: 'Warm and folksy', sounds: 'feminine, Southern U.S.' },
+  cinder: { label: 'Cinder', hint: 'Easy and laid-back', sounds: 'masculine, Southern U.S.' },
+  beacon: { label: 'Beacon', hint: 'Clear and upbeat', sounds: 'masculine, Filipino' },
+  bossa: { label: 'Bossa', hint: 'Warm and natural', sounds: 'feminine, Brazilian Portuguese' },
+  tempo: { label: 'Tempo', hint: 'Easygoing and natural', sounds: 'masculine, Brazilian Portuguese' },
+  cedar: { label: 'Cedar', hint: 'Deep and natural', sounds: 'masculine, North American' },
+  alloy: { label: 'Alloy', hint: 'Even and neutral', sounds: 'neutral, North American' },
+  ash: { label: 'Ash', hint: 'Clear and confident', sounds: 'masculine, North American' },
+  ballad: { label: 'Ballad', hint: 'Expressive and melodic', sounds: 'masculine, British' },
+  coral: { label: 'Coral', hint: 'Warm and friendly', sounds: 'feminine, North American' },
+  echo: { label: 'Echo', hint: 'Calm and measured', sounds: 'masculine, North American' },
+  sage: { label: 'Sage', hint: 'Soft and gentle', sounds: 'feminine, North American' },
+  shimmer: { label: 'Shimmer', hint: 'Bright and crisp', sounds: 'feminine, North American' },
+  verse: { label: 'Verse', hint: 'Animated and dynamic', sounds: 'masculine, North American' },
 } as const;
 export type VoiceId = keyof typeof VOICES;
 
@@ -28,21 +50,21 @@ export type VoiceId = keyof typeof VOICES;
  */
 export const AVATARS = {
   // The cute set: one character per pastel hue, its face filling the frame, so each still reads at 24px.
-  mochi: { label: 'Mochi', description: 'a cute, round baby panda with big sparkly eyes, rosy cheeks and a tiny green bamboo leaf tucked behind one ear, on a soft mint-green background', stops: ['#d4f0e0', '#6cbf94', '#1d4a33'] },
-  pip: { label: 'Pip', description: 'a cute, fluffy little yellow chick with big sparkly eyes and a tiny knitted sky-blue beanie, on a soft sky-blue background', stops: ['#d6e9fb', '#6aa8e0', '#16385c'] },
-  luna: { label: 'Luna', description: 'a cute white bunny with long floppy ears, big sweet eyes, rosy cheeks and a small golden crescent-moon hair clip, on a soft lavender background', stops: ['#e6dcfa', '#9c86d8', '#2e2352'] },
-  koa: { label: 'Koa', description: 'a cute, cuddly grey koala with big fluffy ears, a round dark nose, big sparkly eyes and a small pink flower behind one ear, on a soft peach background', stops: ['#fbe0cf', '#e79c72', '#5a2a12'] },
-  otto: { label: 'Otto', description: 'a cute baby sea otter with fluffy brown fur, tiny whiskers, big sparkly eyes, a happy smile and a cosy red knit scarf, on a soft butter-yellow background', stops: ['#fbf0c4', '#e2bd4a', '#5a450c'] },
-  bao: { label: 'Bao', description: 'a cute, chubby golden hamster with puffy round cheeks, big sparkly eyes and a tiny striped bow tie, on a soft rose-pink background', stops: ['#fbd9e3', '#e483a1', '#5c1a30'] },
-  kiko: { label: 'Kiko', description: 'a cute red panda with fluffy russet fur, white cheek markings, big sparkly eyes and a small cream bandana, on a soft aqua background', stops: ['#cdeeed', '#4fb7b3', '#10403e'] },
-  ziggy: { label: 'Ziggy', description: 'a cute, friendly baby dragon with mint-green scales, tiny rounded horns, little wings, big sparkly eyes and a happy grin, on a soft coral background', stops: ['#fdd5cb', '#f0806a', '#5e1f12'] },
-  sunny: { label: 'Sunny', description: 'a cheerful golden retriever with a big friendly grin and bright eyes, wearing a soft mustard knit scarf', stops: ['#f7e3a8', '#e0a93b', '#5a3b0c'] },
-  sage: { label: 'Sage', description: 'a calm, wise owl with soft sage-green and cream feathers and small round glasses, wearing a cosy oatmeal cardigan', stops: ['#dbe6cf', '#86a36c', '#27361d'] },
-  nova: { label: 'Nova', description: 'a friendly little robot with a pearly white rounded shell, lavender accents and a glowing round face screen showing a gentle smile', stops: ['#e2d9f7', '#9a82d6', '#2c2150'] },
-  pixel: { label: 'Pixel', description: 'a curious grey tabby cat with big green eyes and oversized headphones around its neck, in a navy hoodie', stops: ['#cdd5ea', '#56689a', '#141a33'] },
-  fox: { label: 'Fox', description: 'a clever red fox with a warm, knowing smile, wearing a light denim jacket over a white tee', stops: ['#f8d2b4', '#dc7440', '#4f1c0e'] },
-  bloom: { label: 'Bloom', description: 'a gentle young woman with rosy cheeks, soft wavy auburn hair and a small crown of pastel flowers, in a blush linen top', stops: ['#f6d6dd', '#cf7d91', '#4a1d2a'] },
-} as const satisfies Record<string, { label: string; description: string; stops: readonly [string, string, string] }>;
+  mochi: { label: 'Mochi', voice: 'gleam', description: 'a cute, round baby panda with big sparkly eyes, rosy cheeks and a tiny green bamboo leaf tucked behind one ear, on a soft mint-green background', stops: ['#d4f0e0', '#6cbf94', '#1d4a33'] },
+  pip: { label: 'Pip', voice: 'ripple', description: 'a cute, fluffy little yellow chick with big sparkly eyes and a tiny knitted sky-blue beanie, on a soft sky-blue background', stops: ['#d6e9fb', '#6aa8e0', '#16385c'] },
+  luna: { label: 'Luna', voice: 'willow', description: 'a cute white bunny with long floppy ears, big sweet eyes, rosy cheeks and a small golden crescent-moon hair clip, on a soft lavender background', stops: ['#e6dcfa', '#9c86d8', '#2e2352'] },
+  koa: { label: 'Koa', voice: 'quartz', description: 'a cute, cuddly grey koala with big fluffy ears, a round dark nose, big sparkly eyes and a small pink flower behind one ear, on a soft peach background', stops: ['#fbe0cf', '#e79c72', '#5a2a12'] },
+  otto: { label: 'Otto', voice: 'stone', description: 'a cute baby sea otter with fluffy brown fur, tiny whiskers, big sparkly eyes, a happy smile and a cosy red knit scarf, on a soft butter-yellow background', stops: ['#fbf0c4', '#e2bd4a', '#5a450c'] },
+  bao: { label: 'Bao', voice: 'cinder', description: 'a cute, chubby golden hamster with puffy round cheeks, big sparkly eyes and a tiny striped bow tie, on a soft rose-pink background', stops: ['#fbd9e3', '#e483a1', '#5c1a30'] },
+  kiko: { label: 'Kiko', voice: 'delta', description: 'a cute red panda with fluffy russet fur, white cheek markings, big sparkly eyes and a small cream bandana, on a soft aqua background', stops: ['#cdeeed', '#4fb7b3', '#10403e'] },
+  ziggy: { label: 'Ziggy', voice: 'ripple', description: 'a cute, friendly baby dragon with mint-green scales, tiny rounded horns, little wings, big sparkly eyes and a happy grin, on a soft coral background', stops: ['#fdd5cb', '#f0806a', '#5e1f12'] },
+  sunny: { label: 'Sunny', voice: 'meridian', description: 'a cheerful golden retriever with a big friendly grin and bright eyes, wearing a soft mustard knit scarf', stops: ['#f7e3a8', '#e0a93b', '#5a3b0c'] },
+  sage: { label: 'Sage', voice: 'vesper', description: 'a calm, wise owl with soft sage-green and cream feathers and small round glasses, wearing a cosy oatmeal cardigan', stops: ['#dbe6cf', '#86a36c', '#27361d'] },
+  nova: { label: 'Nova', voice: 'gleam', description: 'a friendly little robot with a pearly white rounded shell, lavender accents and a glowing round face screen showing a gentle smile', stops: ['#e2d9f7', '#9a82d6', '#2c2150'] },
+  pixel: { label: 'Pixel', voice: 'meridian', description: 'a curious grey tabby cat with big green eyes and oversized headphones around its neck, in a navy hoodie', stops: ['#cdd5ea', '#56689a', '#141a33'] },
+  fox: { label: 'Fox', voice: 'meridian', description: 'a clever red fox with a warm, knowing smile, wearing a light denim jacket over a white tee', stops: ['#f8d2b4', '#dc7440', '#4f1c0e'] },
+  bloom: { label: 'Bloom', voice: 'willow', description: 'a gentle young woman with rosy cheeks, soft wavy auburn hair and a small crown of pastel flowers, in a blush linen top', stops: ['#f6d6dd', '#cf7d91', '#4a1d2a'] },
+} as const satisfies Record<string, { label: string; voice: keyof typeof VOICES; description: string; stops: readonly [string, string, string] }>;
 export type AvatarId = keyof typeof AVATARS;
 /** The look before anyone picks one: its own portrait at /avatars/default.webp. */
 export const DEFAULT_AVATAR = 'default';
@@ -136,7 +158,8 @@ export function personaSettings(state: SessionProjection, defaultVoice?: string)
   return {
     ...(name.value && (name.status === 'confirmed' || name.status === 'tentative') ? { assistantName: name.value } : {}),
     personality: { ...personality, label: personality.id === 'custom' ? 'Your own' : PERSONALITIES[personality.id].label },
-    voice: isVoiceId(voice) ? voice : defaultVoice || 'marin',
+    // A chosen voice wins; otherwise the voice that fits the look.
+    voice: isVoiceId(voice) ? voice : isAvatarId(avatar) ? AVATARS[avatar].voice : isVoiceId(defaultVoice) ? defaultVoice : 'marin',
     avatar,
     avatarUrl: avatarUrl(avatar),
   };

@@ -50,12 +50,12 @@ const CUSTOMIZE_FIELDS = { name: 'assistant_name', avatar: 'avatar', personality
  */
 export const customize = defineTool({
   name: 'customize',
-  description: 'Change your own name, look (avatar), personality or call voice when the user names you or asks for a change. Send only what changes.',
+  description: 'Change your own name, look (avatar), personality or call voice when the user names you or asks for a change. When you get a name or a new look, also pick the call voice that fits that name and character. Send only what changes.',
   input: z.object({
     name: z.string().max(80).optional().describe('A new name for YOU, as the user gave it (1-40 letters, numbers, spaces, . \' -).'),
     avatar: z.string().max(300).optional().describe(`Your look: a default look (${Object.keys(AVATARS).join(', ')}), or the look they asked for in their words, e.g. "a fox in a denim jacket", which is painted as your portrait in a few seconds.`),
     personality: z.string().max(300).optional().describe(`How to come across: ${Object.keys(PERSONALITIES).join(', ')} when one fits, otherwise their own words (up to ${CUSTOM_PERSONALITY_LIMIT} characters).`),
-    voice: z.enum(Object.keys(VOICES) as [VoiceId, ...VoiceId[]]).optional().describe(`Call voice: ${Object.entries(VOICES).map(([id, voice]) => `${id} (${voice.label.toLowerCase()}, ${voice.hint.toLowerCase()})`).join(', ')}.`),
+    voice: z.enum(Object.keys(VOICES) as [VoiceId, ...VoiceId[]]).optional().describe(`Call voice, matched to your name and character: ${Object.entries(VOICES).map(([id, voice]) => `${id} (${voice.hint.toLowerCase()}; ${voice.sounds})`).join(', ')}.`),
   }),
   channels: ['text', 'voice'],
   async execute(ctx, input) {
@@ -90,7 +90,14 @@ export const customize = defineTool({
       // A preset is stored by id; anything else is kept in their words and quoted as a style, never as rules.
       else wanted.personality = preset.id === 'custom' ? { value: personalityText, words: [personalityText] } : { value: preset.id, words: [preset.id, PERSONALITIES[preset.id].label] };
     }
-    if (input.voice !== undefined) wanted.voice = { value: input.voice, words: [input.voice, VOICES[input.voice].label] };
+    // "Use a calmer voice": a voice picked because they asked for one is theirs, even in the assistant's words.
+    const voiceAsked = /\b(voice|sound|accent)\b/i.test(ctx.userWords.at(-1) ?? '');
+    if (input.voice !== undefined) {
+      // A voice they picked themselves stays until they ask for another; a matched one follows the character.
+      const chosen = ctx.state.facts.voice?.provenance;
+      if ((chosen === 'user_said' || chosen === 'user_confirmed') && !voiceAsked) skipped ??= 'Your call voice stays the one they chose.';
+      else wanted.voice = { value: input.voice, words: [input.voice, VOICES[input.voice].label] };
+    }
     if (!Object.keys(wanted).length && !paint) return { status: 'rejected', reason: skipped ?? 'Say what to change: name, avatar, personality or voice.' };
 
     // Everything else checked out; now paint the described look. A failed painting still saves the other changes.
@@ -106,7 +113,7 @@ export const customize = defineTool({
     for (const [field, key] of Object.entries(CUSTOMIZE_FIELDS) as Array<[keyof typeof CUSTOMIZE_FIELDS, CustomizeKey]>) {
       const next = wanted[key];
       if (!next) continue;
-      const said = next.words.some((word) => saidByUser(word, ctx.userWords));
+      const said = next.words.some((word) => saidByUser(word, ctx.userWords)) || (key === 'voice' && voiceAsked);
       const existing = ctx.state.facts[key];
       const current = existing?.value ?? (key === 'avatar' ? DEFAULT_AVATAR : key === 'personality' ? DEFAULT_PERSONALITY : undefined);
       // A name the user said can upgrade the assistant's own tentative pick; otherwise an equal value is no change.
@@ -122,7 +129,7 @@ export const customize = defineTool({
       return { status: 'unchanged', note: 'That is already how it is set.' };
     }
     return {
-      status: 'saved', changed, ...(paintFailure ? { failed: { avatar: paintFailure } } : {}), ...(skipped ? { not_changed: { personality: skipped } } : {}),
+      status: 'saved', changed, ...(paintFailure ? { failed: { avatar: paintFailure } } : {}), ...(skipped ? { not_changed: skipped } : {}),
       note: `The app shows the change in the chat. Switch to it right away.${changed.voice && ctx.channel === 'voice' ? ' The new voice applies from the next call.' : ''}${paintFailure ? " The new look couldn't be painted this time; say so in a few words." : ''}`,
     };
   },

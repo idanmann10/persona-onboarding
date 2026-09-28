@@ -118,8 +118,8 @@ export function wakeNote(trigger: WakeTrigger, state?: SessionProjection): strin
   return [
     'App note, not from the user: the app woke you; they did not write.',
     `What happened: ${trigger.detail}.`,
-    ...(state && saidStop(state) === 'goodbye' ? ['Their last words were a goodbye.'] : []),
-    'Decide, as your onboarding guidance says: write one short message (a bubble or two), or call stay_quiet with a short reason. Silence is the default.',
+    ...(state && saidStop(state) === 'goodbye' ? [trigger.kind === 'call_ended' ? 'The call ended with a goodbye (a normal way to end a call, not a request for silence).' : 'Their last words were a goodbye.'] : []),
+    'Decide, as your onboarding guidance says: write one short message (a bubble or two), or call stay_quiet with a short reason.',
     "If you write, pick the thread back up like a person, then the point. Don't mention this note.",
   ].join('\n');
 }
