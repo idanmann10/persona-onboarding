@@ -1,6 +1,6 @@
 # Persona onboarding
 
-**Try it:** https://persona-app-production-7359.up.railway.app
+**Try it:** https://persona-onboarding-five.vercel.app
 
 Sign in with Google (name and email only) or with an email and password. Then open **Agent log** from the account menu (it opens in a new tab) and keep it next to the chat. It shows every turn live: what woke the assistant, each model step and tool call with timing and tokens, the memories it saved or recalled, the context budget, and the exact system prompt it was given.
 
@@ -44,7 +44,7 @@ The assistant reads this list from one file, [`lib/agent/company/product.md`](li
 ## How it works
 
 ```
-Browser (chat + GPT-Live WebRTC call) ──► Next.js on Railway (one long-running server) ──► Postgres (append-only event log)
+Browser (chat + GPT-Live WebRTC call) ──► Vercel (public address) ──► Next.js on Railway (one long-running server) ──► Postgres (append-only event log)
                                               │
    prompt = soul + rules + company file + state + memories (+ onboarding prompt, first 7 days or until activated)
                                               │
@@ -84,7 +84,7 @@ More detail: [docs/architecture.md](docs/architecture.md).
 
 ## Decisions and cuts
 
-- **Railway, not serverless.** One long-running Node server: no function timeouts on calls, background memory work or scheduled runs, and a real 5-minute scheduler. Vercel's old address redirects here.
+- **Railway, not serverless.** One long-running Node server: no function timeouts on calls, background memory work or scheduled runs, and a real 5-minute scheduler. Vercel keeps the public address and passes every request through to Railway (`vercel.json`); `APP_BASE_URL` is the Vercel address, so sign-in and account callbacks come back through it.
 - **One assistant with an onboarding prompt, not a wizard or a coach agent.** Onboarding is a prompt layered on top of the main one for the first 7 days or until the first recurring task is approved; then it goes away.
 - **Activation is the first recurring task.** In Arlo's data, users who set up a scheduled task on day one stayed 66.7% of the time, against 17.1% for those who didn't; connecting an account alone didn't move retention.
 - **Browser call, not a phone number.** The brief allows it. Next: a real number over Telnyx, which Arlo already runs with GPT-Live.

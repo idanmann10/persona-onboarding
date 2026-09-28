@@ -4,6 +4,7 @@ How Persona works today. The original design review from before the build is kep
 
 ## Runtime
 
+- **Public address on Vercel** (`persona-onboarding-five.vercel.app`): `vercel.json` builds nothing and passes every request through to Railway. `APP_BASE_URL` is this address, and origin checks accept it (`lib/http/origin.ts`).
 - **One Next.js app on Railway** (`persona-app`), a long-running Node server: pages, API routes and background work (`after()`) share one process, so nothing is cut off by a function timeout.
 - **Postgres on Railway** holds an append-only event log per conversation (`persona_events`) plus a few tables for accounts, logins, connections, automations, runs, reservations and rate limits (`lib/db/schema.sql`, migrated on every start).
 - **Scheduler**: `persona-cron` (`ops/railway-cron/`) calls `GET /api/automations/run-due` with `CRON_SECRET` every 5 minutes. It runs due recurring tasks (each occurrence once: a unique run row plus `FOR UPDATE SKIP LOCKED`) and check-ins the assistant scheduled.

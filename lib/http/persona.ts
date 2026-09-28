@@ -5,6 +5,7 @@ import { DEFAULT_AVATAR, isAvatarId, personaSettings, storedAvatar } from '../do
 import type { AvatarFailure, AvatarResult } from '../avatars/generate';
 import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
+import { sameOrigin } from './origin';
 
 interface Store extends LoginStore, IpQuotaStore {
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -47,7 +48,7 @@ const PAINT_FAILED: Record<AvatarFailure['error'], [number, string]> = {
  */
 export function createPersonaHandler(store: Store, deps: PersonaDependencies = {}) {
   return async (request: Request): Promise<Response> => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
+    if (!sameOrigin(request)) return new Response('Unexpected origin', { status: 403 });
     const sessionId = await signedInSession(store, request);
     if (!sessionId) return new Response('Session required', { status: 401 });
     let body: unknown;

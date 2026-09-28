@@ -5,6 +5,7 @@ import { availableCapabilities } from '../domain/capabilities';
 import { buildLiveSession } from '../voice/session-config';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { recordTrace, type TraceEntry, type TraceSink } from '../observability/trace';
+import { sameOrigin } from './origin';
 
 interface Store extends IpQuotaStore, LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -18,7 +19,7 @@ interface Store extends IpQuotaStore, LoginStore {
 
 export function createVoiceSessionHandler(store: Store, key: string, upstream: typeof fetch, env: Record<string, string | undefined> = {}) {
   return async (request: Request): Promise<Response> => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
+    if (!sameOrigin(request)) return new Response('Unexpected origin', { status: 403 });
     const sessionId = await signedInSession(store, request);
     if (!sessionId) return new Response('Session required', { status: 401 });
     let body: unknown;

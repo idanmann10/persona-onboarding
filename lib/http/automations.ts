@@ -5,6 +5,7 @@ import { runAutomation, type AutomationRunDependencies } from '../agent/automati
 import type { TurnTrigger } from '../agent/turn';
 import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
+import { sameOrigin } from './origin';
 
 interface Store extends AutomationStore, IpQuotaStore, LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -22,7 +23,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function createAutomationHandler(store: Store, generate: Generate | undefined, now: () => Date = () => new Date()) {
   const deps = (): AutomationRunDependencies => ({ store, generate: generate!, now });
   return async (request: Request): Promise<Response> => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
+    if (!sameOrigin(request)) return new Response('Unexpected origin', { status: 403 });
     const sessionId = await signedInSession(store, request);
     if (!sessionId) return new Response('Session required', { status: 401 });
     let body: Record<string, unknown>;

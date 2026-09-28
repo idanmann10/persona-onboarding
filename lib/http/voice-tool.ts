@@ -7,6 +7,7 @@ import type { AccountReadClient } from '../agent/tools/accounts';
 import { withVoiceToolTrace } from '../observability/voice-tool-trace';
 import type { TraceSink } from '../observability/trace';
 import type { AutomationStore } from '../domain/automation';
+import { sameOrigin } from './origin';
 
 interface Store extends IpQuotaStore, LoginStore {
   hasEvent(id: string, eventId: string): Promise<boolean>;
@@ -28,7 +29,7 @@ export { VOICE_TOOL_NAMES };
  */
 export function createVoiceToolHandler(store: Store, env: Record<string, string | undefined>, composio?: AccountReadClient) {
   return withVoiceToolTrace(store, async (request: Request): Promise<Response> => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
+    if (!sameOrigin(request)) return new Response('Unexpected origin', { status: 403 });
     const sessionId = await signedInSession(store, request);
     if (!sessionId) return new Response('Session required', { status: 401 });
     let body: Record<string, unknown>;

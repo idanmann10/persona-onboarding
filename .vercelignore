@@ -6,3 +6,7 @@ evals/results
 *.tsbuildinfo
 .worktrees
 .git
+.claude/
+e2e/
+ops/
+test-results/

@@ -3,6 +3,7 @@ import { isValidTimeZone } from '../domain/schedule';
 import { runTextTurn } from '../agent/chat';
 import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
+import { sameOrigin } from './origin';
 
 interface Store extends IpQuotaStore, LoginStore {
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -26,7 +27,7 @@ export function createChatHandler(store: Store, respond: (history: SessionEvent[
     if (!sessionId) {
       return new Response('Session required', { status: 401 });
     }
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Origin mismatch', { status: 403 });
+    if (!sameOrigin(request)) return new Response('Origin mismatch', { status: 403 });
     let body: unknown;
     try { body = await request.json(); } catch { return new Response('Invalid JSON', { status: 400 }); }
     if (!body || typeof body !== 'object') return new Response('Invalid message', { status: 400 });

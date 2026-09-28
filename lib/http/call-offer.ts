@@ -1,6 +1,7 @@
 import type { SessionEvent } from '../domain/events';
 import { projectSession } from '../domain/project';
 import { signedInSession, type LoginStore } from '../auth/login';
+import { sameOrigin } from './origin';
 
 interface Store extends LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -10,7 +11,7 @@ interface Store extends LoginStore {
 /** "Not now" on the in-chat call offer. Answering needs no endpoint: starting the call accepts it. */
 export function createCallOfferHandler(store: Store) {
   return async (request: Request): Promise<Response> => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
+    if (!sameOrigin(request)) return new Response('Unexpected origin', { status: 403 });
     const sessionId = await signedInSession(store, request);
     if (!sessionId) return new Response('Session required', { status: 401 });
     const state = projectSession(await store.readEvents(sessionId));

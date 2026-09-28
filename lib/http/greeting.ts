@@ -1,6 +1,7 @@
 import type { SessionEvent } from '../domain/events';
 import { signedInSession, type LoginStore } from '../auth/login';
 import { rememberBrowserZone } from './chat';
+import { sameOrigin } from './origin';
 
 interface Store extends LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -14,7 +15,7 @@ interface Store extends LoginStore {
  */
 export function createGreetingHandler(store: Store, open: (sessionId: string) => Promise<'exists' | 'pending' | AsyncGenerator<string>>) {
   return async (request: Request): Promise<Response> => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
+    if (!sameOrigin(request)) return new Response('Unexpected origin', { status: 403 });
     const sessionId = await signedInSession(store, request);
     if (!sessionId) return new Response('Session required', { status: 401 });
     const body = await request.json().catch(() => ({})) as { timezone?: unknown };

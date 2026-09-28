@@ -3,7 +3,7 @@
 Persona's adaptive chat and browser-voice onboarding. Read [README.md](README.md) for what it does and how to run it, and [docs/architecture.md](docs/architecture.md) for how it works. The repository is private until Idan approves publication.
 
 - **Branch**: work on `submission` (or branch from it); don't push without being asked.
-- **Hosting**: Railway, project `persona-onboarding`: `persona-app` (the Next.js app, `railway.json`) and `persona-cron` (`ops/railway-cron/`). Deploy with `railway up --service persona-app`. The old Vercel address redirects to Railway.
+- **Hosting**: Railway, project `persona-onboarding`: `persona-app` (the Next.js app, `railway.json`) and `persona-cron` (`ops/railway-cron/`). Deploy with `railway up --service persona-app`. The public address stays on Vercel (`persona-onboarding-five.vercel.app`), which passes every request through to Railway (`vercel.json`); both deploy from `main` on GitHub.
 - **Secrets** live in `.env.local` and Railway variables, never in Git, PR text or chat.
 - **Where behaviour lives**: who the assistant is and how it talks is in `lib/agent/soul/*.md`; what it can offer is in `lib/agent/company/product.md`; onboarding goals and follow-up judgment are in `lib/agent/soul/onboarding.md`. Keep judgment in prompts and only safety limits in code.
 - **Tools** are defined once in `lib/agent/tools/` and shared by chat and calls.
