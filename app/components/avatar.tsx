@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 /** Shown when the session has no `avatarUrl` yet. */
-export const DEFAULT_AVATAR_URL = '/avatars/default.png';
+export const DEFAULT_AVATAR_URL = '/avatars/default.webp';
 
 /** The image candidates to try in order: the assistant's own photo, then the default one. */
 export function avatarCandidates(src?: string): string[] {
