@@ -99,14 +99,14 @@ async function main(): Promise<void> {
 
     // Portraits are embedded once each, as CSS classes, so a look used by many sessions costs its bytes once.
     const portraits = new Map<string, string>();
-    async function portraitClass(avatar: string): Promise<string> {
+    async function portraitClass(avatar: string, sessionId: string): Promise<string> {
       const key = avatar.startsWith('img:') ? avatar.slice(4) : isAvatarId(avatar) ? avatar : 'default';
       const className = `pt-${anchorId(key)}`;
       if (portraits.has(className)) return className;
       let data: string | undefined;
       try {
         const image = avatar.startsWith('img:')
-          ? await store.getAvatar(key)
+          ? await store.getAvatar(key, sessionId)
           : { mime: 'image/webp', bytes: new Uint8Array(await readFile(join(process.cwd(), 'public', 'avatars', `${key}.webp`))) };
         if (image) {
           // A painted portrait is stored at 1024 px (about 1 MB); the page shows it at 44 px, so embed a thumbnail.
@@ -161,7 +161,7 @@ async function main(): Promise<void> {
         id, events, state, turns, calls, summary: log.summary, problems,
         userMessages: userIds.size,
         firstAt: events[0]?.at ?? '', lastAt: events.at(-1)?.at ?? '',
-        avatar: await portraitClass(settings.avatar),
+        avatar: await portraitClass(settings.avatar, id),
       });
     }
 
