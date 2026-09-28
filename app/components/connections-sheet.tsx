@@ -136,7 +136,8 @@ export function ConnectionsSheet({ connecting, version, onConnect, onChanged, on
       if (typeof dialog.showModal === 'function') dialog.showModal();
       else dialog.setAttribute('open', '');
     }
-    searchRef.current?.focus();
+    // On a touch screen, focusing search would raise the keyboard over the list people came to browse.
+    if (window.matchMedia?.('(pointer: fine)').matches) searchRef.current?.focus();
   }, []);
 
   useEffect(() => {
