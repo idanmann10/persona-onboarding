@@ -116,7 +116,7 @@ const EMAIL = /^[^\s@<>()[\]\\,;:"]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,63}$/;
  * token endpoint over TLS in exchange for our client secret, so, as OpenID Connect Core 3.1.3.7 allows and
  * Google's own guidance says, TLS stands in for checking its signature; the claims are all still checked.
  */
-export function verifyIdToken(idToken: string, config: GoogleConfig, nonce: string, now = Date.now()): Profile & { sub: string } {
+export function verifyIdToken(idToken: string, config: GoogleConfig, nonce: string, now = Date.now()): Profile & { sub: string; emailVerified: true } {
   const parts = idToken.split('.');
   if (parts.length !== 3) throw new GoogleSignInError('invalid_token');
   let claims: Record<string, unknown>;
@@ -139,5 +139,5 @@ export function verifyIdToken(idToken: string, config: GoogleConfig, nonce: stri
   const fullName = text(claims.name, 200);
   const givenName = text(claims.given_name, 100);
   const picture = pictureUrl(claims.picture);
-  return { sub: claims.sub, email, ...(fullName ? { fullName } : {}), ...(givenName ? { givenName } : {}), ...(picture ? { picture } : {}), ...(locale ? { locale } : {}) };
+  return { sub: claims.sub, email, emailVerified: true as const, ...(fullName ? { fullName } : {}), ...(givenName ? { givenName } : {}), ...(picture ? { picture } : {}), ...(locale ? { locale } : {}) };
 }

@@ -9,13 +9,14 @@ import { createStore } from '@/lib/db/store';
 import { getDatabase } from '@/lib/db/client';
 import { PersonaMark } from '../components/icons';
 import { GoogleMark } from './google-mark';
+import { PasswordForm } from './password-form';
 import './sign-in.css';
 
 export const metadata: Metadata = { title: 'Sign in · Persona' };
 export const dynamic = 'force-dynamic';
 
 const MESSAGES: Record<SignInError, string> = {
-  not_configured: "Sign-in isn't set up on this server yet.",
+  not_configured: "Google sign-in isn't set up on this server yet. You can use your email below.",
   cancelled: 'Sign-in was cancelled. Try again whenever you like.',
   expired: 'That took a little too long. Please try again.',
   failed: "Google sign-in didn't go through. Please try again.",
@@ -57,7 +58,9 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
         ) : (
           <button className="google-button" type="button" disabled><GoogleMark className="google-mark" />Continue with Google</button>
         )}
-        <p className="signin-note">Google shares only your name, email and profile photo. Your inbox stays private unless you connect it later.</p>
+        <div className="signin-or" role="separator"><span>or</span></div>
+        <PasswordForm />
+        <p className="signin-note">With Google, Persona sees only your name, email and profile photo. Your inbox stays private unless you connect it later.</p>
         {testLogin ? <a className="signin-test" href="/api/auth/test-login">Continue as the local test user</a> : null}
       </section>
       <footer className="signin-footer"><a href="/privacy">Privacy</a><span aria-hidden="true">·</span><a href="/terms">Terms</a></footer>

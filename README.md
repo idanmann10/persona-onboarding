@@ -17,7 +17,7 @@ One assistant, one conversation, in text and voice. It learns the brief's four t
 - **Real Gmail.** Connecting Gmail runs through Composio's managed OAuth, works with any Google account, and is read-only. It comes back with something real from your inbox, plus a one-tap recurring rundown (for example, every weekday at 8) that actually runs.
 - **Make it yours.** Rename it, change its look, or change its personality or call voice, just by asking. Looks are painted portraits: describe any look and it paints one.
 - **Apps.** Connect any app Composio offers from the Apps sheet. Gmail and Calendar are the two it reads today.
-- **Sign in with Google first.** One tap, and Google shares only your name, email and photo (Gmail stays a separate, optional connection). One Google account is one conversation, on any browser.
+- **Sign in first.** Continue with Google (it shares only your name, email and photo; Gmail stays a separate, optional connection), or create an account with an email and password. One account is one conversation, on any browser.
 
 ## Try to break it
 
