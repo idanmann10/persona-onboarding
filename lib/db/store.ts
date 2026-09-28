@@ -296,5 +296,26 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         VALUES (${sessionId}, ${userEventId}) ON CONFLICT DO NOTHING RETURNING user_event_id`;
       return rows.length > 0;
     },
+    /** The newest event's number: the open page reloads the conversation when it moves. */
+    latestEventSeq: async (sessionId: string): Promise<number> => {
+      const rows = await sql`SELECT COALESCE(MAX(seq), 0) AS seq FROM persona_events WHERE session_id = ${sessionId}`;
+      return Number(rows[0]?.seq ?? 0);
+    },
+    /** A reservation under this prefix taken in the last `seconds` (a follow-up being written right now). */
+    hasActiveReservation: async (sessionId: string, prefix: string, seconds: number): Promise<boolean> => {
+      const rows = await sql`SELECT 1 FROM persona_reservations WHERE session_id = ${sessionId}
+        AND starts_with(reservation_key, ${prefix}) AND created_at > now() - make_interval(secs => ${seconds}) LIMIT 1`;
+      return rows.length > 0;
+    },
+    /** Sessions whose onboarding coach scheduled a check-in that is now due (for the cron). */
+    sessionsWithDueCheckIns: async (limit = 25): Promise<string[]> => {
+      // A check-in's own decision is the event `coach:wake:<id of the decision that scheduled it>`.
+      const rows = await sql`SELECT DISTINCT e.session_id FROM persona_events e
+        WHERE e.payload->>'type' = 'coach' AND e.payload->>'reachOut' = 'later' AND e.payload->>'wakeAt' <= ${new Date().toISOString()}
+        AND e.created_at > now() - interval '8 days'
+        AND NOT EXISTS (SELECT 1 FROM persona_events d WHERE d.session_id = e.session_id AND d.event_id = 'coach:wake:' || e.event_id)
+        LIMIT ${limit}`;
+      return rows.map((row) => row.session_id as string);
+    },
   };
 }
