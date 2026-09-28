@@ -15,6 +15,8 @@ export interface VoiceController {
   abandon(): void;
   /** App-confirmed context for the voice model, e.g. "Gmail is now connected". */
   notify(content: string): void;
+  /** Silence the microphone without ending the call. */
+  setMuted(muted: boolean): void;
 }
 
 export interface VoiceDependencies {
@@ -23,6 +25,17 @@ export interface VoiceDependencies {
   createAudio(): HTMLAudioElement;
   fetchFn: typeof fetch;
   now?: () => number;
+  /** Aborting it while the call is still connecting cancels the call; once connected, use `close`. */
+  signal?: AbortSignal;
+}
+
+/** A backend function call the browser forwards for the voice model, e.g. `search_gmail`. */
+export interface ToolActivity {
+  id: string;
+  name: string;
+  /** The model's arguments, as the JSON string it sent. */
+  arguments: string;
+  status: 'running' | 'done' | 'failed';
 }
 
 export interface VoiceCallbacks {
@@ -30,6 +43,10 @@ export interface VoiceCallbacks {
   onCaption(event: Extract<ParsedLiveEvent, { kind: 'transcript' }>): void;
   /** The backend asked to show something in the chat, e.g. a Connect Gmail button. */
   onToolUi?(ui: { type: string; toolkit?: string }): void;
+  /** A forwarded tool call started or finished. */
+  onTool?(activity: ToolActivity): void;
+  /** The user's microphone or the assistant's voice is available, e.g. for a level meter. */
+  onAudio?(speaker: 'user' | 'assistant', stream: MediaStream): void;
 }
 
 interface Limits { checkInAfterMs: number; closeAfterMs: number; maxDurationMs: number; wrapUpBeforeMs: number; checkIn: string; goodbye: string; wrapUp: string }
@@ -53,6 +70,9 @@ const CLOSED_REASONS: Record<string, { phase: 'ended' | 'dropped'; reason: CallE
 
 export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDependencies): Promise<VoiceController> {
   const now = deps.now ?? (() => Date.now());
+  // Called detached, never as `deps.fetchFn(...)`: a native fetch called as a method of another object throws "Illegal invocation".
+  const fetchFn = deps.fetchFn;
+  const signal = deps.signal;
   callbacks.onPhase('connecting');
   const peer = deps.createPeer();
   const audio = deps.createAudio();
@@ -93,7 +113,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     if (!callId) return Promise.resolve();
     let pending: Promise<unknown>;
     try {
-      pending = deps.fetchFn('/api/voice/event', { method: 'POST', keepalive, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, ...body }) }).catch(() => undefined);
+      pending = fetchFn('/api/voice/event', { method: 'POST', keepalive, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, ...body }) }).catch(() => undefined);
     } catch { return Promise.resolve(); }
     pendingEvents.add(pending);
     void pending.finally(() => pendingEvents.delete(pending));
@@ -120,6 +140,8 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     peer.close();
     audio.srcObject = null;
     if (!callId) { callbacks.onPhase(phase, reason); resolveClose?.(); return; }
+    // The line is already closed: say so now rather than after the last transcripts are saved.
+    if (!closing) callbacks.onPhase('ending');
     let persistenceTimer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>((resolve) => { persistenceTimer = setTimeout(resolve, 5_000); });
     void Promise.race([persisted.then(() => Promise.allSettled([...pendingEvents])).then(() => undefined), timeout]).then(() => {
@@ -135,7 +157,8 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     if (closing) { if (reason === 'user_hangup') requestedReason = reason; return closing; }
     requestedReason = reason;
     callbacks.onPhase('ending');
-    if (channel.readyState !== 'open') { finish('dropped', 'connection_lost'); return Promise.resolve(); }
+    // No line to say goodbye on yet (e.g. hung up while it was still ringing): the user's hang-up is still a hang-up.
+    if (channel.readyState !== 'open') { if (reason === 'user_hangup') finish('ended', reason); else finish('dropped', 'connection_lost'); return Promise.resolve(); }
     closing = new Promise<void>((resolve) => { resolveClose = resolve; });
     send({ type: 'session.close' });
     closeTimer = setTimeout(() => finish('ended', requestedReason ?? reason), 15_000);
@@ -144,14 +167,19 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
 
   async function runTool(item: { call_id?: unknown; name?: unknown; arguments?: unknown }) {
     const toolCallId = String(item.call_id ?? '');
+    const activity: ToolActivity = { id: toolCallId, name: String(item.name ?? ''), arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments ?? {}), status: 'running' };
+    const report = (status: ToolActivity['status']) => { if (!closed) callbacks.onTool?.({ ...activity, status }); };
     lastActivity = now();
+    report('running');
     try {
       await flush();
-      const response = await deps.fetchFn('/api/voice/tool', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, callItemId: toolCallId, name: String(item.name ?? ''), arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments ?? {}) }) });
+      const response = await fetchFn('/api/voice/tool', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, callItemId: toolCallId, name: activity.name, arguments: activity.arguments }) });
       const result = response.ok ? await response.json() as { output?: string; ui?: { type: string; toolkit?: string } } : {};
       if (result.ui) callbacks.onToolUi?.(result.ui);
+      report(typeof result.output === 'string' ? 'done' : 'failed');
       return { callId: toolCallId, output: typeof result.output === 'string' ? result.output : JSON.stringify({ status: 'unavailable' }) };
     } catch {
+      report('failed');
       return { callId: toolCallId, output: JSON.stringify({ status: 'unavailable' }) };
     }
   }
@@ -225,7 +253,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
       if (greeting) instruct(greeting);
       heartbeatTimer = setInterval(() => {
         if (!callId || closed) return;
-        void deps.fetchFn('/api/voice/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, kind: 'heartbeat' }) })
+        void fetchFn('/api/voice/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, kind: 'heartbeat' }) })
           .then((response) => { if (response.status === 409) finish('dropped', 'connection_lost'); })
           .catch(() => undefined);
       }, 30_000);
@@ -249,27 +277,44 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   channel.addEventListener('close', () => { if (!closed) finish('dropped', 'connection_lost'); });
   peer.addEventListener('connectionstatechange', () => { if (peer.connectionState === 'failed' && !closed) finish('dropped', 'connection_lost'); });
   peer.addEventListener('track', (event) => {
-    audio.srcObject = new MediaStream([event.track]);
+    const remote = new MediaStream([event.track]);
+    audio.srcObject = remote;
     void audio.play().catch(() => undefined);
+    callbacks.onAudio?.('assistant', remote);
   });
 
+  // Cancelling while connecting ends the call at once; once GPT-Live has answered, the session exists, so it ends as the user's hang-up.
+  const cancelled = () => new DOMException('The call was cancelled.', 'AbortError');
+  const onAbort = () => callId ? finish('ended', 'user_hangup') : finish('dropped', 'setup_failed');
+  const unlessCancelled = <T,>(work: Promise<T>): Promise<T> => !signal ? work : new Promise<T>((resolve, reject) => {
+    const stop = () => reject(cancelled());
+    if (signal.aborted) { stop(); return; }
+    signal.addEventListener('abort', stop, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop));
+  });
+  signal?.addEventListener('abort', onAbort, { once: true });
+
   try {
-    try { microphone = await deps.getMicrophone(); }
-    catch (error) { throw microphoneError(error); }
+    const granted = deps.getMicrophone();
+    // The browser's microphone prompt cannot be withdrawn: a microphone granted after a cancel is released straight away.
+    granted.then((stream) => { if (closed) stream.getTracks().forEach((track) => track.stop()); }, () => undefined);
+    try { microphone = await unlessCancelled(granted); }
+    catch (error) { throw signal?.aborted ? error : microphoneError(error); }
+    callbacks.onAudio?.('user', microphone);
     for (const track of microphone.getAudioTracks()) peer.addTrack(track, microphone);
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     if (peer.iceGatheringState !== 'complete') {
-      await new Promise<void>((resolve, reject) => {
+      await unlessCancelled(new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('The call could not connect. Check your network and try again.')), 10_000);
         const onState = () => { if (peer.iceGatheringState === 'complete') { clearTimeout(timer); peer.removeEventListener('icegatheringstatechange', onState); resolve(); } };
         peer.addEventListener('icegatheringstatechange', onState);
         onState();
-      });
+      }));
     }
     const sdp = peer.localDescription?.sdp;
     if (!sdp) throw new Error('The browser did not create an audio offer.');
-    const response = await deps.fetchFn('/api/voice/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sdp }) });
+    const response = await fetchFn('/api/voice/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sdp }) });
     if (!response.ok) throw new Error(response.status === 503 ? 'Voice is not configured yet.' : response.status === 429 ? 'Call limit reached. Please try again later.' : response.status === 409 ? 'A call is already active in this conversation.' : 'The call could not connect.');
     const result = await response.json() as { session?: { id?: string }; transport?: { sdp?: string }; greeting?: string; limits?: Limits; delegation?: boolean };
     if (!result.session?.id || !result.transport?.sdp) throw new Error('The voice connection returned an invalid answer.');
@@ -277,10 +322,14 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     greeting = typeof result.greeting === 'string' ? result.greeting : '';
     limits = result.limits;
     delegation = result.delegation === true;
+    // Cancelled while GPT-Live was answering: the call is already closed here, but the server holds it open, so record the hang-up to free the line.
+    if (signal?.aborted) { void post({ kind: 'ended', reason: 'user_hangup' }); throw cancelled(); }
     await peer.setRemoteDescription({ type: 'answer', sdp: result.transport.sdp });
   } catch (error) {
     finish('dropped', 'setup_failed');
-    throw error;
+    throw signal?.aborted ? cancelled() : error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
 
   return {
@@ -298,6 +347,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     },
     setBusy: (value) => { busy = value; if (!value) { lastActivity = now(); lastUserActivity = lastActivity; checkedIn = false; } },
     notify: (content) => { if (started) send({ type: 'session.thinking.append', delegation_id: null, content: truncateToTokens(content, 480) }); },
+    setMuted: (muted) => { microphone?.getAudioTracks().forEach((track) => { track.enabled = !muted; }); },
     abandon: () => {
       if (closed || !callId) return;
       void flush(true);
