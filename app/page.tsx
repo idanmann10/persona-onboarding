@@ -80,7 +80,7 @@ export default function Home() {
     setSending(true);
     setOpener('');
     try {
-      const response = await post('/api/agent/greeting', {});
+      const response = await post('/api/agent/greeting', { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
       // 'exists' or 'pending' (another tab is writing it) come back as JSON; the poll picks it up.
       if (response.ok && response.body && !response.headers.get('content-type')?.includes('application/json')) {
         const reader = response.body.getReader();

@@ -1,15 +1,25 @@
+import type { SessionEvent } from '../domain/events';
 import { signedInSession, type LoginStore } from '../auth/login';
+import { rememberBrowserZone } from './chat';
+
+interface Store extends LoginStore {
+  readEvents(id: string): Promise<SessionEvent[]>;
+  appendEvent(id: string, event: SessionEvent): Promise<void>;
+}
 
 /**
- * POST /api/agent/greeting: the assistant's first message, streamed, for a conversation that has none.
+ * POST /api/agent/greeting {timezone?}: the assistant's first message, streamed, for a conversation that has none.
  * 'exists' (200) when it's already written, 'pending' (202) while another tab writes it: the page then
  * waits for it through /api/agent/updates.
  */
-export function createGreetingHandler(store: LoginStore, open: (sessionId: string) => Promise<'exists' | 'pending' | AsyncGenerator<string>>) {
+export function createGreetingHandler(store: Store, open: (sessionId: string) => Promise<'exists' | 'pending' | AsyncGenerator<string>>) {
   return async (request: Request): Promise<Response> => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
     const sessionId = await signedInSession(store, request);
     if (!sessionId) return new Response('Session required', { status: 401 });
+    const body = await request.json().catch(() => ({})) as { timezone?: unknown };
+    // Their local time of day is part of a good hello.
+    await rememberBrowserZone(store, sessionId, await store.readEvents(sessionId), body?.timezone);
     const opened = await open(sessionId);
     if (opened === 'exists') return Response.json({ status: 'exists' });
     if (opened === 'pending') return Response.json({ status: 'pending' }, { status: 202 });

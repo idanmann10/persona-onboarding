@@ -56,7 +56,7 @@ async function signInIdentity(deps: FollowUpDeps, sessionId: string, state: Sess
 }
 
 const NOTE = `App note, not from the user: they just signed in, and this is the very first message of your conversation. Write it now.
-- Say hi like a person, by first name if you have it. Their local time of day and where they are can shape the hello, lightly.
+- Say hi like a person, by first name if you have it. If their time zone is known, their local time of day (and where they are, if known) can shape the hello, lightly. If it isn't, don't guess the time of day.
 - If "Other facts" lists a confident public profile match (public_identity_candidate), you may mention one light, relevant thing about their work and say it's from their public profile. Nothing personal, no guessing, no dossier.
 - In a few words, what you're for: their inbox, their calendar, the stuff that slips.
 - Then the one thing to settle in the chat: you don't have a name yet, so ask what they'd like to call you, and that they can skip it and just tell you what's on their plate.

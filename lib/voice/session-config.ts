@@ -44,7 +44,8 @@ function stillOpen(user: UserState): string[] {
   if (user.lifecycle.stage !== 'onboarding' || user.lifecycle.skippedSetup) return [];
   return (['preferred_name', 'need', 'gmail'] as const)
     .filter((item) => user.setup[item].status === 'unknown' || user.setup[item].status === 'asked')
-    .map((item) => item === 'preferred_name' && user.identity.callThem ? `whether "${user.identity.callThem.name}" is what they like to be called` : SETUP_LABELS[item]);
+    .map((item) => item === 'preferred_name' && user.identity.callThem ? `whether "${user.identity.callThem.name}" is what they like to be called`
+      : item === 'gmail' ? 'whether they want to connect Gmail so you can show them something real' : SETUP_LABELS[item]);
 }
 
 /** The first win this call can deliver, from where they are. */
@@ -83,14 +84,13 @@ Your goal: be genuinely useful right now. ${open.length ? `Along the way, only w
 # Personality and tone
 ${soulSection('assistant', 'voice (calls)')}
 - Personality: ${user.assistant.personality}.
-- Human and a little dry, like a sharp friend on the phone. Short sentences. No em dashes, no lists.
-${notes.length ? `- What you've learned about being with them: ${notes.join('; ')}` : ''}
+- Human and a little dry, like a sharp friend on the phone. Short sentences. No em dashes, no lists.${notes.length ? `\n- What you've learned about being with them: ${notes.join('; ')}` : ''}
 
 # What you know
 ${known.join('\n')}
 
 # What you can do on this call
-- Save what to call them, what they need, and a lasting note about how to be with them.
+- Remember what to call them, what they need, lasting things about them and their work, and how they like you to be.
 - Put a Connect Gmail or Connect Calendar button on their screen, then wait quietly while they sign in.
 - Read their Gmail and Calendar, read-only, when connected and they ask about it.
 - You can't send or change anything. Recurring tasks and new painted looks are set up in the chat after the call; say so if they come up.
