@@ -61,6 +61,8 @@ function elapsedOf(item: LogItem, serverNow: number): number | undefined {
 function rowText(item: LogItem): { text: string; quiet?: boolean } {
   if (item.kind === 'turn') {
     if (item.userText) return { text: item.userText };
+    // A background agent's row reads as its decision, not its JSON input.
+    if (item.agent) return { text: `${item.name} · ${(item.reply ?? '').replace(/[{}"\s]+/g, ' ').trim()}`, quiet: true };
     if (item.trigger) return { text: item.trigger, quiet: true };
     return { text: item.reply ?? sentence(item.name), quiet: true };
   }
