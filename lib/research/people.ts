@@ -13,6 +13,8 @@ export interface PersonCandidate {
   name?: string;
   company?: string;
   sourceUrl?: string;
+  /** The profile's own one-line headline ("CEO @ Arlo"), when the match gives one. */
+  headline?: string;
   requestId?: string;
 }
 
@@ -22,6 +24,13 @@ const normalized = (value: string) => value.trim().replace(/\s+/g, ' ').toLocale
 // Profile titles look like "Dana Lee", "Dana Lee - Founder - Acme" or "Dana Lee | LinkedIn".
 const titleName = (title = '') => normalized(title.split(/\s[-|–—]\s/)[0]);
 const escaped = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** "# Dana Lee CEO @ Acme | Building…" → "CEO @ Acme": the profile's headline after the name. */
+function headlineOf(result: ExaResult, name: string): string | undefined {
+  const first = (result.highlights?.[0] ?? '').replace(/^#+\s*/, '').split(/\n| \| | \.\.\. /)[0].trim();
+  const rest = first.toLocaleLowerCase().startsWith(name.toLocaleLowerCase()) ? first.slice(name.length).trim() : '';
+  return rest && rest.length <= 100 && !/https?:|[<>\[\]]/.test(rest) ? rest : undefined;
+}
 
 /**
  * Looks a stated person up with Exa's people search. It is a match only when exactly one profile carries
@@ -49,12 +58,15 @@ export async function lookupPersonCandidate(clue: PersonClue, key: string, fetch
     name, company, provenance: clue.provenance, matchScore: score,
     corroboratingSignals: atCompany.length ? 2 : 1, competingCandidates: Math.max(0, atCompany.length - 1),
   });
+  const best = atCompany[0] ?? sameName[0];
+  const headline = atCompany.length === 1 ? headlineOf(best, name) : undefined;
   return {
     status: status === 'matched_for_research' ? status : 'candidate',
     score,
     name,
     company,
-    sourceUrl: (atCompany[0] ?? sameName[0]).url,
+    sourceUrl: best.url,
+    ...(headline ? { headline } : {}),
     requestId: payload.requestId,
   };
 }
