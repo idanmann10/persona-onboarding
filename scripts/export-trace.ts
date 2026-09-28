@@ -48,6 +48,7 @@ const ENDINGS: Record<CallEndReason, string> = {
   user_hangup: 'they hung up', remote_hangup: 'the assistant hung up', connection_lost: 'the connection dropped',
   inactive: 'silence timeout', max_duration: 'hit the time limit', expired: 'the session expired', content: 'stopped by the content filter',
   page_closed: 'they closed the page', lost: 'lost with no end report', setup_failed: 'the call could not start',
+  goodbye: 'assistant said goodbye',
 };
 const ending = (reason?: string) => (reason && reason in ENDINGS ? ENDINGS[reason as CallEndReason] : reason) ?? 'no end report';
 const TOOLKITS = { gmail: 'Gmail', calendar: 'Google Calendar' } as const;

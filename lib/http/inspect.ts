@@ -41,7 +41,7 @@ export function createInspectHandler(store: Store, env: Record<string, string | 
         // The labeled state the agents read, and what each agent added to its own soul for this user.
         user: (() => {
           const user = buildUserState(state, new Date(), env.OPENAI_VOICE);
-          return { lifecycle: user.lifecycle, setup: user.setup, labels: user.labels, openLoops: user.openLoops, coach: user.coach ?? null, notes: user.notes };
+          return { lifecycle: user.lifecycle, setup: user.setup, labels: user.labels, openLoops: user.openLoops, checkIn: user.checkIn ?? null, notes: user.notes };
         })(),
         soulNotes: Object.fromEntries(Object.entries(state.memory.soulNotes).map(([agent, notes]) => [agent, notes.map((note) => note.text)])),
       },

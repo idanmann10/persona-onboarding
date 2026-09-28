@@ -20,6 +20,7 @@ const ENDINGS: Record<CallEndReason, string> = {
   max_duration: 'Reached the time limit',
   content: 'Call stopped',
   setup_failed: "Couldn't connect",
+  goodbye: 'Said goodbye',
 };
 
 export function duration(startedAt?: string, endedAt?: string): string {

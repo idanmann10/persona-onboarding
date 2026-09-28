@@ -6,6 +6,7 @@ import { runVoiceTool, toolContext, VOICE_TOOL_NAMES } from '../agent/tools';
 import type { AccountReadClient } from '../agent/tools/accounts';
 import { withVoiceToolTrace } from '../observability/voice-tool-trace';
 import type { TraceSink } from '../observability/trace';
+import type { AutomationStore } from '../domain/automation';
 
 interface Store extends IpQuotaStore, LoginStore {
   hasEvent(id: string, eventId: string): Promise<boolean>;
@@ -14,6 +15,8 @@ interface Store extends IpQuotaStore, LoginStore {
   getActiveConnection(id: string, toolkit: Toolkit): Promise<string | undefined>;
   consumeQuota(id: string, scope: 'tool', limit: number, windowSeconds: number): Promise<boolean>;
   appendTrace?: TraceSink['appendTrace'];
+  /** A call can put a recurring-task preview card in the chat. */
+  proposeAutomation?: AutomationStore['proposeAutomation'];
 }
 
 export { VOICE_TOOL_NAMES };

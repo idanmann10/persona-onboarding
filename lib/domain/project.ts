@@ -58,7 +58,7 @@ export interface SessionProjection {
   onboarding: OnboardingProgress;
   /** The brief's goal: the four things known, or the user skipped ahead. */
   setup: SetupStatus;
-  /** What the agents learned and decided along the way (memory, labels, soul notes, coach decisions). */
+  /** What the agents learned and decided along the way (memory, labels, soul notes, follow-ups, check-ins). */
   memory: {
     soulNotes: Record<AgentName, Array<Of<'soul_note'>>>;
     notes: Array<Of<'note'>>;
@@ -69,8 +69,8 @@ export interface SessionProjection {
     summary?: Of<'summary'>;
     /** Conversation lines the memory has already read. */
     readLines: number;
-    coach: Array<Of<'coach'>>;
-    asks: Array<Of<'setup_ask'>>;
+    followUps: Array<Of<'follow_up'>>;
+    checkIns: Array<Of<'check_in'>>;
   };
   /** When things happened, for engagement and lifecycle: the first event, returns, and account reads. */
   activity: { firstAt?: string; visits: string[]; reads: Array<Of<'account_read'>>; runs: Array<{ id: string; phase: 'ran' | 'failed'; at: string; title: string }> };
@@ -82,7 +82,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
     connections: { gmail: 'none', calendar: 'none' }, apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
-    memory: { soulNotes: { assistant: [], coach: [], memory: [] }, notes: [], labels: {}, loops: [], readLines: 0, coach: [], asks: [] },
+    memory: { soulNotes: { assistant: [], memory: [] }, notes: [], labels: {}, loops: [], readLines: 0, followUps: [], checkIns: [] },
     activity: { visits: [], reads: [], runs: [] },
     onboarding: {
       assistantName: { status: 'unknown' }, preferredName: { status: 'unknown' }, need: { status: 'unknown' },
@@ -222,11 +222,11 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
       case 'memory_run':
         state.memory.readLines = Math.max(state.memory.readLines, event.lines);
         break;
-      case 'coach':
-        state.memory.coach.push(event);
+      case 'follow_up':
+        state.memory.followUps.push(event);
         break;
-      case 'setup_ask':
-        state.memory.asks.push(event);
+      case 'check_in':
+        state.memory.checkIns.push(event);
         break;
       case 'automation': {
         let card = state.automations.find((item) => item.automationId === event.automationId);

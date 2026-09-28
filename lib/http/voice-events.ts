@@ -11,7 +11,7 @@ interface Store extends IpQuotaStore, LoginStore {
 }
 
 /** End reasons a browser may report; `lost` is only ever inferred by the server. */
-const CLIENT_REASONS = new Set<CallEndReason>(['user_hangup', 'remote_hangup', 'connection_lost', 'inactive', 'max_duration', 'expired', 'content', 'page_closed', 'setup_failed']);
+const CLIENT_REASONS = new Set<CallEndReason>(['user_hangup', 'remote_hangup', 'connection_lost', 'inactive', 'max_duration', 'expired', 'content', 'page_closed', 'setup_failed', 'goodbye']);
 const MAX_BATCH = 40;
 /** Fragments may trail an end report by a moment (a page-close beacon races its last flush). */
 const TRAILING_FRAGMENTS_MS = 60_000;
@@ -28,7 +28,7 @@ function parseFragment(value: unknown): Fragment | undefined {
   return { eventId: body.eventId, speaker: body.speaker, text: body.text, startMs: body.startMs as number, endMs: body.endMs as number };
 }
 
-/** `onEnded` runs when a call ends or drops, so the route can let the onboarding coach decide on a follow-up. */
+/** `onEnded` runs when a call ends or drops, so the route can wake the assistant to decide on a follow-up. */
 export function createVoiceEventHandler(store: Store, onEnded?: (sessionId: string) => void) {
   return async (request: Request): Promise<Response> => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });

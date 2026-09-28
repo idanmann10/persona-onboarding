@@ -38,7 +38,7 @@ export interface TurnItem {
   toolsOffered: string[];
   userText?: string;
   trigger?: string;
-  /** Set for a background agent's run (the onboarding coach, the memory); its reply is its JSON decision. */
+  /** Set for a background agent's run (the memory); its reply is its JSON result. */
   agent?: string;
   reply?: string;
   error?: string;
@@ -208,7 +208,7 @@ function callItems(state: SessionProjection, traces: StoredTrace[]): CallItem[] 
 
 const TOOLKIT = { gmail: 'Gmail', calendar: 'Google Calendar' } as const;
 const FACT_LABELS: Record<string, string> = { assistant_name: 'Assistant name', preferred_name: 'User name', name: 'User name', current_need: 'Need', personality: 'Personality', voice: 'Voice' };
-const AGENT_NAMES = { assistant: 'Assistant', coach: 'Coach', memory: 'Memory' } as const;
+const AGENT_NAMES = { assistant: 'Assistant', memory: 'Memory' } as const;
 
 /** Moments a reviewer cares about: accounts, call offers, recurring tasks, saved facts, and what the agents learned and decided. */
 export function notableEvents(events: SessionEvent[]): EventItem[] {
@@ -248,11 +248,11 @@ export function notableEvents(events: SessionEvent[]): EventItem[] {
       items.push({ ...base, kind: 'event', tone: 'neutral', label: event.action === 'open' ? 'Open loop' : 'Loop closed', detail: event.text });
     } else if (event.type === 'summary') {
       items.push({ ...base, kind: 'event', tone: 'neutral', label: `Summary updated (${event.lines} lines)`, detail: event.text });
-    } else if (event.type === 'coach') {
-      const decision = event.reachOut === 'now' ? 'reach out now' : event.reachOut === 'later' ? `check in at ${event.wakeAt?.slice(11, 16) ?? '?'} UTC` : 'stay quiet';
-      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Coach: ${decision} · focus ${event.focus.replace(/_/g, ' ')}`, detail: `${event.why}\n${event.guidance}${event.guard ? `\nGuardrail: ${event.guard}` : ''}`, tag: event.trigger.split(':')[0] });
-    } else if (event.type === 'setup_ask') {
-      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Asked about ${event.item.replace(/_/g, ' ')}` });
+    } else if (event.type === 'follow_up') {
+      const label = event.outcome === 'messaged' ? 'Follow-up sent' : event.guard ? 'Follow-up held by a guardrail' : 'Stayed quiet';
+      items.push({ ...base, kind: 'event', tone: event.outcome === 'messaged' ? 'good' : 'neutral', label, detail: event.reason, tag: event.trigger.split(':')[0] });
+    } else if (event.type === 'check_in') {
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Check-in scheduled for ${event.wakeAt.slice(0, 16).replace('T', ' ')} UTC`, detail: event.reason });
     }
   }
   return items;
