@@ -20,5 +20,6 @@ export function parseLiveEvent(event: unknown): ParsedLiveEvent | null {
 /** A short turn that ends on a goodbye ("okay, bye", "talk to you later"), not one that only mentions one. */
 export function isFarewell(turn: string): boolean {
   const words = turn.trim().split(/\s+/);
-  return words.length <= 6 && new RegExp(`${SPOKEN_GOODBYE.source}[\\s.!,]*(for now|then|now)?[\\s.!]*$`, 'i').test(turn.trim());
+  // Short, and ending on the goodbye: "okay, that's all for now, bye!" is one; "say bye to Dana for me" isn't.
+  return words.length <= 9 && new RegExp(`${SPOKEN_GOODBYE.source}[\\s.!,]*(for now|then|now)?[\\s.!]*$`, 'i').test(turn.trim());
 }
