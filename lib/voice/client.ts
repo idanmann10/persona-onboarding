@@ -85,6 +85,10 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   let requestedReason: CallEndReason | undefined;
   let closing: Promise<void> | undefined;
   let greeting = '';
+  let greetingLine = '';
+  let assistantSpoke = false;
+  let userSpoke = false;
+  let greetingTimer: ReturnType<typeof setTimeout> | undefined;
   let limits: Limits | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -109,6 +113,26 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   };
   const instruct = (content: string) => send({ type: 'session.instructions.append', delegation_id: null, content });
 
+  /**
+   * The assistant speaks first. The greeting goes out as an instruction with its own id; GPT-Live acks it
+   * (`session.instructions.appended` with that `client_event_id`). If no assistant speech follows shortly
+   * after the ack (or after the call starts, when no ack comes), one short line goes out as commentary,
+   * which the model says aloud. Nothing is sent once either side has spoken.
+   */
+  const GREETING_EVENT = 'persona_greeting';
+  const nudgeGreeting = (afterMs: number) => {
+    clearTimeout(greetingTimer);
+    greetingTimer = setTimeout(() => {
+      if (closed || assistantSpoke || userSpoke || !greetingLine) return;
+      send({ type: 'session.commentary.append', delegation_id: null, content: greetingLine });
+    }, afterMs);
+  };
+  const greet = () => {
+    if (!greeting) return;
+    send({ type: 'session.instructions.append', event_id: GREETING_EVENT, delegation_id: null, content: greeting });
+    nudgeGreeting(4_000);
+  };
+
   function post(body: Record<string, unknown>, keepalive = false) {
     if (!callId) return Promise.resolve();
     let pending: Promise<unknown>;
@@ -132,7 +156,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   function finish(phase: 'ended' | 'dropped', reason: CallEndReason) {
     if (closed) return;
     closed = true;
-    for (const timer of [closeTimer, flushTimer]) if (timer) clearTimeout(timer);
+    for (const timer of [closeTimer, flushTimer, greetingTimer]) if (timer) clearTimeout(timer);
     for (const timer of [heartbeatTimer, watchTimer]) if (timer) clearInterval(timer);
     const persisted = flush().then(() => post({ kind: phase, reason }));
     microphone?.getTracks().forEach((track) => track.stop());
@@ -241,6 +265,12 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     try { raw = JSON.parse(data); } catch { return; }
     if (closed) return;
     if (raw?.type === 'response.event') { onResponseEvent(raw); return; }
+    if (raw?.type === 'session.instructions.appended' && raw.client_event_id === GREETING_EVENT) { nudgeGreeting(2_000); return; }
+    if (raw?.type === 'error' || (typeof raw?.type === 'string' && raw.type.endsWith('.error')) || (raw?.error && typeof raw.error === 'object')) {
+      console.error('GPT-Live error', raw);
+      if (raw.client_event_id === GREETING_EVENT || (raw.error as { event_id?: unknown } | undefined)?.event_id === GREETING_EVENT) nudgeGreeting(0);
+      return;
+    }
     const parsed = parseLiveEvent(raw);
     if (!parsed) return;
     if (parsed.kind === 'started') {
@@ -250,7 +280,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
       lastActivity = startedAt;
       lastUserActivity = startedAt;
       void post({ kind: 'started' });
-      if (greeting) instruct(greeting);
+      greet();
       heartbeatTimer = setInterval(() => {
         if (!callId || closed) return;
         void fetchFn('/api/voice/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, kind: 'heartbeat' }) })
@@ -261,7 +291,8 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
       callbacks.onPhase('active');
     } else if (parsed.kind === 'transcript') {
       lastActivity = now();
-      if (parsed.speaker === 'user') { lastUserActivity = lastActivity; checkedIn = false; }
+      if (parsed.speaker === 'user') { lastUserActivity = lastActivity; checkedIn = false; userSpoke = true; }
+      else assistantSpoke = true;
       queue.push({ eventId: parsed.eventId, speaker: parsed.speaker, text: parsed.text, startMs: parsed.startMs, endMs: parsed.endMs });
       if (queue.length >= 40) void flush();
       else flushTimer ??= setTimeout(() => { flushTimer = undefined; void flush(); }, 700);
@@ -316,10 +347,11 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     if (!sdp) throw new Error('The browser did not create an audio offer.');
     const response = await fetchFn('/api/voice/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sdp }) });
     if (!response.ok) throw new Error(response.status === 503 ? 'Voice is not configured yet.' : response.status === 429 ? 'Call limit reached. Please try again later.' : response.status === 409 ? 'A call is already active in this conversation.' : 'The call could not connect.');
-    const result = await response.json() as { session?: { id?: string }; transport?: { sdp?: string }; greeting?: string; limits?: Limits; delegation?: boolean };
+    const result = await response.json() as { session?: { id?: string }; transport?: { sdp?: string }; greeting?: string; greetingLine?: string; limits?: Limits; delegation?: boolean };
     if (!result.session?.id || !result.transport?.sdp) throw new Error('The voice connection returned an invalid answer.');
     callId = result.session.id;
     greeting = typeof result.greeting === 'string' ? result.greeting : '';
+    greetingLine = typeof result.greetingLine === 'string' ? result.greetingLine : '';
     limits = result.limits;
     delegation = result.delegation === true;
     // Cancelled while GPT-Live was answering: the call is already closed here, but the server holds it open, so record the hang-up to free the line.
@@ -353,7 +385,7 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
       void flush(true);
       void post({ kind: 'dropped', reason: 'page_closed' }, true);
       closed = true;
-      for (const timer of [closeTimer, flushTimer]) if (timer) clearTimeout(timer);
+      for (const timer of [closeTimer, flushTimer, greetingTimer]) if (timer) clearTimeout(timer);
       for (const timer of [heartbeatTimer, watchTimer]) if (timer) clearInterval(timer);
       microphone?.getTracks().forEach((track) => track.stop());
       peer.close();

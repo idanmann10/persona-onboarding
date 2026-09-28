@@ -34,7 +34,7 @@ export function createVoiceSessionHandler(store: Store, key: string, upstream: t
     }
     const state = projectSession(await store.readEvents(sessionId));
     const capabilities = availableCapabilities(env);
-    const { session, greeting, limits, delegation } = buildLiveSession(state, env, { gmail: capabilities.gmail, calendar: capabilities.calendar });
+    const { session, greeting, greetingLine, limits, delegation } = buildLiveSession(state, env, { gmail: capabilities.gmail, calendar: capabilities.calendar });
     const setupStarted = Date.now();
     const described = session as { model?: string; instructions?: string; input?: unknown[]; audio?: { output?: { voice?: string } } };
     // The agent log's record of the setup: which voice and model, what it was seeded with, how long GPT-Live took.
@@ -73,6 +73,6 @@ export function createVoiceSessionHandler(store: Store, key: string, upstream: t
       store.appendEvent(sessionId, { id: `call:${payload.session.id}:accepted`, at: new Date().toISOString(), type: 'call', phase: 'accepted', callId: payload.session.id }),
       traced,
     ]);
-    return Response.json({ session: { id: payload.session.id }, transport: { type: 'webrtc', sdp: payload.transport.sdp }, greeting, limits, delegation }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({ session: { id: payload.session.id }, transport: { type: 'webrtc', sdp: payload.transport.sdp }, greeting, greetingLine, limits, delegation }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
   };
 }

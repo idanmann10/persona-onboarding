@@ -54,6 +54,7 @@ export function memoryPrompt(state: SessionProjection) {
     input: {
       known: {
         call_them: state.onboarding.preferredName.value ?? state.facts.user_given_name?.value ?? null,
+        assistant_name: state.onboarding.assistantName.value ?? null,
         need: state.onboarding.need.value ?? null,
         notes: state.memory.notes.slice(-20).map((note) => note.text),
         labels: Object.values(state.memory.labels).map((label) => `${label.label} (${label.confidence})`),

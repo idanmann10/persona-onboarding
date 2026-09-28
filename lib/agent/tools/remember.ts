@@ -1,23 +1,31 @@
 import { z } from 'zod';
-import { normalize, saidByUser, timestamp } from './gates';
+import { acceptNote } from '../../domain/memory';
+import { normalize, saidByUser, shortHash, timestamp } from './gates';
 import { defineTool } from './types';
 
-export const REMEMBER_KEYS = ['preferred_name', 'current_need'] as const;
+export const REMEMBER_KEYS = ['preferred_name', 'current_need', 'note'] as const;
 
 /**
- * What to call the user and what they need. A name is saved only from their own words, or when it is the
- * name their Google account already carries (they confirmed it); anything else is refused.
+ * What to call the user, what they need, and durable notes (the same memory the background memory keeps,
+ * so a call can save what it learns while it's happening). A name is saved only from their own words, or
+ * when it is the name their Google account already carries (they confirmed it); anything else is refused.
  */
 export const remember = defineTool({
   name: 'remember',
-  description: 'Save something new or changed: what to call the user (preferred_name) or what they want help with (current_need). Use declined only when they refuse to share that exact thing.',
+  description: 'Save something new or changed: what to call the user (preferred_name), what they want help with (current_need), or one durable thing they told you about themselves or their work (note). Use declined only when they refuse to share that exact thing.',
   input: z.object({
-    key: z.enum(REMEMBER_KEYS).describe("preferred_name: the user's own name, only when they say it is theirs or confirm the name you used. current_need: the task or problem they want handled, in their words."),
+    key: z.enum(REMEMBER_KEYS).describe("preferred_name: the user's own name, only when they say it is theirs or confirm the name you used. current_need: the task or problem they want handled, in their words. note: a durable fact or preference in one plain line, e.g. \"runs a 12-person design studio\"."),
     value: z.string().max(300).optional().describe('The value, as the user said it. Omit when declined is true.'),
     declined: z.boolean().optional().describe('True only when they refuse to share this exact thing. Saying no to a call or an account is note_decline, not this.'),
   }),
   channels: ['text', 'voice'],
   async execute(ctx, input) {
+    if (input.key === 'note') {
+      const accepted = acceptNote(ctx.state, input.value ?? '');
+      if (!accepted.ok) return { status: accepted.reason === 'duplicate' ? 'unchanged' : 'rejected', reason: 'One plain line, up to 160 characters, no links.' };
+      await ctx.store.appendEvent(ctx.sessionId, { id: `note:${ctx.turnId}:${shortHash(accepted.text)}`, at: timestamp(ctx), type: 'note', text: accepted.text, kind: 'fact', source: ctx.channel === 'voice' ? 'call' : 'user', provenance: 'user_said' });
+      return { status: 'saved', key: 'note' };
+    }
     const id = `fact:${input.key}:${ctx.turnId}`;
     if (input.declined) {
       await ctx.store.appendEvent(ctx.sessionId, { id, at: timestamp(ctx), type: 'fact', key: input.key, value: 'declined', evidence: 'declined', provenance: 'user_said', sourceEventId: ctx.turnId });
