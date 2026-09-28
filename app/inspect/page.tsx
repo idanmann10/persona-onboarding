@@ -19,7 +19,13 @@ interface Inspection {
     settings: Settings;
     connections: Record<string, string>;
     facts: Array<{ key: string; value: string; evidence: string; provenance: string }>;
-    user?: { lifecycle: { stage: string; day: number }; labels: Array<{ label: string; confidence: string }>; coach: { focus: string; guidance: string } | null };
+    user?: {
+      lifecycle: { stage: string; day: number }; labels: Array<{ label: string; confidence: string }>; coach: { focus: string; guidance: string } | null;
+      profile?: Array<{ id: string; label: string; value: string; status: string }>;
+      memories?: Array<{ id: string; text: string; kind: string; labels: string[] }>;
+      memoryCounts?: { live: number; replaced: number; forgotten: number };
+      summary?: { text: string; lines: number };
+    };
     soulNotes?: Record<string, string[]>;
   };
   summary: LogSummary;
@@ -252,6 +258,12 @@ function TurnDetail({ turn, serverNow, settings }: { turn: TurnItem; serverNow: 
         ['Cached', turn.totals.tokensIn ? `${Math.round((turn.totals.cachedIn / turn.totals.tokensIn) * 100)}%` : '–'],
         ['Steps', `${turn.steps.length}${turn.stalls ? ` · ${turn.stalls} stalled` : ''}`, turn.stalls > 0],
       ]} />
+      {turn.context && (
+        <details className="ins-fold">
+          <summary>Context budget<span>~{count(Number(turn.context.total) || 0)} tokens · memories {String(turn.context.memories ?? '–')} · {String(turn.context.replayed ?? '')}</span></summary>
+          <div className="ins-chips">{Object.entries(turn.context).map(([key, value]) => <code key={key}>{key} {typeof value === 'number' ? count(value) : value}</code>)}</div>
+        </details>
+      )}
       {turn.error && <p className="ins-error" role="alert">{turn.error}</p>}
       {(turn.userText || turn.trigger) && (
         <Section title={turn.userText ? 'User said' : 'Trigger'}>
@@ -360,6 +372,10 @@ function Knows({ data }: { data: Inspection['state'] }) {
         {data.user && row('Stage', `${sentence(data.user.lifecycle.stage)} · day ${data.user.lifecycle.day}`)}
         {data.user && row('Coach focus', data.user.coach ? `${humanize(data.user.coach.focus)}: ${data.user.coach.guidance}` : undefined)}
         {data.user && row('Labels', data.user.labels.length ? data.user.labels.map((label) => `${label.label} (${label.confidence})`).join(', ') : undefined)}
+        {data.user?.profile && row('Profile', data.user.profile.length ? data.user.profile.map((item) => `${item.label}: ${item.value} (${item.status})`).join(' · ') : undefined, 'pinned')}
+        {data.user?.memories && row('Memories', data.user.memories.length ? data.user.memories.map((memory) => `${memory.text} [${[memory.kind, ...memory.labels].join(', ')}]`).join(' · ') : undefined,
+          data.user.memoryCounts ? `${data.user.memoryCounts.live} live, ${data.user.memoryCounts.replaced} merged or corrected, ${data.user.memoryCounts.forgotten} forgotten` : undefined)}
+        {data.user && row('Summary', data.user.summary ? `${data.user.summary.text}` : undefined, data.user.summary ? `covers ${data.user.summary.lines} lines` : undefined)}
         {Object.entries(data.soulNotes ?? {}).map(([agent, notes]) => row(`${sentence(agent)} soul notes`, notes.length ? notes.join(' · ') : undefined))}
       </dl>
     </div>
