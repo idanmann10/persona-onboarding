@@ -47,3 +47,24 @@ export function ArrowUpIcon(props: IconProps) {
 export function AppsIcon(props: IconProps) {
   return <svg {...stroke} {...props}><rect x="3.5" y="3.5" width="7" height="7" rx="2" /><rect x="13.5" y="3.5" width="7" height="7" rx="2" /><rect x="3.5" y="13.5" width="7" height="7" rx="2" /><rect x="13.5" y="13.5" width="7" height="7" rx="2" /></svg>;
 }
+
+/* Call screen controls. */
+export function MicIcon(props: IconProps) {
+  return <svg {...stroke} {...props}><rect x="9" y="2.5" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5" /></svg>;
+}
+
+export function MicOffIcon(props: IconProps) {
+  return <svg {...stroke} {...props}><path d="M15 9.5v-4a3 3 0 0 0-5.7-1.3M9 9v2.5a3 3 0 0 0 4.9 2.3" /><path d="M19 11a7 7 0 0 1-1.1 3.8M5 11a7 7 0 0 0 10.7 5.9M12 18v3.5M3 3l18 18" /></svg>;
+}
+
+export function KeyboardIcon(props: IconProps) {
+  return <svg {...stroke} {...props}><rect x="2.5" y="5.5" width="19" height="13" rx="2.5" /><path d="M6.5 9.5h.01M10.5 9.5h.01M14.5 9.5h.01M18 9.5h.01M6.5 12.5h.01M10.5 12.5h.01M14.5 12.5h.01M18 12.5h.01M8 15.5h8" /></svg>;
+}
+
+export function ChevronDownIcon(props: IconProps) {
+  return <svg {...stroke} {...props}><path d="M6 9l6 6 6-6" /></svg>;
+}
+
+export function CheckIcon(props: IconProps) {
+  return <svg {...stroke} strokeWidth={2.4} {...props}><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>;
+}

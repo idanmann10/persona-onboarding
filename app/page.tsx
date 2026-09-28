@@ -9,13 +9,14 @@ import { assistantGroupEnds, Bubble, duration, TimelineEntry, type Face, type To
 import { Avatar } from './components/avatar';
 import { ConnectionsSheet } from './components/connections-sheet';
 import { AppsIcon, ArrowUpIcon, PersonaMark, PhoneIcon } from './components/icons';
+import { CallScreen } from './call/call-screen';
+import { useCallFeed } from './call/use-call-feed';
 
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
 type FollowUpRequest = { kind: 'call_ended'; callId: string } | { kind: 'connection'; toolkit: Toolkit; acknowledge?: boolean };
 /** `avatarUrl` is the assistant's photo, served by `/api/session`. */
 type Settings = PersonaSettings & { avatarUrl?: string };
 type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: Settings; pendingFollowUps?: FollowUpRequest[]; automationDue?: boolean; account?: { email: string } | null };
-type Caption = { speaker: 'user' | 'assistant'; text: string };
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
 const isToolkit = (value: unknown): value is Toolkit => value === 'gmail' || value === 'calendar';
@@ -46,7 +47,7 @@ export default function Home() {
   const [callPhase, setCallPhase] = useState<'idle' | 'connecting' | 'active' | 'ending'>('idle');
   const [liveCallId, setLiveCallId] = useState<string | undefined>();
   const [callStartedAt, setCallStartedAt] = useState<string | undefined>();
-  const [captions, setCaptions] = useState<Caption[]>([]);
+  const callFeed = useCallFeed();
   const [, setTick] = useState(0);
   const voiceRef = useRef<VoiceController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -168,10 +169,8 @@ export default function Home() {
     setInput('');
     setError('');
     if (voiceRef.current && callPhase === 'active') {
-      if (text.length > 2_000) { setInput(text); setError('That is too long to send into the call. Keep it under 2,000 characters, or send it after the call.'); return; }
-      voiceRef.current.addTextContext(text);
-      setTimeline((current) => [...current, { kind: 'message', id, speaker: 'user', channel: 'text', text }]);
-      await post('/api/voice/event', { callId: voiceRef.current.callId, kind: 'typed', messageId: id, text }).catch(() => undefined);
+      const problem = typeIntoCall(text);
+      if (problem) { setInput(text); setError(problem); }
       return;
     }
     const answerId = `answer:${id}`;
@@ -202,6 +201,17 @@ export default function Home() {
     } finally { setSending(false); }
   }
 
+  /** Text typed during a call goes into the call as the user's own words and into the thread, not to the chat model. Returns why it could not. */
+  function typeIntoCall(text: string): string | undefined {
+    const voice = voiceRef.current;
+    if (!voice || callPhase !== 'active') return 'The call is not connected yet. Try again in a moment.';
+    if (text.length > 2_000) return 'That is too long to send into the call. Keep it under 2,000 characters, or send it after the call.';
+    const id = crypto.randomUUID();
+    voice.addTextContext(text);
+    setTimeline((current) => [...current, { kind: 'message', id, speaker: 'user', channel: 'text', text }]);
+    void post('/api/voice/event', { callId: voice.callId, kind: 'typed', messageId: id, text }).catch(() => undefined);
+  }
+
   function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); }
   }
@@ -210,9 +220,10 @@ export default function Home() {
     if (voiceRef.current) { await voiceRef.current.close(); return; }
     if (callPhase !== 'idle') return;
     setError('');
-    setCaptions([]);
+    const signal = callFeed.begin();
     let callId: string | undefined;
     const callbacks: VoiceCallbacks = {
+      ...callFeed.callbacks,
       onPhase: (phase) => {
         if (phase === 'connecting' || phase === 'ending') setCallPhase(phase);
         else if (phase === 'active') { setCallPhase('active'); setCallStartedAt(new Date().toISOString()); }
@@ -220,32 +231,36 @@ export default function Home() {
           voiceRef.current = null;
           setCallPhase('idle');
           setLiveCallId(undefined);
-          setCaptions([]);
           void refresh().then(() => { if (callId) void runFollowUps([{ kind: 'call_ended', callId }]); }).catch(() => undefined);
         }
       },
-      onCaption: (fragment) => setCaptions((current) => {
-        const last = current.at(-1);
-        if (last?.speaker === fragment.speaker) return [...current.slice(0, -1), { speaker: last.speaker, text: last.text + fragment.text }];
-        return [...current.slice(-7), { speaker: fragment.speaker, text: fragment.text }];
-      }),
-      onToolUi: () => { void refresh(); },
+      onToolUi: (ui) => { callFeed.callbacks.onToolUi(ui); void refresh(); },
     };
     try {
+      // Every browser API is wrapped, never passed bare: called detached from its object, it throws "Illegal invocation".
       const controller = await startBrowserCall(callbacks, {
         createPeer: () => new RTCPeerConnection(),
         getMicrophone: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }),
         createAudio: () => new Audio(),
         fetchFn: (input, init) => fetch(input, init),
+        signal,
       });
       voiceRef.current = controller;
       callId = controller.callId;
       setLiveCallId(controller.callId);
       void refresh();
     } catch (cause) {
+      // Cancelled from the call screen: it has already closed, and a newer call may be starting.
+      if (signal.aborted) return;
       setCallPhase('idle');
       setError(cause instanceof Error ? cause.message : 'The call could not connect.');
     }
+  }
+
+  /** The call screen's End button: hangs up, or cancels a call that is still connecting. */
+  function hangUp() {
+    if (voiceRef.current) void voiceRef.current.close();
+    else callFeed.cancel();
   }
 
   async function declineCall() {
@@ -381,19 +396,6 @@ export default function Home() {
             </button>
           </div>
         </header>
-
-        {onCall ? (
-          <section className="live-call glass" aria-live="polite" aria-label="Live call">
-            <div className="live-head">
-              <Avatar src={avatarUrl} name={assistantName} size={28} />
-              <span className="live-title">{callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending call…' : `Live with ${assistantName}`}</span>
-              <span className="live-time"><span className="live-dot" aria-hidden="true" />{callPhase === 'active' ? duration(callStartedAt) : ''}</span>
-            </div>
-            <div className="captions">
-              {captions.length ? captions.slice(-3).map((caption, index) => <p key={index} className={caption.speaker}><b>{caption.speaker === 'user' ? 'You' : assistantName}</b> {caption.text.length > 240 ? `…${caption.text.slice(-240)}` : caption.text}</p>) : <p className="muted">{callPhase === 'active' ? 'Say hello, or type below. Your text goes into the call.' : 'Setting up your microphone…'}</p>}
-            </div>
-          </section>
-        ) : null}
       </div>
 
       <div className="thread" aria-live="polite">
@@ -422,6 +424,9 @@ export default function Home() {
       </div>
 
       {appsOpen ? <ConnectionsSheet connecting={connecting} version={appsVersion} onConnect={(slug) => void connect(slug)} onChanged={() => void refresh().catch(() => undefined)} onClose={closeApps} /> : null}
+
+      <CallScreen phase={callPhase} name={assistantName} avatarUrl={avatarUrl} startedAt={callStartedAt} feed={callFeed} timeline={timeline} signingIn={Boolean(connecting)} error={error}
+        onHangUp={hangUp} onMute={(muted) => voiceRef.current?.setMuted(muted)} onType={typeIntoCall} onConnect={(toolkit) => void connect(toolkit)} />
     </main>
   );
 }
