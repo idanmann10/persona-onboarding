@@ -15,7 +15,7 @@ export interface SubagentDeps {
   model?: LanguageModel;
 }
 
-export const AGENT_LABELS: Record<Exclude<AgentName, 'assistant'>, string> = { coach: 'Onboarding coach', memory: 'Memory' };
+export const AGENT_LABELS: Record<Exclude<AgentName, 'assistant'>, string> = { memory: 'Memory' };
 
 /**
  * One background agent call: its soul-led system prompt, a small JSON input (state plus the last few

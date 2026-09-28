@@ -376,13 +376,17 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         AND starts_with(reservation_key, ${prefix}) AND created_at > now() - make_interval(secs => ${seconds}) LIMIT 1`;
       return rows.length > 0;
     },
-    /** Sessions whose onboarding coach scheduled a check-in that is now due (for the cron). */
+    /**
+     * Sessions with a check-in that is due and still stands (for the cron): the newest one, nothing the
+     * user wrote since, and not decided yet (its decision is the event `follow-up:check-in:<its id>`).
+     */
     sessionsWithDueCheckIns: async (limit = 25): Promise<string[]> => {
-      // A check-in's own decision is the event `coach:wake:<id of the decision that scheduled it>`.
       const rows = await sql`SELECT DISTINCT e.session_id FROM persona_events e
-        WHERE e.payload->>'type' = 'coach' AND e.payload->>'reachOut' = 'later' AND e.payload->>'wakeAt' <= ${new Date().toISOString()}
+        WHERE e.payload->>'type' = 'check_in' AND e.payload->>'wakeAt' <= ${new Date().toISOString()}
         AND e.created_at > now() - interval '8 days'
-        AND NOT EXISTS (SELECT 1 FROM persona_events d WHERE d.session_id = e.session_id AND d.event_id = 'coach:wake:' || e.event_id)
+        AND NOT EXISTS (SELECT 1 FROM persona_events d WHERE d.session_id = e.session_id AND d.event_id = 'follow-up:check-in:' || e.event_id)
+        AND NOT EXISTS (SELECT 1 FROM persona_events n WHERE n.session_id = e.session_id AND n.seq > e.seq
+          AND (n.payload->>'type' = 'check_in' OR (n.payload->>'type' = 'message' AND n.payload->>'speaker' = 'user')))
         LIMIT ${limit}`;
       return rows.map((row) => row.session_id as string);
     },

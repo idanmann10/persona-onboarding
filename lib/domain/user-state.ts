@@ -1,4 +1,4 @@
-import type { CallEndReason, CoachFocus, SetupItem } from './events';
+import type { CallEndReason, SetupItem } from './events';
 import { SETUP_ITEMS } from './events';
 import type { CallRecord, SessionProjection } from './project';
 import { personaSettings, personalityLine } from './persona';
@@ -7,7 +7,7 @@ import { isValidTimeZone } from './schedule';
 
 /**
  * Everything the agents know about the user, labeled, from the event log. The assistant's prompt, the
- * onboarding coach and the memory all read this one shape, so they never disagree about the facts.
+ * voice prompt and the memory all read this one shape, so they never disagree about the facts.
  */
 
 /** Written by the Google sign-in (exactly these keys). Names are a good guess until the user confirms what to call them. */
@@ -53,7 +53,8 @@ export interface UserState {
   /** Every live memory, best first for the recent conversation; a prompt shows the top within its budget. */
   memories: RankedMemory[];
   summary?: string;
-  coach?: { focus: CoachFocus; guidance: string; at: string };
+  /** A check-in the assistant scheduled, still ahead and not cancelled by a reply. */
+  checkIn?: { wakeAt: string; reason: string };
 }
 
 export const END_REASONS: Record<CallEndReason, string> = {
@@ -67,6 +68,7 @@ export const END_REASONS: Record<CallEndReason, string> = {
   expired: 'it reached the session time limit',
   content: 'a safety filter stopped it',
   setup_failed: 'it never connected',
+  goodbye: 'you said goodbye and hung up',
 };
 
 export function callDuration(startedAt?: string, endedAt?: string): string | undefined {
@@ -75,7 +77,7 @@ export function callDuration(startedAt?: string, endedAt?: string): string | und
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)} min ${seconds % 60}s`;
 }
 
-const ABRUPT = new Set<CallEndReason>(['user_hangup', 'connection_lost', 'lost', 'page_closed', 'inactive', 'max_duration', 'expired']);
+export const ABRUPT = new Set<CallEndReason>(['user_hangup', 'connection_lost', 'lost', 'page_closed', 'inactive', 'max_duration', 'expired']);
 
 export function endReason(call: CallRecord): CallEndReason {
   return call.reason ?? (call.phase === 'dropped' ? 'connection_lost' : 'remote_hangup');
@@ -115,10 +117,9 @@ export function lifecycleOf(state: SessionProjection, now: Date): UserState['lif
 function setupItems(state: SessionProjection): Record<SetupItem, SetupItemState> {
   const progress = state.onboarding;
   const asks: Record<SetupItem, string[]> = { assistant_name: [], preferred_name: [], need: [], gmail: [], call: [] };
-  // The greeting asks for a name; a card on screen is an ask; the coach reports asks it saw in replies.
+  // The first message asks for a name; a card on screen is an ask.
   const greeting = state.messages.find((message) => message.origin === 'greeting');
   if (greeting) asks.assistant_name.push(greeting.at);
-  for (const ask of state.memory.asks) asks[ask.item].push(ask.at);
   for (const item of state.timeline) {
     if (item.kind === 'call_offer') asks.call.push(state.messages.find((message) => message.id === `answer:${item.id.replace(/^call-offer:/, '')}`)?.at ?? '');
     if (item.kind === 'connection_offer' && item.toolkit === 'gmail') asks.gmail.push('');
@@ -189,7 +190,9 @@ export function buildUserState(state: SessionProjection, now: Date, defaultVoice
     ...cutOffs.filter(({ call }) => (call.endedAt ?? '') > lastUserTextAt).map(({ call, line }) => ({ id: `cut:${call.callId}`, text: `their last line on the call was cut off: "${line}"`, at: call.endedAt ?? '' })),
   ].slice(-LOOP_LIMITS.open);
 
-  const latestCoach = state.memory.coach.at(-1);
+  const lastUserAt = userMessages.at(-1)?.at ?? '';
+  const pendingCheckIn = state.memory.checkIns.at(-1);
+  const checkIn = pendingCheckIn && pendingCheckIn.at > lastUserAt && pendingCheckIn.wakeAt > now.toISOString() ? pendingCheckIn : undefined;
   const needs = [
     ...(state.onboarding.need.value ? [state.onboarding.need.value] : []),
     ...liveMemories(state).filter((memory) => memory.kind === 'need').map((memory) => memory.text),
@@ -236,6 +239,6 @@ export function buildUserState(state: SessionProjection, now: Date, defaultVoice
     profile: profileItems(state),
     memories: rankMemories(state, recentWords(state), now),
     ...(state.memory.summary ? { summary: state.memory.summary.text } : {}),
-    ...(latestCoach ? { coach: { focus: latestCoach.focus, guidance: latestCoach.guidance, at: latestCoach.at } } : {}),
+    ...(checkIn ? { checkIn: { wakeAt: checkIn.wakeAt, reason: checkIn.reason } } : {}),
   };
 }

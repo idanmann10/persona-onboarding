@@ -273,7 +273,7 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
     }
   }
 
-  /** Exactly the app's follow-up: the onboarding coach decides, and the code guardrails have the last word. */
+  /** Exactly the app's follow-up: the woken assistant decides, and the code guardrails have the last word. */
   async function runFollowUp(step: SimStep) {
     const started = Date.now();
     const { text, tools } = await withTimeout(settleFollowUps(deps, SIM_SESSION, store), turnTimeoutMs, 'The follow-up');
@@ -312,7 +312,7 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
   async function connect(step: SimStep, toolkit: Toolkit) {
     connected[toolkit] = `ca_fixture_${toolkit}`;
     await append({ id: `connection:${toolkit}:sim-${step.index}:connected`, at: now().toISOString(), type: 'connection', toolkit, phase: 'connected' });
-    // The connection callback lets the coach decide either way; during a call its guard keeps text quiet.
+    // The connection callback wakes the assistant either way; during a call the guardrail keeps text quiet.
     if (!live) return runFollowUp(step);
     await settleFollowUps(deps, SIM_SESSION, store);
     // During a call the page tells the live model (app/page.tsx).
@@ -350,7 +350,7 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
     if (!turn.text) return;
     await append({ id: `answer:${turnId}`, at: now().toISOString(), type: 'message', speaker: 'assistant', channel: 'text', text: turn.text });
     step.outputs.push(turn.text);
-    // As the chat route does after the stream: the onboarding coach and the memory.
+    // As the chat route does after the stream: the memory.
     await withTimeout(afterTurn(deps, SIM_SESSION, turnId), turnTimeoutMs, 'The after-turn agents');
   }
 

@@ -3,7 +3,8 @@ import type { CallEndReason } from '@/lib/domain/events';
 import type { TimelineItem } from '@/lib/domain/project';
 import { PERSONALITIES, VOICES, avatarPalette, isPersonalityId, isVoiceId } from '@/lib/domain/persona';
 import { Avatar } from './components/avatar';
-import { CalendarIcon, MailIcon, PhoneIcon, RepeatIcon } from './components/icons';
+import { PhoneIcon, RepeatIcon } from './components/icons';
+import { ToolkitLogo } from './components/toolkit-logo';
 
 export type Toolkit = 'gmail' | 'calendar';
 
@@ -20,6 +21,7 @@ const ENDINGS: Record<CallEndReason, string> = {
   max_duration: 'Reached the time limit',
   content: 'Call stopped',
   setup_failed: "Couldn't connect",
+  goodbye: 'Said goodbye',
 };
 
 export function duration(startedAt?: string, endedAt?: string): string {
@@ -181,7 +183,7 @@ export function TimelineEntry({ item, assistantName, liveCallId, busy, face, ava
       if (item.status === 'declined') return <p className="system-line">Skipped {name} for now</p>;
       return (
         <div className="event-card">
-          <CardHead icon={iconTile(item.toolkit === 'gmail' ? <MailIcon width={17} height={17} /> : <CalendarIcon width={17} height={17} />, 'blue')} title={`Connect ${name}`}>
+          <CardHead icon={iconTile(<ToolkitLogo toolkit={item.toolkit} size={20} />, 'logo')} title={`Connect ${name}`}>
             <small>{item.reason || `So ${assistantName} can help with this.`} Read-only. Start over disconnects it.</small>
           </CardHead>
           <div className="event-actions">

@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 
-export type IpScope = 'session' | 'chat' | 'voice' | 'tool' | 'follow_up' | 'voice_event' | 'sign_in' | 'sign_up' | 'sign_in_email';
+export type IpScope = 'session' | 'chat' | 'voice' | 'tool' | 'follow_up' | 'voice_event' | 'sign_in' | 'sign_up' | 'sign_in_email' | 'look' | 'paint';
 
 /**
  * Per-client limits across all guest sessions, so churning cookies cannot mint unlimited sessions or
@@ -20,15 +20,18 @@ export const IP_LIMITS: Record<IpScope, [number, number]> = {
   sign_in: [30, 900],
   sign_up: [10, 3_600],
   sign_in_email: [10, 900],
+  // The look picker: picking a stock portrait is cheap; painting a described one is a billed image.
+  look: [120, 3_600],
+  paint: [12, 3_600],
 };
 
 /**
- * The caller's address, as set by the platform: Vercel's own header first, then the right-most
- * X-Forwarded-For entry (appended by the nearest proxy; left-most entries are caller-controlled),
- * then X-Real-IP.
+ * The caller's address, as set by the platform: Vercel's own header first (only on Vercel, which
+ * overwrites it; anywhere else a caller could send it), then the right-most X-Forwarded-For entry
+ * (appended by the nearest proxy, e.g. Railway's; left-most entries are caller-controlled), then X-Real-IP.
  */
 export function clientAddress(request: Request): string {
-  const vercel = request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
+  const vercel = process.env.VERCEL ? request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim() : undefined;
   const forwarded = request.headers.get('x-forwarded-for')?.split(',').map((part) => part.trim()).filter(Boolean).at(-1);
   return vercel || forwarded || request.headers.get('x-real-ip')?.trim() || 'unknown';
 }

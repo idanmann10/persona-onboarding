@@ -8,7 +8,7 @@ export const maxDuration = 120;
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    // A call that ended wakes the onboarding coach, after the response.
+    // A call that ended wakes the assistant to decide on a follow-up, after the response.
     return await createVoiceEventHandler(createStore(getDatabase()), settleAfter)(request);
   } catch (error) {
     console.error('Voice event failed', error);

@@ -18,6 +18,7 @@ import { showConnection } from './show-connection';
 import { readCalendarWindow, searchGmail } from './read-account';
 import { resolveIdentity } from './resolve-identity';
 import { soulNote } from './soul-note';
+import { endCall, scheduleCheckIn, stayQuiet } from './follow-up-tools';
 import { forgetMemory, recallMemory, saveMemory } from './memory';
 import { BUDGET, clipToTokens, estimateTokens } from '../budget';
 
@@ -27,6 +28,7 @@ export type { ToolContext, ToolStore } from './types';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const AGENT_TOOLS: ReadonlyArray<AgentTool<any>> = [
   remember, saveMemory, recallMemory, forgetMemory, customize, noteDecline, graduate, offerCall, proposeAutomation, showConnection, searchGmail, readCalendarWindow, resolveIdentity, soulNote,
+  stayQuiet, scheduleCheckIn, endCall,
 ];
 
 /** A tool result as the model sees it: past its budget it's cut, with a note saying so (the trace keeps all of it). */

@@ -1,6 +1,6 @@
 import type { CallEndReason } from '../domain/events';
 import type { ParsedLiveEvent } from './events';
-import { parseLiveEvent } from './events';
+import { parseLiveEvent, SPOKEN_GOODBYE } from './events';
 import { truncateToTokens } from './tokens';
 
 export interface VoiceController {
@@ -89,6 +89,12 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   let assistantSpoke = false;
   let userSpoke = false;
   let greetingTimer: ReturnType<typeof setTimeout> | undefined;
+  // Ending after a goodbye: when the assistant last spoke (client time) and where its audio ends (ms into the call).
+  let lastAssistantAt = 0;
+  let lastAssistantEndMs = 0;
+  let userTurn = '';
+  let repliedToGoodbye = false;
+  let hangUpAfterGoodbye = 0;
   let limits: Limits | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -114,24 +120,24 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   const instruct = (content: string) => send({ type: 'session.instructions.append', delegation_id: null, content });
 
   /**
-   * The assistant speaks first. The greeting goes out as an instruction with its own id; GPT-Live acks it
-   * (`session.instructions.appended` with that `client_event_id`). If no assistant speech follows shortly
-   * after the ack (or after the call starts, when no ack comes), one short line goes out as commentary,
-   * which the model says aloud. Nothing is sent once either side has spoken.
+   * The assistant speaks first, at once: the hello goes out as `session.commentary.append` (the speakable
+   * event) the moment the call starts. The behaviour around it lives in the session's instructions, so
+   * nothing asks for a second hello. Only if the commentary is refused, or nothing is heard a few seconds
+   * in, the greeting instruction goes out instead. Nothing is sent once either side has spoken.
    */
   const GREETING_EVENT = 'persona_greeting';
-  const nudgeGreeting = (afterMs: number) => {
+  const greetInstead = () => {
     clearTimeout(greetingTimer);
-    greetingTimer = setTimeout(() => {
-      if (closed || assistantSpoke || userSpoke || !greetingLine) return;
-      send({ type: 'session.commentary.append', delegation_id: null, content: greetingLine });
-    }, afterMs);
+    if (closed || assistantSpoke || userSpoke || !greeting) return;
+    send({ type: 'session.instructions.append', event_id: `${GREETING_EVENT}_fallback`, delegation_id: null, content: greeting });
   };
   const greet = () => {
-    if (!greeting) return;
-    send({ type: 'session.instructions.append', event_id: GREETING_EVENT, delegation_id: null, content: greeting });
-    nudgeGreeting(4_000);
+    if (greetingLine) send({ type: 'session.commentary.append', event_id: GREETING_EVENT, delegation_id: null, content: greetingLine });
+    greetingTimer = setTimeout(greetInstead, greetingLine ? 4_000 : 0);
   };
+
+  /** Where the assistant's current speech ends, in client time: its audio runs a little behind the transcript. */
+  const speechEndsAt = () => Math.max(lastAssistantAt + 1_200, startedAt + lastAssistantEndMs + 600);
 
   function post(body: Record<string, unknown>, keepalive = false) {
     if (!callId) return Promise.resolve();
@@ -199,7 +205,9 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
       await flush();
       const response = await fetchFn('/api/voice/tool', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callId, callItemId: toolCallId, name: activity.name, arguments: activity.arguments }) });
       const result = response.ok ? await response.json() as { output?: string; ui?: { type: string; toolkit?: string } } : {};
-      if (result.ui) callbacks.onToolUi?.(result.ui);
+      // The assistant said goodbye and hangs up: the line closes once that goodbye has been heard (see watch).
+      if (result.ui?.type === 'end_call') hangUpAfterGoodbye = now();
+      else if (result.ui) callbacks.onToolUi?.(result.ui);
       report(typeof result.output === 'string' ? 'done' : 'failed');
       return { callId: toolCallId, output: typeof result.output === 'string' ? result.output : JSON.stringify({ status: 'unavailable' }) };
     } catch {
@@ -242,6 +250,11 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
   function watch() {
     if (closed || closing || !started || !limits) return;
     const time = now();
+    // After a goodbye: end_call from the assistant, or the caller's clear goodbye answered and then quiet.
+    // Either way the line closes only once the goodbye has finished playing.
+    const speechDone = time >= speechEndsAt();
+    if (hangUpAfterGoodbye && ((speechDone && time - lastActivity >= 1_000) || time - hangUpAfterGoodbye > 12_000)) { void close('goodbye'); return; }
+    if (repliedToGoodbye && speechDone && time - lastActivity >= 3_000) { void close('goodbye'); return; }
     if (!wrappedUp && time - startedAt >= limits.maxDurationMs - limits.wrapUpBeforeMs) { wrappedUp = true; instruct(limits.wrapUp); }
     if (time - startedAt >= limits.maxDurationMs) { void close('max_duration'); return; }
     if (busy) return;
@@ -265,10 +278,9 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
     try { raw = JSON.parse(data); } catch { return; }
     if (closed) return;
     if (raw?.type === 'response.event') { onResponseEvent(raw); return; }
-    if (raw?.type === 'session.instructions.appended' && raw.client_event_id === GREETING_EVENT) { nudgeGreeting(2_000); return; }
     if (raw?.type === 'error' || (typeof raw?.type === 'string' && raw.type.endsWith('.error')) || (raw?.error && typeof raw.error === 'object')) {
       console.error('GPT-Live error', raw);
-      if (raw.client_event_id === GREETING_EVENT || (raw.error as { event_id?: unknown } | undefined)?.event_id === GREETING_EVENT) nudgeGreeting(0);
+      if (raw.client_event_id === GREETING_EVENT || (raw.error as { event_id?: unknown } | undefined)?.event_id === GREETING_EVENT) greetInstead();
       return;
     }
     const parsed = parseLiveEvent(raw);
@@ -291,8 +303,18 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
       callbacks.onPhase('active');
     } else if (parsed.kind === 'transcript') {
       lastActivity = now();
-      if (parsed.speaker === 'user') { lastUserActivity = lastActivity; checkedIn = false; userSpoke = true; }
-      else assistantSpoke = true;
+      if (parsed.speaker === 'user') {
+        lastUserActivity = lastActivity; checkedIn = false; userSpoke = true;
+        // Anything more from them cancels a goodbye in progress.
+        userTurn += parsed.text;
+        repliedToGoodbye = false;
+      } else {
+        assistantSpoke = true;
+        lastAssistantAt = lastActivity;
+        lastAssistantEndMs = Math.max(lastAssistantEndMs, parsed.endMs);
+        // A short turn that says goodbye ("okay, bye"), not "say bye to the old system, then...".
+        if (userTurn) { repliedToGoodbye = userTurn.trim().split(/\s+/).length <= 10 && SPOKEN_GOODBYE.test(userTurn); userTurn = ''; }
+      }
       queue.push({ eventId: parsed.eventId, speaker: parsed.speaker, text: parsed.text, startMs: parsed.startMs, endMs: parsed.endMs });
       if (queue.length >= 40) void flush();
       else flushTimer ??= setTimeout(() => { flushTimer = undefined; void flush(); }, 700);

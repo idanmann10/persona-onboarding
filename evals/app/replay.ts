@@ -60,7 +60,7 @@ export function followUpTools(traces: TraceEntry[]): ToolTrace[] {
 }
 
 /**
- * What the app does after a call ends or an account connects: the onboarding coach decides, and a
+ * What the app does after a call ends or an account connects: the assistant is woken and decides, and a
  * follow-up is written only if it (and the code guardrails) say so. Returns the message, if any.
  */
 export async function settleFollowUps(deps: Parameters<typeof reconcile>[0], sessionId: string, store: { events: SessionEvent[]; traces: TraceEntry[] }) {
@@ -147,7 +147,7 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
       await store.appendEvent(SESSION, { id: turnId, at: now().toISOString(), type: 'message', speaker: 'user', channel: 'text', text: step.user });
       const { text, tools, usage, modelSteps } = await runTurn(turnId);
       if (text) await store.appendEvent(SESSION, { id: `answer:${turnId}`, at: now().toISOString(), type: 'message', speaker: 'assistant', channel: 'text', text });
-      // As the chat route does after the stream: the onboarding coach and the memory.
+      // As the chat route does after the stream: the memory.
       await afterTurn(deps, SESSION, turnId);
       steps.push({ index, kind: 'user', input: step.user, output: text || null, tools, connected: connectedNow(), usage, modelSteps });
       continue;

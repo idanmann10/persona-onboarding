@@ -6,7 +6,7 @@ export type { SetupItem };
 /**
  * The trial brief's goal, as server state: a session ends setup with four things known (a name for the
  * assistant, what to call the user, what they need, and Gmail) or with the user choosing to skip ahead.
- * What to do next is the onboarding coach's call (lib/agent/subagents/coach.ts), not a fixed order.
+ * What to do next is the assistant's call, guided by its onboarding overlay (lib/agent/soul/onboarding.md).
  */
 export type SetupStage = 'active' | 'complete' | 'graduated';
 

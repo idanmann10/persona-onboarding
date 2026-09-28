@@ -14,7 +14,7 @@ export interface TurnDependencies extends ToolDeps {
 }
 
 /**
- * Something other than a user message woke the assistant: a follow-up the coach asked for, a recurring
+ * Something other than a user message woke the assistant: an app event it may follow up on, a recurring
  * task's run, a line the call needs. The note is added after the conversation as an app note.
  */
 export interface TurnTrigger {
@@ -33,7 +33,7 @@ export interface PreparedTurn {
 }
 
 /** Facts the prompt already shows elsewhere (names, persona, the profile), so the "other facts" list stays short. */
-const SHOWN_ELSEWHERE = new Set<string>(['identity_lookup_status', 'assistant_name', 'preferred_name', 'current_need', 'personality', 'voice', 'avatar', 'public_identity_candidate', 'public_headline', ...IDENTITY_KEYS]);
+const SHOWN_ELSEWHERE = new Set<string>(['identity_lookup_status', 'assistant_name', 'preferred_name', 'current_need', 'personality', 'voice', 'avatar', 'public_identity_candidate', 'public_headline', 'public_profile', ...IDENTITY_KEYS]);
 
 /** What the model can use, in words, from what's configured and connected. */
 export function capabilityLabels(ctx: { capabilities: { voice: boolean; gmail: boolean; calendar: boolean }; accounts: Partial<Record<Toolkit, string>> }, state: SessionProjection): string[] {
@@ -60,6 +60,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   const { instructions, context } = buildPrompt({
     user: buildUserState(state, now, deps.env.OPENAI_VOICE), mode: channel === 'voice' ? 'voice_backend' : 'text',
     capabilities: capabilityLabels(ctx, state), soulNotes: soulNotes(state, 'assistant'), facts: otherFacts(state),
+    noOverlay: Boolean(options.trigger?.id.startsWith('automation:')),
   });
   const window = historyWindow(state);
   const messages = windowMessages(window);

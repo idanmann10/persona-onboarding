@@ -8,7 +8,9 @@ import type { PersonaSettings } from '@/lib/domain/persona';
 import { assistantGroupEnds, Bubble, duration, TimelineEntry, type Face, type Toolkit } from './thread';
 import { Avatar } from './components/avatar';
 import { ConnectionsSheet, prefetchApps } from './components/connections-sheet';
-import { AppsIcon, ArrowUpIcon, PersonaMark, PhoneIcon } from './components/icons';
+import { AppsIcon, ArrowUpIcon, ChevronDownIcon, PersonaMark, PhoneIcon } from './components/icons';
+import { AccountMenu, type Account } from './components/account-menu';
+import { LookPicker } from './components/look-picker';
 import { CallScreen } from './call/call-screen';
 import { useCallFeed } from './call/use-call-feed';
 import { useFollowUps } from './use-follow-ups';
@@ -16,11 +18,17 @@ import { useFollowUps } from './use-follow-ups';
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
 /** `avatarUrl` is the assistant's photo, served by `/api/session`. */
 type Settings = PersonaSettings & { avatarUrl?: string };
-type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: Settings; automationDue?: boolean; account?: { email: string } | null };
+type Snapshot = { messages: Message[]; timeline?: TimelineItem[]; progress?: OnboardingProgress; settings?: Settings; automationDue?: boolean; account?: Account | null };
 
 const TOOLKIT_NAMES: Record<Toolkit, string> = { gmail: 'Gmail', calendar: 'Google Calendar' };
 const isToolkit = (value: unknown): value is Toolkit => value === 'gmail' || value === 'calendar';
 const post = (url: string, body: unknown, method = 'POST') => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+/** Portraits painted earlier in this conversation, newest first: the thread keeps a "New look" line for each. */
+function paintedLooks(timeline: TimelineItem[]): string[] {
+  const painted = timeline.flatMap((item) => item.kind === 'settings_notice' && item.key === 'avatar' && item.value.startsWith('img:') ? [item.value] : []);
+  return [...new Set(painted.reverse())];
+}
 
 function timelineFromMessages(messages: Message[]): TimelineItem[] {
   return messages.map((message) => ({ kind: 'message', id: message.id, speaker: message.role, channel: 'text', text: message.text }));
@@ -38,12 +46,14 @@ export default function Home() {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
-  // The signed-in Google account (sign-in comes before chat; see proxy.ts).
-  const [account, setAccount] = useState<{ email: string } | null>(null);
+  // The saved look behind avatarUrl (a stock id, `default` or `img:<uuid>`), for the look picker.
+  const [look, setLook] = useState('default');
+  const [lookOpen, setLookOpen] = useState(false);
+  // The signed-in account (sign-in comes before chat; see proxy.ts).
+  const [account, setAccount] = useState<Account | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
   const [appsVersion, setAppsVersion] = useState(0);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [callPhase, setCallPhase] = useState<'idle' | 'connecting' | 'active' | 'ending'>('idle');
@@ -57,6 +67,7 @@ export default function Home() {
   const topRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const appsButtonRef = useRef<HTMLButtonElement>(null);
+  const lookButtonRef = useRef<HTMLButtonElement>(null);
 
   const assistantName = progress && (progress.assistantName.status === 'confirmed' || progress.assistantName.status === 'tentative') && progress.assistantName.value ? progress.assistantName.value : 'Persona';
 
@@ -67,7 +78,7 @@ export default function Home() {
     const snapshot = await response.json() as Snapshot;
     setTimeline(snapshot.timeline ?? timelineFromMessages(snapshot.messages));
     if (snapshot.progress) setProgress(snapshot.progress);
-    if (snapshot.settings) setAvatarUrl(snapshot.settings.avatarUrl || undefined);
+    if (snapshot.settings) { setAvatarUrl(snapshot.settings.avatarUrl || undefined); setLook(snapshot.settings.avatar); }
     setAccount(snapshot.account ?? null);
     return snapshot;
   }, []);
@@ -166,7 +177,7 @@ export default function Home() {
       setAppsVersion((value) => value + 1);
       void refresh().then(() => {
         if (!toolkit) return;
-        // On a call the live model says it; in text the server's coach decides on a follow-up.
+        // On a call the live model says it; in text the server wakes the assistant to decide on a follow-up.
         if (voiceRef.current && event.data.status === 'connected') voiceRef.current.notify(`The user just connected ${TOOLKIT_NAMES[toolkit]}, and the app confirmed it. Tell them briefly and offer to take a look for them.`);
         else expectFollowUp();
       });
@@ -356,12 +367,24 @@ export default function Home() {
       const response = await fetch('/api/session', { method: 'DELETE' });
       if (!response.ok) throw new Error((await response.text().catch(() => '')).trim() || 'The conversation could not be cleared. Please try again.');
       window.location.reload();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Starting over failed.'); setDeleting(false); setConfirmDelete(false); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Starting over failed.'); setDeleting(false); }
   }
 
   function closeApps() {
     setAppsOpen(false);
     appsButtonRef.current?.focus();
+  }
+
+  function closeLook() {
+    setLookOpen(false);
+    lookButtonRef.current?.focus();
+  }
+
+  /** A look saved from the picker: show it now, then reload so its "New look" line joins the thread. */
+  function lookSaved(settings: PersonaSettings) {
+    setAvatarUrl(settings.avatarUrl || undefined);
+    setLook(settings.avatar);
+    void refresh().catch(() => undefined);
   }
 
   const onCall = callPhase !== 'idle';
@@ -377,36 +400,28 @@ export default function Home() {
       <div className="top-stack" ref={topRef}>
         <header className="topbar">
           <div className="topbar-inner">
-            <span className="brand" aria-label="Persona"><PersonaMark className="brand-mark" /><span className="brand-word" aria-hidden="true">Persona</span></span>
-            <div className="identity">
-              <Avatar src={avatarUrl} name={assistantName} size={36} />
-              <span className="identity-text"><strong>{assistantName}</strong><small>{subtitle}</small></span>
+            <div className="topbar-lead">
+              <span className="brand" aria-label="Persona"><PersonaMark className="brand-mark" /><span className="brand-word" aria-hidden="true">Persona</span></span>
+              <button ref={lookButtonRef} type="button" className="identity" aria-haspopup="dialog" aria-expanded={lookOpen} title="Change look" onClick={() => setLookOpen(true)}>
+                <Avatar src={avatarUrl} name={assistantName} size={36} className="identity-avatar" />
+                <span className="identity-text">
+                  <strong><span className="identity-name">{assistantName}</span><ChevronDownIcon className="identity-chevron" width={14} height={14} /></strong>
+                  <small>{subtitle}</small>
+                </span>
+                <span className="visually-hidden">, change look</span>
+              </button>
             </div>
             <div className="topbar-actions">
-              {confirmDelete ? (
-                <span className="confirm" role="group" aria-label="Start over">
-                  <span className="confirm-text">Clear the chat and disconnect accounts?</span>
-                  <button type="button" className="pill danger" disabled={deleting || onCall} onClick={() => void startOver()}>{deleting ? 'Clearing…' : 'Start over'}</button>
-                  <button type="button" className="pill" disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancel</button>
-                </span>
-              ) : (
-                <>
-                  <button ref={appsButtonRef} type="button" className="pill" aria-haspopup="dialog" aria-expanded={appsOpen} disabled={deleting} onClick={() => { setError(''); setAppsOpen(true); }}><AppsIcon className="pill-icon" width={15} height={15} />Apps</button>
-                  <a className="pill" href="/inspect" target="_blank" rel="noreferrer">Agent log</a>
-                  {account ? (
-                    <span className="account" title={`Signed in as ${account.email}`}>
-                      <span className="account-email">{account.email}</span>
-                      <button type="button" className="pill" disabled={signingOut || onCall} onClick={() => void signOut()}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
-                    </span>
-                  ) : null}
-                  <button type="button" className="pill" disabled={busy || onCall} onClick={() => { setError(''); setConfirmDelete(true); }}>Start over</button>
-                </>
-              )}
+              <button ref={appsButtonRef} type="button" className="topbar-icon" aria-label="Apps" title="Apps" aria-haspopup="dialog" aria-expanded={appsOpen} disabled={deleting} onClick={() => { setError(''); setAppsOpen(true); }}>
+                <AppsIcon width={19} height={19} />
+              </button>
+              <button className={`call-button${onCall ? ' live' : ''}`} type="button" onClick={() => void startCall()} disabled={callPhase === 'connecting' || callPhase === 'ending'} title={onCall ? 'End the call' : `Call ${assistantName}`}>
+                {onCall ? <span className="live-dot" aria-hidden="true" /> : <PhoneIcon className="call-glyph" width={15} height={15} />}
+                <span className="call-label">{callLabel}</span>
+              </button>
+              {account ? <AccountMenu account={account} onCall={onCall} signingOut={signingOut} deleting={deleting} startOverDisabled={busy}
+                onSignOut={() => void signOut()} onStartOver={() => void startOver()} /> : null}
             </div>
-            <button className={`call-button glass${onCall ? ' live' : ''}`} type="button" onClick={() => void startCall()} disabled={callPhase === 'connecting' || callPhase === 'ending'} title="Start or end a browser call">
-              {onCall ? <span className="live-dot" aria-hidden="true" /> : <PhoneIcon className="call-glyph" width={15} height={15} />}
-              {callLabel}
-            </button>
           </div>
         </header>
       </div>
@@ -438,6 +453,7 @@ export default function Home() {
       </div>
 
       {appsOpen ? <ConnectionsSheet connecting={connecting} version={appsVersion} onConnect={(slug) => void connect(slug)} onChanged={() => void refresh().catch(() => undefined)} onClose={closeApps} /> : null}
+      {lookOpen ? <LookPicker name={assistantName} current={look} painted={paintedLooks(timeline)} onSaved={lookSaved} onClose={closeLook} /> : null}
 
       <CallScreen phase={callPhase} name={assistantName} avatarUrl={avatarUrl} startedAt={callStartedAt} feed={callFeed} timeline={timeline} signingIn={Boolean(connecting)} error={error}
         onHangUp={hangUp} onMute={(muted) => voiceRef.current?.setMuted(muted)} onType={typeIntoCall} onConnect={(toolkit) => void connect(toolkit)} />

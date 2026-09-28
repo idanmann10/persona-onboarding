@@ -3,6 +3,9 @@ export type ParsedLiveEvent =
   | { kind: 'ended' | 'dropped' }
   | { kind: 'transcript'; eventId: string; speaker: 'user' | 'assistant'; text: string; startMs: number; endMs: number };
 
+/** A clear spoken goodbye from the caller ("okay, bye", "talk later"). Deliberately narrow: a false match hangs up. */
+export const SPOKEN_GOODBYE = /\b(bye|goodbye|bye-bye|see (you|ya)|talk (to you )?(later|soon)|gotta go|got to go|have a good (one|day|night|evening)|ttyl|cya)\b/i;
+
 export function parseLiveEvent(event: unknown): ParsedLiveEvent | null {
   if (!event || typeof event !== 'object') return null;
   const value = event as Record<string, unknown>;

@@ -20,7 +20,7 @@ interface Inspection {
     connections: Record<string, string>;
     facts: Array<{ key: string; value: string; evidence: string; provenance: string }>;
     user?: {
-      lifecycle: { stage: string; day: number }; labels: Array<{ label: string; confidence: string }>; coach: { focus: string; guidance: string } | null;
+      lifecycle: { stage: string; day: number }; labels: Array<{ label: string; confidence: string }>; checkIn: { wakeAt: string; reason: string } | null;
       profile?: Array<{ id: string; label: string; value: string; status: string }>;
       memories?: Array<{ id: string; text: string; kind: string; labels: string[] }>;
       memoryCounts?: { live: number; replaced: number; forgotten: number };
@@ -370,7 +370,7 @@ function Knows({ data }: { data: Inspection['state'] }) {
         {row('Personality', personality, fact('personality')?.provenance ?? 'default')}
         {row('Voice', settings.voice, fact('voice')?.provenance ?? 'default')}
         {data.user && row('Stage', `${sentence(data.user.lifecycle.stage)} · day ${data.user.lifecycle.day}`)}
-        {data.user && row('Coach focus', data.user.coach ? `${humanize(data.user.coach.focus)}: ${data.user.coach.guidance}` : undefined)}
+        {data.user && row('Check-in', data.user.checkIn ? `${clock(data.user.checkIn.wakeAt)} · ${data.user.checkIn.reason}` : undefined)}
         {data.user && row('Labels', data.user.labels.length ? data.user.labels.map((label) => `${label.label} (${label.confidence})`).join(', ') : undefined)}
         {data.user?.profile && row('Profile', data.user.profile.length ? data.user.profile.map((item) => `${item.label}: ${item.value} (${item.status})`).join(' · ') : undefined, 'pinned')}
         {data.user?.memories && row('Memories', data.user.memories.length ? data.user.memories.map((memory) => `${memory.text} [${[memory.kind, ...memory.labels].join(', ')}]`).join(' · ') : undefined,

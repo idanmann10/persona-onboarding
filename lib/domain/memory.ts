@@ -303,7 +303,7 @@ export interface ProfileItem { id: string; label: string; value: string; status:
 export const PROFILE_KEYS: Record<string, string[]> = {
   'p:call': ['preferred_name'], 'p:name': ['user_full_name', 'user_given_name'], 'p:email': ['user_email'],
   'p:location': ['location_city', 'location_region', 'location_country'], 'p:timezone': ['timezone'], 'p:locale': ['user_locale'],
-  'p:public': ['public_identity_candidate', 'public_headline'],
+  'p:public': ['public_identity_candidate', 'public_headline', 'public_profile'],
 };
 
 type Fact = SessionProjection['facts'][string];
@@ -312,6 +312,7 @@ function fromOf(fact: Fact): string {
   if (fact.provenance === 'user_said') return 'they said';
   if (fact.provenance === 'user_confirmed') return 'they confirmed';
   if (fact.sourceEventId === 'signin:identity') return 'a web lookup at sign-in, not confirmed with them';
+  if (fact.key.startsWith('public_')) return 'a web lookup of the name and company they gave';
   if (fact.sourceEventId === 'browser') return 'from their browser';
   if (/^location_|^timezone$/.test(fact.key)) return 'guessed from their connection';
   return fact.evidence === 'confirmed' ? 'their Google account, verified' : 'from sign-in';
@@ -339,7 +340,9 @@ export function profileItems(state: SessionProjection): ProfileItem[] {
   item('p:timezone', 'time zone', facts.timezone);
   item('p:locale', 'language setting', facts.user_locale);
   const match = facts.public_identity_candidate;
-  item('p:public', 'public profile match', match, match && `${match.value}${facts.public_headline ? ` (${facts.public_headline.value})` : ''}`);
+  const about = facts.public_headline?.value ?? facts.public_profile?.value;
+  // The one longer item: what the lookup found is what makes a first message personal.
+  if (match) items.push({ id: 'p:public', label: 'public profile match', value: clip(`${match.value}${about ? ` (${about})` : ''}`, 320), status: 'tentative', from: fromOf(match), ...(match.sourceUrl ? { sourceUrl: match.sourceUrl } : {}) });
   return items;
 }
 

@@ -27,6 +27,15 @@ export type VoiceId = keyof typeof VOICES;
  * `stops` is a light-to-deep tint of each look, for rings and placeholders while a portrait loads.
  */
 export const AVATARS = {
+  // The cute set: one character per pastel hue, its face filling the frame, so each still reads at 24px.
+  mochi: { label: 'Mochi', description: 'a cute, round baby panda with big sparkly eyes, rosy cheeks and a tiny green bamboo leaf tucked behind one ear, on a soft mint-green background', stops: ['#d4f0e0', '#6cbf94', '#1d4a33'] },
+  pip: { label: 'Pip', description: 'a cute, fluffy little yellow chick with big sparkly eyes and a tiny knitted sky-blue beanie, on a soft sky-blue background', stops: ['#d6e9fb', '#6aa8e0', '#16385c'] },
+  luna: { label: 'Luna', description: 'a cute white bunny with long floppy ears, big sweet eyes, rosy cheeks and a small golden crescent-moon hair clip, on a soft lavender background', stops: ['#e6dcfa', '#9c86d8', '#2e2352'] },
+  koa: { label: 'Koa', description: 'a cute, cuddly grey koala with big fluffy ears, a round dark nose, big sparkly eyes and a small pink flower behind one ear, on a soft peach background', stops: ['#fbe0cf', '#e79c72', '#5a2a12'] },
+  otto: { label: 'Otto', description: 'a cute baby sea otter with fluffy brown fur, tiny whiskers, big sparkly eyes, a happy smile and a cosy red knit scarf, on a soft butter-yellow background', stops: ['#fbf0c4', '#e2bd4a', '#5a450c'] },
+  bao: { label: 'Bao', description: 'a cute, chubby golden hamster with puffy round cheeks, big sparkly eyes and a tiny striped bow tie, on a soft rose-pink background', stops: ['#fbd9e3', '#e483a1', '#5c1a30'] },
+  kiko: { label: 'Kiko', description: 'a cute red panda with fluffy russet fur, white cheek markings, big sparkly eyes and a small cream bandana, on a soft aqua background', stops: ['#cdeeed', '#4fb7b3', '#10403e'] },
+  ziggy: { label: 'Ziggy', description: 'a cute, friendly baby dragon with mint-green scales, tiny rounded horns, little wings, big sparkly eyes and a happy grin, on a soft coral background', stops: ['#fdd5cb', '#f0806a', '#5e1f12'] },
   sunny: { label: 'Sunny', description: 'a cheerful golden retriever with a big friendly grin and bright eyes, wearing a soft mustard knit scarf', stops: ['#f7e3a8', '#e0a93b', '#5a3b0c'] },
   sage: { label: 'Sage', description: 'a calm, wise owl with soft sage-green and cream feathers and small round glasses, wearing a cosy oatmeal cardigan', stops: ['#dbe6cf', '#86a36c', '#27361d'] },
   nova: { label: 'Nova', description: 'a friendly little robot with a pearly white rounded shell, lavender accents and a glowing round face screen showing a gentle smile', stops: ['#e2d9f7', '#9a82d6', '#2c2150'] },

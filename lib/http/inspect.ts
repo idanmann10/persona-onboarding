@@ -43,7 +43,7 @@ export function createInspectHandler(store: Store, env: Record<string, string | 
           const user = buildUserState(state, new Date(), env.OPENAI_VOICE);
           const count = (status: string) => state.memory.memories.filter((memory) => memory.status === status).length;
           return {
-            lifecycle: user.lifecycle, setup: user.setup, labels: user.labels, openLoops: user.openLoops, coach: user.coach ?? null,
+            lifecycle: user.lifecycle, setup: user.setup, labels: user.labels, openLoops: user.openLoops, checkIn: user.checkIn ?? null,
             profile: user.profile, memories: user.memories, memoryCounts: { live: user.memories.length, replaced: count('replaced'), forgotten: count('forgotten') },
             ...(state.memory.summary ? { summary: { text: state.memory.summary.text, lines: state.memory.summary.lines } } : {}),
           };

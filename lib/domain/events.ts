@@ -2,27 +2,25 @@ export type Toolkit = 'gmail' | 'calendar';
 
 /**
  * Why a call stopped. The client reports what it observed; `lost` is inferred on the server when a
- * call lease expires without any end report (a closed tab or a crashed browser).
+ * call lease expires without any end report (a closed tab or a crashed browser). `goodbye` is the
+ * assistant hanging up after a natural goodbye.
  */
 export type CallEndReason =
   | 'user_hangup' | 'remote_hangup' | 'connection_lost' | 'inactive' | 'max_duration'
-  | 'expired' | 'content' | 'page_closed' | 'lost' | 'setup_failed';
+  | 'expired' | 'content' | 'page_closed' | 'lost' | 'setup_failed' | 'goodbye';
 
 /** The brief's setup items: a name for the assistant (in text), and the rest, attempted on a call. */
 export type SetupItem = 'assistant_name' | 'preferred_name' | 'need' | 'gmail' | 'call';
 export const SETUP_ITEMS: readonly SetupItem[] = ['assistant_name', 'preferred_name', 'need', 'gmail', 'call'];
 
 export type Provenance = 'user_said' | 'tool_observed' | 'assistant_inferred' | 'user_confirmed';
-export type AgentName = 'assistant' | 'coach' | 'memory';
+export type AgentName = 'assistant' | 'memory';
 
 /** What a memory is about. `routine` is how they do something ("invoices go out on the 1st"). */
 export const MEMORY_KINDS = ['fact', 'preference', 'decision', 'person', 'need', 'routine', 'context'] as const;
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
 /** Where a memory came from: their own words (typed or on a call), or content the assistant read. */
 export type MemorySource = 'user' | 'call' | 'email' | 'calendar' | 'web';
-
-/** What the onboarding coach can steer the assistant toward next. */
-export type CoachFocus = SetupItem | 'their_task' | 'first_value' | 'recurring_task' | 'nothing';
 
 export type SessionEvent =
   | { id: string; at: string; type: 'message'; speaker: 'user' | 'assistant'; channel: 'text' | 'voice'; text: string; origin?: 'greeting' | 'follow_up' | 'automation' }
@@ -65,9 +63,10 @@ export type SessionEvent =
   /** How far the memory has read (conversation lines), so each run only reads what's new. */
   | { id: string; at: string; type: 'memory_run'; lines: number }
   /**
-   * The onboarding coach's decision after a trigger: whether the assistant reaches out, and what it steers
-   * toward next. `guard` records a code guardrail that overrode the coach (quiet hours, daily cap...).
+   * What came of an app event that woke the assistant (a call ended, an account connected, a check-in came
+   * due): it wrote a follow-up, or stayed quiet with a reason. `guard` is a code guardrail that decided
+   * before the model ran (quiet hours, the daily cap, a live call, "stop").
    */
-  | { id: string; at: string; type: 'coach'; trigger: string; reachOut: 'now' | 'later' | 'no'; wakeAt?: string; why: string; focus: CoachFocus; guidance: string; guard?: string }
-  /** The assistant asked about a setup item (seen by the coach, or implied by a card or a follow-up). */
-  | { id: string; at: string; type: 'setup_ask'; item: SetupItem; source: string };
+  | { id: string; at: string; type: 'follow_up'; trigger: string; outcome: 'messaged' | 'quiet'; reason: string; guard?: string }
+  /** A check-in the assistant (or quiet hours) scheduled; only the newest counts, and a reply from the user cancels it. */
+  | { id: string; at: string; type: 'check_in'; wakeAt: string; reason: string };

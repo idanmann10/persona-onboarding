@@ -54,7 +54,7 @@ export function turnName(triggerId?: string): string {
   if (triggerId.startsWith('followup:call:')) return 'Follow-up after the call';
   if (triggerId.startsWith('followup:connection:')) return 'Follow-up after connecting';
   if (triggerId.startsWith('followup:visit:')) return 'Welcome back';
-  if (triggerId.startsWith('followup:wake:')) return 'Scheduled check-in';
+  if (triggerId.startsWith('followup:check-in:')) return 'Scheduled check-in';
   if (triggerId.startsWith('followup:task:')) return 'Follow-up after a task';
   if (triggerId.startsWith('followup:')) return 'Follow-up';
   if (triggerId.startsWith('automation:')) return 'Recurring task';
