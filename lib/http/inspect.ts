@@ -4,10 +4,9 @@ import { personaSettings } from '../domain/persona';
 import type { AutomationRecord } from '../domain/automation';
 import { buildAgentLog } from '../observability/log';
 import type { StoredTrace } from '../observability/trace';
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 
-interface Store {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
   readTraces(id: string): Promise<StoredTrace[]>;
   listAutomations?(id: string): Promise<AutomationRecord[]>;
@@ -19,8 +18,8 @@ interface Store {
  */
 export function createInspectHandler(store: Store, env: Record<string, string | undefined> = {}) {
   return async (request: Request): Promise<Response> => {
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) {
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) {
       return Response.json({ error: 'Session required' }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
     }
     const [events, traces, automations] = await Promise.all([
