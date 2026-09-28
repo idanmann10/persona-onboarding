@@ -15,8 +15,13 @@ export interface VoiceLevels {
 const SPEAKERS: CallSpeaker[] = ['user', 'assistant'];
 const FFT_SIZE = 1024;
 const HISTORY = 160;
-/** Above this a side counts as speaking; it keeps the label for a short hold so pauses between words don't flicker it. */
-const SPEAKING = 0.32;
+/**
+ * Above this a side counts as speaking; it keeps the label for a short hold so pauses between words don't
+ * flicker it. The mic side needs a louder, held sound (about -38 dB for 200 ms), so a fan, a keyboard or a
+ * cough doesn't read as "You're speaking".
+ */
+const SPEAKING: Record<CallSpeaker, number> = { user: 0.46, assistant: 0.32 };
+const USER_SUSTAIN_MS = 200;
 const HOLD_MS = 450;
 
 /** RMS to 0..1 on a decibel scale: -60 dB (room tone) is silent, -12 dB is a loud voice. */
@@ -74,6 +79,7 @@ export function useVoiceLevels(streams: Partial<Record<CallSpeaker, MediaStream>
   useEffect(() => {
     const buffer = new Float32Array(FFT_SIZE);
     const loudAt: Levels = { user: -Infinity, assistant: -Infinity };
+    const loudSince: Partial<Record<CallSpeaker, number>> = {};
     let frame = 0;
     let sampledAt = 0;
     let shown: CallSpeaker | null = null;
@@ -90,7 +96,10 @@ export function useVoiceLevels(streams: Partial<Record<CallSpeaker, MediaStream>
         }
         // Fast attack, slow release: syllables pop, pauses fade.
         current[speaker] += (target - current[speaker]) * (target > current[speaker] ? 0.5 : 0.14);
-        if (current[speaker] > SPEAKING) loudAt[speaker] = time;
+        if (current[speaker] > SPEAKING[speaker]) {
+          loudSince[speaker] ??= time;
+          if (speaker === 'assistant' || time - loudSince[speaker]! >= USER_SUSTAIN_MS) loudAt[speaker] = time;
+        } else loudSince[speaker] = undefined;
       }
       if (time - sampledAt >= (reducedMotion ? 150 : 70)) {
         history.push({ ...current });
