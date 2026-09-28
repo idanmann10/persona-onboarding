@@ -111,14 +111,14 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 @keyframes pulse { 70% { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); } }
 
 
-/* Account: the user's photo or initial; its menu is a near-opaque panel under it (inside the blurred header, a second backdrop blur would only see the header). */
+/* Account: the user's photo or initial; its menu is a solid panel under it (inside the header's backdrop filter, any translucency lets the thread's text bleed through). */
 .account { position: relative; flex: none; }
 .account-button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: none; }
 .account-button .monogram { transition: box-shadow .15s ease, transform .1s ease; }
 .account-button:hover .monogram, .account-button[aria-expanded="true"] .monogram { box-shadow: 0 0 0 3px rgba(118, 118, 128, .2); }
 .account-button:active .monogram { transform: scale(.95); }
 .monogram { display: grid; place-items: center; flex: none; border-radius: 50%; object-fit: cover; background: linear-gradient(180deg, #a9aeb9, #858a95); color: #fff; font-weight: 600; letter-spacing: -.01em; line-height: 1; user-select: none; }
-.account-panel { position: absolute; top: calc(100% + 10px); right: -4px; z-index: 30; width: 288px; max-width: calc(100vw - 24px); padding: 6px; border: 1px solid var(--glass-border); border-radius: 18px; background: rgba(255, 255, 255, .97); box-shadow: 0 0 0 .5px rgba(0, 0, 0, .12), 0 18px 48px rgba(0, 0, 0, .16), inset 0 1px 0 rgba(255, 255, 255, .9); transform-origin: top right; animation: menu-in .16s cubic-bezier(.2, .8, .2, 1); }
+.account-panel { position: absolute; top: calc(100% + 10px); right: -4px; z-index: 30; width: 288px; max-width: calc(100vw - 24px); padding: 6px; border: 1px solid var(--glass-border); border-radius: 18px; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .12), 0 18px 48px rgba(0, 0, 0, .16), inset 0 1px 0 rgba(255, 255, 255, .9); transform-origin: top right; animation: menu-in .16s cubic-bezier(.2, .8, .2, 1); }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(.97); } }
 .account-who { display: flex; align-items: center; gap: 11px; margin-bottom: 6px; padding: 8px 10px 12px; border-bottom: 1px solid var(--step); }
 .account-who-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
