@@ -5,8 +5,8 @@ import { isValidTimeZone } from '../domain/schedule';
 /**
  * What sign-in tells the assistant about the user, written as ordinary fact events (tool_observed) so the
  * agent reads them like anything else it knows. Names are tentative, so the assistant confirms what to call
- * someone; the email Google verified is confirmed. Location comes from Vercel's IP geolocation headers and
- * is only ever a guess.
+ * someone; an email Google verified is confirmed, one typed at sign-up is tentative. Location comes from
+ * Vercel's IP geolocation headers and is only ever a guess.
  */
 export interface FactStore {
   readEvents(id: string): Promise<SessionEvent[]>;
@@ -15,10 +15,10 @@ export interface FactStore {
 
 export interface SeedFact { key: string; value: string; evidence: 'tentative' | 'confirmed' }
 
-export interface Profile { email: string; fullName?: string; givenName?: string; picture?: string; locale?: string }
+export interface Profile { email: string; emailVerified: boolean; fullName?: string; givenName?: string; picture?: string; locale?: string }
 
 export function profileFacts(profile: Profile): SeedFact[] {
-  const facts: SeedFact[] = [{ key: 'user_email', value: profile.email, evidence: 'confirmed' }];
+  const facts: SeedFact[] = [{ key: 'user_email', value: profile.email, evidence: profile.emailVerified ? 'confirmed' : 'tentative' }];
   if (profile.fullName) facts.push({ key: 'user_full_name', value: profile.fullName, evidence: 'tentative' });
   if (profile.givenName) facts.push({ key: 'user_given_name', value: profile.givenName, evidence: 'tentative' });
   if (profile.picture) facts.push({ key: 'user_picture', value: profile.picture, evidence: 'confirmed' });

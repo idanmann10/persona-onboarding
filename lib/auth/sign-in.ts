@@ -6,7 +6,7 @@ import {
   appBaseUrl, authorizationUrl, exchangeCode, googleConfig, GoogleSignInError, newPendingSignIn, parsePending, sameSecret, serializePending, verifyIdToken,
 } from './google';
 import { hashLoginToken, newLoginToken, openMainSession, readLoginToken, type LoginStore, type MainSessionStore } from './login';
-import { locationFacts, profileFacts, recordFacts } from './profile';
+import { locationFacts, profileFacts, recordFacts, type Profile } from './profile';
 
 export interface SignInStore extends LoginStore, MainSessionStore {
   upsertAccount(profile: AccountProfile): Promise<{ id: string; mainSessionId: string | null }>;
@@ -33,15 +33,14 @@ function failed(base: string, secure: boolean, error: SignInError): Response {
 }
 
 /**
- * Finishes any sign-in (Google, or the local test login): refreshes the account, opens its main
- * conversation, records what we learned about the user in it, and gives this browser a new login.
+ * Signs this browser in to an account, whichever way it proved itself: opens the account's main
+ * conversation, records what we learned about the user in it, and issues a new login. Returns the
+ * cookies to set, or 'limited' when this network has started too many conversations.
  */
-export async function completeSignIn(store: SignInStore, request: Request, profile: AccountProfile, base: string): Promise<Response> {
-  const secure = isSecureRequest(request, base);
-  const account = await store.upsertAccount(profile);
+export async function beginLogin(store: SignInStore, request: Request, account: { id: string; mainSessionId: string | null }, profile: Profile, secure: boolean): Promise<string[] | 'limited'> {
   const user = { accountId: account.id, sessionId: account.mainSessionId, ...profile };
   const session = await openMainSession(store, user, request);
-  if (session === 'limited') return failed(base, secure, 'busy');
+  if (session === 'limited') return 'limited';
   // A new conversation was just seeded; an existing one only learns what changed since last time.
   if (!session.created) await recordFacts(store, session.id, [...profileFacts(profile), ...locationFacts(request)], session.events, 'signin:profile');
   // Never reuse a login across sign-ins: this browser's previous token, if any, stops working.
@@ -49,7 +48,14 @@ export async function completeSignIn(store: SignInStore, request: Request, profi
   if (previous) await store.deleteLogin(hashLoginToken(previous));
   const token = newLoginToken();
   await store.createLogin(hashLoginToken(token), account.id, new Date(Date.now() + LOGIN_DAYS * 86_400_000));
-  return redirect(new URL('/', base), [loginCookie(token, secure), clearedOAuthCookie(secure), clearedLegacySessionCookie(secure)]);
+  return [loginCookie(token, secure), clearedOAuthCookie(secure), clearedLegacySessionCookie(secure)];
+}
+
+/** Finishes a Google (or local test) sign-in: refreshes the account by its `sub`, then back to the chat. */
+export async function completeSignIn(store: SignInStore, request: Request, profile: AccountProfile, base: string): Promise<Response> {
+  const secure = isSecureRequest(request, base);
+  const cookies = await beginLogin(store, request, await store.upsertAccount(profile), profile, secure);
+  return cookies === 'limited' ? failed(base, secure, 'busy') : redirect(new URL('/', base), cookies);
 }
 
 /** GET /api/auth/google: remembers a fresh state, PKCE verifier and nonce in this browser, then goes to Google. */
@@ -125,6 +131,6 @@ export function createTestLoginHandler(store: SignInStore, env: Env) {
     const name = url.searchParams.get('user') ?? 'tester';
     if (!/^[a-z0-9-]{1,32}$/.test(name)) return new Response('user must be 1-32 lowercase letters, digits or dashes', { status: 400 });
     const given = `${name[0].toUpperCase()}${name.slice(1)}`;
-    return completeSignIn(store, request, { sub: `e2e-${name}`, email: `${name}@e2e.persona.test`, fullName: `${given} Test`, givenName: given, locale: 'en' }, base);
+    return completeSignIn(store, request, { sub: `e2e-${name}`, email: `${name}@e2e.persona.test`, emailVerified: true, fullName: `${given} Test`, givenName: given, locale: 'en' }, base);
   };
 }
