@@ -3,8 +3,8 @@ import type { SessionEvent, Toolkit } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
 import { buildUserState, IDENTITY_KEYS } from '../domain/user-state';
 import { soulNotes } from '../domain/memory';
-import { buildSystemPrompt } from './prompts';
-import { modelMessages } from './conversation';
+import { buildPrompt } from './prompts';
+import { historyWindow, windowMessages } from './conversation';
 import { textToolSet, toolContext, type ToolDeps } from './tools';
 import { describeTurn, type TraceSink, type TurnTrace } from '../observability/trace';
 
@@ -32,8 +32,8 @@ export interface PreparedTurn {
   trace?: TurnTrace;
 }
 
-/** Facts the prompt already shows elsewhere (names, persona, identity), so the "other facts" list stays short. */
-const SHOWN_ELSEWHERE = new Set<string>(['identity_lookup_status', 'assistant_name', 'preferred_name', 'current_need', 'personality', 'voice', 'avatar', ...IDENTITY_KEYS]);
+/** Facts the prompt already shows elsewhere (names, persona, the profile), so the "other facts" list stays short. */
+const SHOWN_ELSEWHERE = new Set<string>(['identity_lookup_status', 'assistant_name', 'preferred_name', 'current_need', 'personality', 'voice', 'avatar', 'public_identity_candidate', 'public_headline', 'public_profile', ...IDENTITY_KEYS]);
 
 /** What the model can use, in words, from what's configured and connected. */
 export function capabilityLabels(ctx: { capabilities: { voice: boolean; gmail: boolean; calendar: boolean }; accounts: Partial<Record<Toolkit, string>> }, state: SessionProjection): string[] {
@@ -57,14 +57,21 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   const now = deps.now?.() ?? new Date();
   const ctx = await toolContext(deps, sessionId, state, { channel, turnId: options.turnId, trigger: options.trigger?.id, include: options.trigger?.include });
   const tools = textToolSet(ctx);
-  const instructions = buildSystemPrompt({
+  const { instructions, context } = buildPrompt({
     user: buildUserState(state, now, deps.env.OPENAI_VOICE), mode: channel === 'voice' ? 'voice_backend' : 'text',
     capabilities: capabilityLabels(ctx, state), soulNotes: soulNotes(state, 'assistant'), facts: otherFacts(state),
     noOverlay: Boolean(options.trigger?.id.startsWith('automation:')),
   });
-  const messages = modelMessages(state);
+  const window = historyWindow(state);
+  const messages = windowMessages(window);
   if (options.trigger) messages.push({ role: 'system', content: options.trigger.instruction });
   const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
-  const trace = deps.trace ? describeTurn(deps.trace, sessionId, { turnId: options.turnId, trigger: options.trigger, channel, model: deps.env.OPENAI_TEXT_MODEL, instructions, messages, tools, userText: latestUser?.text }) : undefined;
+  // What each part of the prompt took, and how much of the conversation was replayed, trimmed or summarized.
+  const budget = {
+    ...context.tokens, history: window.tokens, total: context.tokens.total + window.tokens,
+    memories: `${context.memories.shown} of ${context.memories.total}`,
+    replayed: `${window.lines.length} lines${window.trimmed ? `, ${window.trimmed} trimmed` : ''}${window.start ? `; ${state.memory.summary?.lines ?? 0} in the summary${window.dropped ? `, ${window.dropped} past the cap` : ''}` : ''}`,
+  };
+  const trace = deps.trace ? describeTurn(deps.trace, sessionId, { turnId: options.turnId, trigger: options.trigger, channel, model: deps.env.OPENAI_TEXT_MODEL, instructions, messages, tools, userText: latestUser?.text, context: budget }) : undefined;
   return { instructions, messages, tools, state, allowSystemInMessages: Boolean(options.trigger), ...(trace ? { trace } : {}) };
 }

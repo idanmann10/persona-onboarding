@@ -3,7 +3,7 @@ import { projectSession } from '../lib/domain/project';
 import { prepareTurn } from '../lib/agent/turn';
 import { greetingEvent, greetingText } from '../lib/agent/session';
 import { pendingTriggers, wakeNote } from '../lib/agent/follow-ups';
-import { memoryPrompt } from '../lib/agent/subagents/memory';
+import { compactionPrompt, memoryPrompt } from '../lib/agent/subagents/memory';
 import { buildLiveSession } from '../lib/voice/session-config';
 
 /**
@@ -11,7 +11,7 @@ import { buildLiveSession } from '../lib/voice/session-config';
  * conversation. No keys or database needed.
  *
  *   bun run prompt:show            every moment
- *   bun run prompt:show text       one of: greeting, text, call, wake, memory
+ *   bun run prompt:show text       one of: greeting, text, call, wake, memory, compaction
  */
 const at = (seconds: number) => new Date(Date.UTC(2026, 8, 27, 16, 0, seconds)).toISOString();
 const store = { appendEvent: async () => undefined, getActiveConnection: async () => undefined };
@@ -42,11 +42,18 @@ const hungUp: SessionEvent[] = [
   { id: 'v2', at: at(15), type: 'voice_fragment', callId: 'live_1', speaker: 'user', text: 'Yeah Dana is great. Honestly the investor updates, every month I have to', final: true, startMs: 3_000, endMs: 7_000 },
   { id: 'call:live_1:ended', at: at(20), type: 'call', phase: 'ended', callId: 'live_1', reason: 'user_hangup' },
 ];
+// Later: two memories on file, and they correct one of them.
+const remembered: SessionEvent[] = [
+  ...hungUp,
+  { id: 'memory:t1:a', at: at(21), type: 'memory', memoryId: 'm0dana1', text: 'Sends investor updates monthly', kind: 'routine', labels: ['investors', 'writing'], confidence: 'high', source: 'call', provenance: 'user_said', sourceEventId: 'call:live_1', by: 'memory' },
+  { id: 'memory:t1:b', at: at(21), type: 'memory', memoryId: 'm0dana2', text: 'Cofounder Sam handles hiring', kind: 'person', labels: ['team', 'hiring'], confidence: 'high', source: 'call', provenance: 'user_said', sourceEventId: 'call:live_1', by: 'memory' },
+  { id: 'm2', at: at(25), type: 'message', speaker: 'user', channel: 'text', text: "Actually the investor updates are quarterly now, not monthly. And I'm in Berlin these days." },
+];
 
 const moments: Record<string, () => Promise<string>> = {
   greeting: async () => `--- The first message (a template from state, no model call) ---\n${greetingText(projectSession(signedIn), now)}`,
   text: async () => {
-    const turn = await prepareTurn(deps, 'demo', named, { turnId: 'next' });
+    const turn = await prepareTurn(deps, 'demo', remembered, { turnId: 'next' });
     return `${turn.instructions}\n\n[tools offered this turn: ${Object.keys(turn.tools).join(', ')}]`;
   },
   call: async () => {
@@ -65,8 +72,13 @@ const moments: Record<string, () => Promise<string>> = {
     return `--- After a hang-up, the assistant is woken with its full prompt (onboarding overlay included) plus this note ---\n${wakeNote(trigger)}\n\n[tools offered: ${Object.keys(turn.tools).join(', ')}]`;
   },
   memory: async () => {
-    const prompt = memoryPrompt(projectSession(hungUp));
+    const prompt = memoryPrompt(projectSession(remembered), now);
     return prompt ? `--- Memory (system) ---\n${prompt.system}\n\n--- Input ---\n${JSON.stringify(prompt.input, null, 1)}` : '(nothing new for the memory)';
+  },
+  // With the roll budget lowered so this short conversation already needs folding.
+  compaction: async () => {
+    const prompt = compactionPrompt(projectSession(remembered), { PERSONA_HISTORY_ROLL_TOKENS: '100' });
+    return prompt ? `--- Compaction, folding lines ${prompt.from}-${prompt.to} (system) ---\n${prompt.system}\n\n--- Input ---\n${JSON.stringify(prompt.input, null, 1)}` : '(nothing to compact)';
   },
 };
 

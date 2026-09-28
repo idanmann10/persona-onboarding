@@ -2,7 +2,7 @@ import type { CallEndReason, SetupItem } from './events';
 import { SETUP_ITEMS } from './events';
 import type { CallRecord, SessionProjection } from './project';
 import { personaSettings, personalityLine } from './persona';
-import { LOOP_LIMITS, NOTE_LIMITS } from './memory';
+import { liveMemories, LOOP_LIMITS, profileItems, rankMemories, type ProfileItem, type RankedMemory } from './memory';
 import { isValidTimeZone } from './schedule';
 
 /**
@@ -48,7 +48,10 @@ export interface UserState {
     recurring: { status: string; title?: string; schedule?: string; lastRun?: 'ran' | 'failed'; lastRunAt?: string };
   };
   labels: Array<{ label: string; confidence: string; evidence: string }>;
-  notes: Array<{ text: string; kind: string; source: string }>;
+  /** Pinned: what sign-in recorded and their own corrections. Always shown, never trimmed by a budget. */
+  profile: ProfileItem[];
+  /** Every live memory, best first for the recent conversation; a prompt shows the top within its budget. */
+  memories: RankedMemory[];
   summary?: string;
   /** A check-in the assistant scheduled, still ahead and not cancelled by a reply. */
   checkIn?: { wakeAt: string; reason: string };
@@ -145,6 +148,16 @@ function setupItems(state: SessionProjection): Record<SetupItem, SetupItemState>
 
 const factValue = (state: SessionProjection, key: string) => state.facts[key]?.value?.trim() || undefined;
 
+/** The last few lines of the conversation, typed or spoken, newest last: what recall ranks against. */
+function recentWords(state: SessionProjection, count = 6): string[] {
+  const lines: string[] = [];
+  for (const item of state.timeline) {
+    if (item.kind === 'message' && item.text.trim()) lines.push(item.text);
+    if (item.kind === 'call') for (const utterance of item.call.utterances) lines.push(utterance.text);
+  }
+  return lines.slice(-count);
+}
+
 export function buildUserState(state: SessionProjection, now: Date, defaultVoice?: string): UserState {
   const timezone = userTimeZone(state);
   const clock = localClock(now, timezone);
@@ -154,7 +167,9 @@ export function buildUserState(state: SessionProjection, now: Date, defaultVoice
   const callThem = preferred.value && (preferred.status === 'confirmed' || preferred.status === 'tentative')
     ? { name: preferred.value, confirmed: preferred.status === 'confirmed' }
     : given && preferred.status !== 'declined' ? { name: given, confirmed: false } : undefined;
-  const location = [factValue(state, 'location_city'), factValue(state, 'location_region'), factValue(state, 'location_country')].filter(Boolean).join(', ');
+  // Their own word for where they are replaces the connection's guess (see profileItems).
+  const ownCity = state.facts.location_city && ['user_said', 'user_confirmed'].includes(state.facts.location_city.provenance);
+  const location = ownCity ? factValue(state, 'location_city') ?? '' : [factValue(state, 'location_city'), factValue(state, 'location_region'), factValue(state, 'location_country')].filter(Boolean).join(', ');
 
   const userMessages = state.messages.filter((message) => message.speaker === 'user');
   const spokeOn = state.calls.filter((call) => call.utterances.some((utterance) => utterance.speaker === 'user')).map((call) => call.lastActivityAt ?? call.endedAt ?? '');
@@ -180,7 +195,7 @@ export function buildUserState(state: SessionProjection, now: Date, defaultVoice
   const checkIn = pendingCheckIn && pendingCheckIn.at > lastUserAt && pendingCheckIn.wakeAt > now.toISOString() ? pendingCheckIn : undefined;
   const needs = [
     ...(state.onboarding.need.value ? [state.onboarding.need.value] : []),
-    ...state.memory.notes.filter((note) => note.kind === 'need').map((note) => note.text),
+    ...liveMemories(state).filter((memory) => memory.kind === 'need').map((memory) => memory.text),
   ].slice(-5);
 
   return {
@@ -221,7 +236,8 @@ export function buildUserState(state: SessionProjection, now: Date, defaultVoice
       },
     },
     labels: Object.values(state.memory.labels).map((label) => ({ label: label.label, confidence: label.confidence, evidence: label.evidence })),
-    notes: state.memory.notes.slice(-NOTE_LIMITS.shown).map((note) => ({ text: note.text, kind: note.kind, source: note.source })),
+    profile: profileItems(state),
+    memories: rankMemories(state, recentWords(state), now),
     ...(state.memory.summary ? { summary: state.memory.summary.text } : {}),
     ...(checkIn ? { checkIn: { wakeAt: checkIn.wakeAt, reason: checkIn.reason } } : {}),
   };

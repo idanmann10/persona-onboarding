@@ -6,7 +6,7 @@ import { nextRun } from '../domain/schedule';
 import { conversationLines } from './conversation';
 import { prepareTurn, type TurnDependencies } from './turn';
 import { generateTurnResult, undash } from './runtime';
-import { runMemory } from './subagents/memory';
+import { compactionPrompt, runCompaction, runMemory } from './subagents/memory';
 
 /**
  * Follow-ups, server-side. An app event (a call ended, an account connected or failed, a recurring task
@@ -160,12 +160,21 @@ export async function wake(deps: FollowUpDeps, sessionId: string, trigger: WakeT
   }
 }
 
-/** Let the memory read what's new. Idempotent per conversation length. */
+/**
+ * Let the memory read what's new, and fold the older conversation into the rolling summary once it has
+ * outgrown its budget. The two run side by side; each is idempotent (per conversation length, per watermark).
+ */
 export async function updateMemory(deps: FollowUpDeps, sessionId: string): Promise<number> {
   const state = projectSession(await deps.store.readEvents(sessionId));
   const lines = conversationLines(state).length;
-  if (!(await deps.store.reserve(sessionId, `memory:${lines}`))) return 0;
-  const events = await runMemory({ env: deps.env, trace: deps.trace, model: deps.model }, sessionId, state, deps.now?.() ?? new Date());
+  const now = deps.now?.() ?? new Date();
+  const agent = { env: deps.env, trace: deps.trace, model: deps.model };
+  const fold = compactionPrompt(state, deps.env);
+  const [read, folded] = await Promise.all([
+    deps.store.reserve(sessionId, `memory:${lines}`).then((reserved) => (reserved ? runMemory(agent, sessionId, state, now) : [])),
+    fold ? deps.store.reserve(sessionId, `compaction:${fold.key}`).then((reserved) => (reserved ? runCompaction(agent, sessionId, fold, now) : [])) : [],
+  ]);
+  const events = [...read, ...folded];
   for (const event of events) await deps.store.appendEvent(sessionId, event);
   return events.length;
 }

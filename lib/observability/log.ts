@@ -1,4 +1,5 @@
 import type { SessionEvent } from '../domain/events';
+import { memoryIdFor } from '../domain/memory';
 import type { SessionProjection } from '../domain/project';
 import type { StoredTrace, TraceStatus } from './trace';
 
@@ -35,6 +36,8 @@ export interface TurnItem {
   promptVersion?: string;
   instructions?: string;
   messageCount?: number;
+  /** Estimated tokens per prompt section and what the replayed conversation held (see lib/agent/budget.ts). */
+  context?: Record<string, number | string>;
   toolsOffered: string[];
   userText?: string;
   trigger?: string;
@@ -120,6 +123,7 @@ export function groupTurns(traces: StoredTrace[], now = Date.now()): TurnItem[] 
       kind: 'turn', id: `turn:${entry.id}`, turnId: entry.turnId, name: entry.name, at: entry.at, status: 'running',
       model: str(data.model), promptVersion: str(data.promptVersion), instructions: str(data.instructions),
       messageCount: typeof data.messageCount === 'number' ? data.messageCount : undefined,
+      ...(data.context && typeof data.context === 'object' ? { context: data.context as Record<string, number | string> } : {}),
       toolsOffered: Array.isArray(data.tools) ? data.tools.filter((name): name is string => typeof name === 'string') : [],
       userText: str(data.userText), trigger: str(data.trigger), ...(str(data.agent) ? { agent: str(data.agent) } : {}), stalls: 0, steps: [],
       totals: { toolCalls: 0, tokensIn: 0, cachedIn: 0, tokensOut: 0, reasoningTokens: 0 },
@@ -214,6 +218,8 @@ const AGENT_NAMES = { assistant: 'Assistant', memory: 'Memory' } as const;
 export function notableEvents(events: SessionEvent[]): EventItem[] {
   const items: EventItem[] = [];
   const seen = new Set<string>();
+  // What each memory said, so a merge, a correction or a forget can show what it replaced.
+  const memories = new Map<string, string>();
   for (const event of events) {
     if (seen.has(event.id)) continue;
     seen.add(event.id);
@@ -233,7 +239,7 @@ export function notableEvents(events: SessionEvent[]): EventItem[] {
       const label = FACT_LABELS[event.key] ?? event.key.replace(/_/g, ' ');
       items.push({
         ...base, kind: 'event', tone: event.evidence === 'declined' ? 'neutral' : 'good',
-        label: event.evidence === 'declined' ? `${label}: declined to share` : `Saved ${label.toLowerCase()}`,
+        label: event.id.includes(':forget:') ? `Forgot ${label.toLowerCase()}` : event.evidence === 'declined' ? `${label}: declined to share` : `Saved ${label.toLowerCase()}`,
         ...(event.evidence === 'declined' ? {} : { detail: event.value }), tag: event.provenance.replace(/_/g, ' '),
       });
     } else if (event.type === 'account_read') {
@@ -243,11 +249,25 @@ export function notableEvents(events: SessionEvent[]): EventItem[] {
     } else if (event.type === 'label') {
       items.push({ ...base, kind: 'event', tone: 'neutral', label: `Label ${event.action === 'add' ? 'added' : 'removed'}: ${event.label}`, detail: `${event.confidence} confidence · ${event.evidence}`, tag: event.provenance.replace(/_/g, ' ') });
     } else if (event.type === 'note') {
+      memories.set(memoryIdFor(event.id), event.text);
       items.push({ ...base, kind: 'event', tone: 'neutral', label: `Memory kept a ${event.kind}`, detail: event.text, tag: `from ${event.source}` });
+    } else if (event.type === 'memory') {
+      const replaced = (event.replaces ?? []).map((id) => memories.get(id) ?? id);
+      memories.set(event.memoryId, event.text);
+      const who = AGENT_NAMES[event.by];
+      const label = replaced.length > 1 ? `${who} merged ${replaced.length} memories` : replaced.length ? `${who} corrected a memory` : `${who} saved a memory`;
+      items.push({
+        ...base, kind: 'event', tone: 'good', label,
+        detail: `${event.text}\n${[event.kind, ...event.labels].join(', ')} · ${event.confidence} confidence · [${event.memoryId}]${replaced.length ? `\nReplaces: ${replaced.join(' | ')}` : ''}`,
+        tag: `from ${event.source}`,
+      });
+    } else if (event.type === 'forget') {
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: `${AGENT_NAMES[event.by]} forgot a memory`, detail: `${memories.get(event.memoryId) ?? event.memoryId}\nWhy: ${event.reason}`, tag: event.memoryId });
     } else if (event.type === 'loop') {
       items.push({ ...base, kind: 'event', tone: 'neutral', label: event.action === 'open' ? 'Open loop' : 'Loop closed', detail: event.text });
     } else if (event.type === 'summary') {
-      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Summary updated (${event.lines} lines)`, detail: event.text });
+      const scrub = event.id.includes(':scrub:');
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: scrub ? 'Summary rewritten without what they asked to forget' : `Conversation compacted: the first ${event.lines} lines are now a summary`, detail: event.text, tag: 'compaction' });
     } else if (event.type === 'follow_up') {
       const label = event.outcome === 'messaged' ? 'Follow-up sent' : event.guard ? 'Follow-up held by a guardrail' : 'Stayed quiet';
       items.push({ ...base, kind: 'event', tone: event.outcome === 'messaged' ? 'good' : 'neutral', label, detail: event.reason, tag: event.trigger.split(':')[0] });

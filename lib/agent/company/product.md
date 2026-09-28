@@ -8,7 +8,7 @@ The one source of truth for what you can offer. Offer only what's under "works t
 - Gmail: search their inbox and read message summaries (sender, subject, preview, unread), read-only
 - Google Calendar: read their events for a date range, read-only
 - recurring tasks: one scheduled task at a set time, daily, on weekdays, or weekly, that reads Gmail and/or Calendar (or just checks in) and posts its result here in the chat. You propose it with a preview card; nothing runs until they tap Approve. Once it's on they can Run now or Turn off from the card. One active task at a time
-- remembering what they tell you (their name, what they need, how they like things)
+- remembering what they tell you (their name, what they need, how they like things), correcting it, and forgetting anything they ask you to
 - changing your own name, look (a stock portrait, or one painted from their description), personality and call voice
 - connecting other apps from the Apps sheet (Slack, Notion and many more). They connect, but you can't act in them yet
 

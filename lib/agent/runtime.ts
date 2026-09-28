@@ -39,8 +39,8 @@ export function timeoutFor(env: Env) {
 const isTimeout = (error: unknown) => error instanceof Error && /time(d)? ?out/i.test(`${error.name} ${error.message}`);
 
 /** Tools whose only effect is a saved fact or a card on screen: a reply beside them needs no further step. */
-const CARD_TOOLS = new Set(['remember', 'customize', 'note_decline', 'graduate', 'offer_call', 'show_connection', 'propose_automation', 'soul_note', 'schedule_check_in']);
-const CARD_DONE = new Set(['saved', 'unchanged', 'offered', 'already_offered', 'shown', 'already_shown', 'proposed', 'already_proposed', 'already_connected', 'already_on_call', 'scheduled']);
+const CARD_TOOLS = new Set(['remember', 'save_memory', 'forget_memory', 'customize', 'note_decline', 'graduate', 'offer_call', 'show_connection', 'propose_automation', 'soul_note', 'schedule_check_in']);
+const CARD_DONE = new Set(['saved', 'unchanged', 'updated', 'merged', 'forgotten', 'offered', 'already_offered', 'shown', 'already_shown', 'proposed', 'already_proposed', 'already_connected', 'already_on_call', 'scheduled']);
 
 /** Choosing to stay quiet ends the turn: another step would only write the message it chose not to send. */
 const choseQuiet: StopCondition<ToolSet> = ({ steps }) => Boolean(steps.at(-1)?.toolResults.some((result) => result.toolName === 'stay_quiet'));
