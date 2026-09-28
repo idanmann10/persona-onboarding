@@ -118,7 +118,7 @@ Keys (never in Git): `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (redirect URI `$A
 
 ## Deploy
 
-The app is the `persona-app` service on Railway (`railway.json`: build with Bun, migrate on start). The scheduler is `persona-cron` (`ops/railway-cron/`), calling `/api/automations/run-due` with `CRON_SECRET` every 5 minutes.
+The app is the `persona-app` service on Railway; its start command (set on the service, since Railway didn't pick up `railway.json` here) is `bun run db:migrate && bun run start`, so every deploy migrates first. The scheduler is `persona-cron` (`ops/railway-cron/`), whose `*/5 * * * *` cron schedule is also set on the service, calling `/api/automations/run-due` with `CRON_SECRET`.
 
 ```sh
 railway up --service persona-app
