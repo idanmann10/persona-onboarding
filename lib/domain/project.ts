@@ -69,6 +69,8 @@ export interface SessionProjection {
   calls: CallRecord[];
   voiceFragments: Extract<SessionEvent, { type: 'voice_fragment' }>[];
   connections: Record<Toolkit, ConnectionPhase | 'none'>;
+  /** How the latest decline came: a tapped "Not now" (not yet) or a said/typed no (closed). */
+  declinedBy: Partial<Record<Toolkit, 'tapped' | 'said'>>;
   /** Apps other than Gmail and Calendar, by slug, from the Apps sheet. */
   apps: Record<string, { name: string; phase: Extract<SessionEvent, { type: 'app_connection' }>['phase'] }>;
   decisions: Record<string, 'messaged' | 'silent'>;
@@ -101,7 +103,7 @@ const ENDED: CallPhase[] = ['ended', 'dropped'];
 export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
-    connections: { gmail: 'none', calendar: 'none' }, apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
+    connections: { gmail: 'none', calendar: 'none' }, declinedBy: {}, apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
     memory: { soulNotes: { assistant: [], memory: [] }, memories: [], labels: {}, loops: [], readLines: 0, followUps: [], checkIns: [] },
     activity: { visits: [], reads: [], runs: [] },
     onboarding: {
@@ -198,6 +200,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         break;
       case 'connection': {
         state.connections[event.toolkit] = event.phase;
+        if (event.phase === 'declined') state.declinedBy[event.toolkit] = event.id.startsWith('connection-decline:') ? 'said' : 'tapped';
         if (event.phase === 'offered') {
           const offer: Extract<TimelineItem, { kind: 'connection_offer' }> = { kind: 'connection_offer', id: event.id, toolkit: event.toolkit, status: 'pending', ...(event.reason ? { reason: event.reason } : {}) };
           connectionOffers[event.toolkit] = offer;

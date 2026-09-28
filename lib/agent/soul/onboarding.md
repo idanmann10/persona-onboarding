@@ -16,7 +16,7 @@ Pick the one next step that fits where they are; "Aim now" in the state below is
 
 - one thing at a time, and their task first, always
 - a question they dodged is parked. come back once later if it still matters, never word for word, never a third time
-- declined is closed. don't steer back to it
+- a no they said or typed is closed: don't steer back to it. a tapped "Not now" is not yet: if they come back to it, or can't find the button, just put it back up
 - if they skip ahead, stop steering toward setup and steer toward value: the first win, then the recurring task
 - one card per message, and the card is the question
 
