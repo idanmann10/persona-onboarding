@@ -3,7 +3,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type SyntheticEvent } from 'react';
 import type { TimelineItem } from '@/lib/domain/project';
 import { Avatar, avatarCandidates } from '../components/avatar';
-import { ArrowUpIcon, CalendarIcon, CheckIcon, ChevronDownIcon, CloseIcon, KeyboardIcon, MailIcon, MicIcon, MicOffIcon, PhoneIcon } from '../components/icons';
+import { ArrowUpIcon, CheckIcon, ChevronDownIcon, CloseIcon, KeyboardIcon, MicIcon, MicOffIcon, PhoneIcon } from '../components/icons';
+import { ToolkitLogo } from '../components/toolkit-logo';
 import { duration, type Toolkit } from '../thread';
 import { toolStatus } from './tool-status';
 import type { CallCaption, CallFeed } from './use-call-feed';
@@ -209,7 +210,7 @@ function CallView({ phase, name, avatarUrl, startedAt, feed, timeline, signingIn
 
           {offers.map((toolkit) => (
             <div className="cs-offer cs-glass" key={toolkit}>
-              <span className="cs-offer-icon" aria-hidden="true">{toolkit === 'gmail' ? <MailIcon width={18} height={18} /> : <CalendarIcon width={18} height={18} />}</span>
+              <span className="cs-offer-icon logo" aria-hidden="true"><ToolkitLogo toolkit={toolkit} size={22} /></span>
               <span className="cs-offer-text"><strong>Connect {TOOLKIT_NAMES[toolkit]}</strong><small>Read-only. The call keeps going.</small></span>
               <button type="button" className="cs-offer-go" disabled={signingIn || !active} onClick={() => onConnect(toolkit)}>{signingIn ? 'Signing in…' : 'Connect'}</button>
               <button type="button" className="cs-offer-hide" aria-label={`Hide Connect ${TOOLKIT_NAMES[toolkit]}`} onClick={() => setHiddenOffers((list) => [...list, toolkit])}><CloseIcon width={14} height={14} /></button>
