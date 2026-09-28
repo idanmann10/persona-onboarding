@@ -13,6 +13,9 @@ export function onboardingGoals(user: UserState, options: { channel: 'text' | 'v
   const asks: string[] = [];
   const add = (step: string, ask: string) => { steps.push(step); asks.push(ask); };
   const setupOpen = !user.lifecycle.skippedSetup;
+  const task = user.activation.recurring;
+  // A task waiting for their yes is one word from done: it comes first.
+  if (task.status === 'proposed') add(`their recurring task "${task.title ?? 'recurring task'}" is waiting: a yes out loud or in the chat turns it on (approve_automation)`, `your ${(task.title ?? 'recurring task').toLowerCase()} is ready to go, want me to turn it on?`);
   const open = (item: keyof UserState['setup']) => user.setup[item].status === 'unknown' || user.setup[item].status === 'asked';
   // Skipping setup ends the questions, not the steering toward value.
   if (setupOpen) {
@@ -39,9 +42,7 @@ export function onboardingGoals(user: UserState, options: { channel: 'text' | 'v
         ? 'the first win: help with what they tell you right now, something real and specific'
         : "the first win: when their need touches email, put the Connect Gmail button up (show_connection), then read their inbox once they're in");
   }
-  const task = user.activation.recurring;
-  if (task.status === 'proposed') add('their first recurring task: the preview card is waiting, so point them to Approve', 'the rundown card is waiting in the chat, want it every morning?');
-  else if (task.status === 'none') add('their first recurring task: offer to make the win happen on its own with propose_automation (e.g. a weekday-morning rundown of who is waiting on them)', 'want me to send you a morning rundown like that on its own?');
+  if (task.status === 'none') add('their first recurring task: offer to make the win happen on its own with propose_automation (e.g. a weekday-morning rundown of who is waiting on them)', 'want me to send you a morning rundown like that on its own?');
   // The call's opening ask: the first goal that can be asked out loud (not the call offer itself).
   return { steps, target: steps[0], ask: asks.find(Boolean) };
 }

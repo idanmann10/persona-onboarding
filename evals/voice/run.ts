@@ -33,6 +33,8 @@ interface Scenario {
   title: string;
   facts: Record<string, string>;
   history?: Array<[speaker: 'user' | 'assistant', text: string]>;
+  /** A recurring task waiting for approval before the call starts. */
+  waitingTask?: boolean;
   turns: Turn[];
   check(result: Result): string[];
 }
@@ -74,6 +76,18 @@ const SCENARIOS: Scenario[] = [
       const noiseAt = result.lines.find((line) => line.who === 'noise')?.at ?? Infinity;
       const reply = result.lines.find((line) => line.who === 'assistant' && line.at > noiseAt + 300 && line.at < noiseAt + 16_000);
       return reply ? [`answered the noise: "${reply.text}"`] : [];
+    },
+  },
+  {
+    id: 'approve_by_voice', title: 'A spoken yes turns the waiting recurring task on, no tap needed',
+    facts: { assistant_name: 'Pip', preferred_name: 'Idan', current_need: 'investor updates eat my Mondays' },
+    history: [['assistant', 'Want a weekday 8:30 rundown of investor emails waiting on you? The card is below.']],
+    waitingTask: true,
+    turns: [{ say: 'Yes, set it up.' }],
+    check: (result) => {
+      const on = result.tools.find((tool) => /approve_automation|propose_automation/.test(tool.name) && tool.status === 'approved');
+      const tapAsk = result.lines.find((line) => line.who === 'assistant' && /tap approve|hit approve|approve (it|the card)/i.test(line.text));
+      return [...(on ? [] : ['the task was not turned on']), ...(tapAsk ? [`still asked for a tap: "${tapAsk.text}"`] : [])];
     },
   },
   {
@@ -141,6 +155,11 @@ async function run(scenario: Scenario): Promise<Result> {
     ...(scenario.history ?? []).map(([speaker, text], index): SessionEvent => ({ id: `m:${index}`, at: at(), type: 'message', speaker, channel: 'text', text })),
   ];
   for (const event of events) await store.appendEvent(sessionId, event);
+  if (scenario.waitingTask) {
+    const automationId = crypto.randomUUID();
+    await store.proposeAutomation(sessionId, { id: automationId, title: 'Morning investor rundown', instruction: 'List investor emails waiting on my reply, newest first.', toolkits: ['gmail'], cadence: 'weekdays', time: '08:30' });
+    await store.appendEvent(sessionId, { id: `automation-proposal:${automationId}`, at: at(), type: 'automation', automationId, phase: 'proposed', title: 'Morning investor rundown', schedule: 'every weekday at 8:30 AM', instruction: 'List investor emails waiting on my reply, newest first.' });
+  }
   const callId = `live_replay_${Date.now()}`;
   await store.appendEvent(sessionId, { id: `call:${callId}:accepted`, at: at(), type: 'call', phase: 'accepted', callId });
 
@@ -153,6 +172,7 @@ async function run(scenario: Scenario): Promise<Result> {
   let assistantSpoke = false;
   const outgoing: Buffer[] = [];
   const delegations = new Map<string, { calls: Array<Promise<{ callId: string; output: string }>>; done: boolean }>();
+  let saving: Promise<unknown> = Promise.resolve();
 
   // Bun's WebSocket takes headers.
   const ws = new WebSocket('wss://api.openai.com/v1/live/sessions', { headers: { Authorization: `Bearer ${key}` } } as unknown as string[]);
@@ -181,6 +201,8 @@ async function run(scenario: Scenario): Promise<Result> {
         if (last?.who === 'assistant' && now() - last.at < 2_500) { last.text += event.delta; last.at = now(); }
         else result.lines.push({ who: 'assistant', text: event.delta, at: now() });
       } else if (event.type === 'session.input_transcript.delta' && typeof event.delta === 'string') {
+        // What they said is stored as the page stores it, so a tool's check of their own words sees it.
+        saving = saving.then(() => store.appendEvent(sessionId, { id: `vf:${String(event.event_id)}`, at: new Date().toISOString(), type: 'voice_fragment', text: String(event.delta), final: true, callId, speaker: 'user', startMs: Number(event.start_ms) || 0, endMs: Number(event.end_ms) || 0 })).catch(() => undefined);
         const last = result.lines.at(-1);
         if (last?.who === 'user') last.text += event.delta; else result.lines.push({ who: 'user', text: event.delta, at: now() });
       } else if (event.type === 'response.event') {
@@ -191,6 +213,7 @@ async function run(scenario: Scenario): Promise<Result> {
         if (inner.type === 'response.output_item.done' && (inner.item as { type?: string })?.type === 'function_call') {
           const item = inner.item as { name: string; arguments: string; call_id: string };
           delegation.calls.push((async () => {
+            await saving;
             const state = projectSession(await store.readEvents(sessionId));
             const ctx = await toolContext({ store, env: process.env }, sessionId, state, { channel: 'voice', turnId: `${callId}:${item.call_id}` });
             const { output } = await runVoiceTool(ctx, item.name, JSON.parse(item.arguments || '{}'));
@@ -250,6 +273,10 @@ for (const scenario of SCENARIOS.filter((item) => !only || item.id === only)) {
   for (const line of result.lines) console.log(`  ${String(line.at).padStart(6)} ms  ${line.who === 'assistant' ? 'assistant' : line.who === 'user' ? 'heard   ' : '         '}  ${line.text.trim()}`);
   for (const tool of result.tools) console.log(`  ${String(tool.at).padStart(6)} ms  tool       ${tool.name}(${tool.args.slice(0, 80)}) -> ${tool.status}`);
   const issues = scenario.check(result);
+  // Every scenario: never say a button is up without the backend having put one up first.
+  const shownAt = result.tools.find((tool) => tool.name === 'show_connection' && /shown/.test(tool.status))?.at ?? Infinity;
+  const claim = result.lines.find((line) => line.who === 'assistant' && /(put|pulled|popped) (the |a )?(connect|gmail)?\s*button|button (is )?(up|below|on your screen)/i.test(line.text) && line.at < shownAt);
+  if (claim && !result.tools.some((tool) => tool.name === 'show_connection')) issues.push(`claimed a button with no show_connection: "${claim.text.trim().slice(0, 90)}"`);
   failures += issues.length ? 1 : 0;
   console.log(issues.length ? `  ✗ ${issues.join('; ')}` : '  ✓ pass');
 }

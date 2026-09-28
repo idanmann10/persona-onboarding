@@ -34,7 +34,7 @@ export interface ToolContext {
   relevant: Toolkit[];
   composio?: AccountReadClient;
   /** Present when recurring tasks are available (Postgres-backed). */
-  automations?: Pick<AutomationStore, 'proposeAutomation'>;
+  automations?: Pick<AutomationStore, 'proposeAutomation'> & Partial<Pick<AutomationStore, 'approveAutomation' | 'getAutomation'>>;
   /** Present when a described look can be painted (an OpenAI key and Postgres). */
   avatars?: {
     generate(input: { name: string; description: string }): Promise<AvatarResult>;

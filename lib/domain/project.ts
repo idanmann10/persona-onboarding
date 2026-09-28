@@ -95,6 +95,8 @@ export interface SessionProjection {
     readLines: number;
     followUps: Array<Of<'follow_up'>>;
     checkIns: Array<Of<'check_in'>>;
+    /** The latest plan for the next call (lib/agent/subagents/memory.ts). */
+    callPlan?: Of<'call_plan'>;
   };
   /** When things happened, for engagement and lifecycle: the first event, returns, and account reads. */
   activity: { firstAt?: string; visits: string[]; reads: Array<Of<'account_read'>>; runs: Array<{ id: string; phase: 'ran' | 'failed'; at: string; title: string }> };
@@ -279,6 +281,9 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
         break;
       case 'check_in':
         state.memory.checkIns.push(event);
+        break;
+      case 'call_plan':
+        state.memory.callPlan = event;
         break;
       case 'automation': {
         let card = state.automations.find((item) => item.automationId === event.automationId);

@@ -27,6 +27,7 @@ const KNOWN: Record<string, (args: Args) => ToolStatus> = {
           : { running: 'Changing my look…', done: 'Updated' },
   graduate: () => ({ running: 'Skipping the rest of setup…', done: 'Skipped the rest of setup' }),
   propose_automation: () => ({ running: 'Drafting a recurring task…', done: 'Drafted a recurring task' }),
+  approve_automation: () => ({ running: 'Turning it on…', done: 'Your recurring task is on' }),
   offer_call: () => ({ running: 'Setting up a call…', done: 'Call is ready' }),
   end_call: () => ({ running: 'Saying goodbye…', done: 'Call ended' }),
 };

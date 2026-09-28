@@ -42,9 +42,19 @@ type InputMessage = { type: 'message'; role: 'developer' | 'user' | 'assistant';
 type Capabilities = { gmail: boolean; calendar: boolean };
 
 /** The call's goals in order (the open basics, the first win, then the recurring task) and the one to aim for now. */
-export function callGoals(user: UserState): { steps: string[]; target: string; ask?: string } {
+export function callGoals(user: UserState, plan?: CallPlan): { steps: string[]; target: string; ask?: string } {
   const goals = onboardingGoals(user, { channel: 'voice' });
+  // The agent's own plan for this call (written by the memory after the last exchange) comes first.
+  if (plan) return { steps: goals.steps, target: plan.goal };
   return { steps: goals.steps, target: goals.target ?? 'whatever they called about; leave them with one clear next step', ...(goals.ask ? { ask: goals.ask } : {}) };
+}
+
+type CallPlan = { goal: string; opener: string };
+
+/** The memory's plan for this call, if it was made after the latest exchange (else the goals decide). */
+export function freshCallPlan(state: SessionProjection): CallPlan | undefined {
+  const plan = state.memory.callPlan;
+  return plan && plan.lines >= conversationLines(state).length - 1 ? { goal: plan.goal, opener: plan.opener } : undefined;
 }
 
 /**
@@ -57,7 +67,7 @@ export function voiceInstructions(state: SessionProjection, capabilities: Capabi
   const user = buildUserState(state, now);
   const assistant = user.assistant.name;
   const them = user.identity.callThem;
-  const goals = callGoals(user);
+  const goals = callGoals(user, freshCallPlan(state));
   const tools = voiceToolSchemas({ voice: true, ...capabilities }).map((item) => `- ${item.name}: ${item.description.split(/(?<!e\.g)\. /)[0].replace(/\.$/, '')}.`);
   const notes = soulNotes(state, 'assistant');
   // The memories most relevant right now, within the voice budget; the backend can recall the rest.
@@ -183,7 +193,10 @@ export function greetingLine(state: SessionProjection, now = new Date()): string
   const previous = state.calls.at(-1);
   const back = previous && (previous.reason === 'connection_lost' || previous.reason === 'lost');
   const hello = `Hey${user.identity.callThem ? ` ${user.identity.callThem.name}` : ''}, ${user.assistant.name ? `it's ${user.assistant.name}` : "it's me"}${back ? ', glad the line is back' : ''}.`;
-  // The hello asks the call's first goal, so the call opens with a direction, not a blank "what's up".
+  // The agent's own opener for this call, when it planned one after the latest exchange.
+  const plan = freshCallPlan(state);
+  if (plan && !back) return language === 'English' ? plan.opener : `Say this in ${language}: ${plan.opener}`;
+  // Otherwise the hello asks the call's first goal, so the call opens with a direction, not a blank "what's up".
   const ask = callGoals(user).ask;
   const hook = user.openLoops.length ? ` Want to pick up where we left off${user.openLoops[0] ? ` with ${user.openLoops[0].text.replace(/[.?!]+$/, '').slice(0, 60)}` : ''}?`
     : ask ? ` ${ask[0].toUpperCase()}${ask.slice(1)}` : " What's on your mind?";

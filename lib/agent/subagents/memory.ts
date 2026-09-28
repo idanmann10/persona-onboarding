@@ -7,6 +7,8 @@ import {
 import { compactionPlan, conversationLines, recentLines, type Line } from '../conversation';
 import { soulSection, soulWithNotes } from '../soul';
 import { runSubagent, type SubagentDeps } from './run';
+import { buildUserState } from '../../domain/user-state';
+import { onboardingGoals } from '../goals';
 
 /** New lines are read in batches this small. */
 const NEW_LINES = 14;
@@ -37,6 +39,10 @@ const memoryOutput = z.object({
   open_loops: z.array(z.string().max(160)).max(2).describe('New promises the assistant made, or things left unfinished.'),
   closed_loops: z.array(z.string()).max(4).describe('Ids of open loops that are now done or no longer matter.'),
   soul_note: z.string().max(140).nullable().describe('Rarely: one lasting line about remembering for this particular user. Otherwise null.'),
+  next_call: z.object({
+    goal: z.string().max(200).describe('What a call right now should aim at: the one thing that would give them the most value next, chosen from where the conversation is.'),
+    opener: z.string().max(200).describe("The assistant's first spoken line if they call now: a quick hello by name, then straight into that goal, picking up exactly where the chat left off. One or two short sentences, no dashes."),
+  }).nullable().describe('The plan for their next call. null only if nothing is left to do.'),
 });
 
 const RULES = `# Rules (these win over the soul above)
@@ -55,6 +61,17 @@ function knownMemories(state: SessionProjection, fresh: Line[], now: Date) {
   const ranked = rankMemories(state, fresh.map((line) => line.text), now);
   return (ranked.length <= KNOWN.all ? ranked : ranked.slice(0, KNOWN.closest))
     .map((memory) => ({ id: memory.id, text: memory.text, kind: memory.kind, labels: memory.labels, source: memory.source }));
+}
+
+/** What planning the next call needs: where the talk left off, the open goals, and what's connected or running. */
+function nextCallContext(state: SessionProjection, lines: Line[], now: Date) {
+  const user = buildUserState(state, now);
+  return {
+    last_lines: recentLines(lines, 6, 240),
+    open_goals: onboardingGoals(user, { channel: 'voice' }).steps,
+    gmail: user.accounts.gmail === 'connected' ? 'connected' : user.setup.gmail.status === 'declined' ? 'declined' : 'not connected',
+    recurring_task: user.activation.recurring.status === 'none' ? 'none' : `${user.activation.recurring.title} (${user.activation.recurring.status})`,
+  };
 }
 
 /** Exactly what the memory is given now, or undefined when there's nothing new worth a call. */
@@ -79,6 +96,7 @@ export function memoryPrompt(state: SessionProjection, now = new Date()) {
         open_loops: openLoops.map((loop) => ({ id: loop.loopId, text: loop.text })),
       },
       new_lines: recentLines(fresh, NEW_LINES, 400),
+      for_the_next_call: nextCallContext(state, lines, now),
     },
   };
 }
@@ -140,6 +158,8 @@ export async function runMemory(deps: SubagentDeps, sessionId: string, state: Se
     const accepted = acceptSoulNote(state, 'memory', output.soul_note);
     if (accepted.ok) events.push({ id: `soul:memory:${run}`, at, type: 'soul_note', agent: 'memory', text: accepted.text, source: `memory:${run}` });
   }
+  const plan = output.next_call && { goal: cleanLine(output.next_call.goal, 200), opener: cleanLine(output.next_call.opener, 200) };
+  if (plan?.goal && plan.opener) events.push({ id: `call-plan:${run}`, at, type: 'call_plan', goal: plan.goal, opener: plan.opener.replace(/\s*[–—]+\s*/g, ', '), lines });
   events.push({ id: `memory-run:${run}`, at, type: 'memory_run', lines });
   return events;
 }

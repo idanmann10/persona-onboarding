@@ -62,6 +62,8 @@ export type SessionEvent =
   | { id: string; at: string; type: 'summary'; text: string; lines: number }
   /** How far the memory has read (conversation lines), so each run only reads what's new. */
   | { id: string; at: string; type: 'memory_run'; lines: number }
+  /** What the next call should aim at and its first line, planned by the memory after each exchange; `lines` is how far the conversation had got. */
+  | { id: string; at: string; type: 'call_plan'; goal: string; opener: string; lines: number }
   /**
    * What came of an app event that woke the assistant (a call ended, an account connected, a check-in came
    * due): it wrote a follow-up, or stayed quiet with a reason. `guard` is a code guardrail that decided
