@@ -35,7 +35,7 @@ export default function Home() {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
-  // Signed in = this session is the main session of a Gmail address Google verified when it was connected.
+  // The signed-in Google account (sign-in comes before chat; see proxy.ts).
   const [account, setAccount] = useState<{ email: string } | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
@@ -61,6 +61,7 @@ export default function Home() {
 
   const refresh = useCallback(async (): Promise<Snapshot | undefined> => {
     const response = await fetch('/api/session', { cache: 'no-store' });
+    if (response.status === 401) { window.location.replace('/sign-in'); return undefined; }
     if (!response.ok) throw new Error('The conversation could not be loaded. Check the database setup.');
     const snapshot = await response.json() as Snapshot;
     setTimeline(snapshot.timeline ?? timelineFromMessages(snapshot.messages));
@@ -310,7 +311,7 @@ export default function Home() {
   }
 
   /** Start over: clears the conversation and revokes connected accounts, then reloads a fresh chat. */
-  /** Sign out of this browser only: the main session and its accounts stay, and signing in with the same Gmail brings them back. */
+  /** Sign out of this browser only: the conversation and its accounts stay, and signing in with the same Google account brings them back. */
   async function signOut() {
     if (signingOut || callPhase !== 'idle') return;
     setSigningOut(true);
@@ -371,9 +372,7 @@ export default function Home() {
                       <span className="account-email">{account.email}</span>
                       <button type="button" className="pill" disabled={signingOut || onCall} onClick={() => void signOut()}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
                     </span>
-                  ) : (
-                    <button type="button" className="pill" title="Sign in with Google: connects Gmail (read-only) and brings back your conversation on any browser" disabled={Boolean(connecting) || deleting} onClick={() => { setError(''); void connect('gmail'); }}>{connecting === 'gmail' ? 'Signing in…' : 'Sign in'}</button>
-                  )}
+                  ) : null}
                   <button type="button" className="pill" disabled={busy || onCall} onClick={() => { setError(''); setConfirmDelete(true); }}>Start over</button>
                 </>
               )}

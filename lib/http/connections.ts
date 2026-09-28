@@ -1,12 +1,10 @@
-import { readSessionCookie } from './session';
-import { signInWithGmail } from '../auth/identity';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { fallbackAppName, isAppSlug, isBuiltinApp, listApps, type AppEntry, type BuiltinApp } from '../domain/apps';
 import type { SessionEvent } from '../domain/events';
 import { SNAPSHOT_APPS } from '../integrations/catalog';
 
-interface Store extends IpQuotaStore {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends IpQuotaStore, LoginStore {
   getActiveConnection(id: string, toolkit: string): Promise<string | undefined>;
   getConnectionAttempt(sessionId: string, attemptId: string): Promise<{ toolkit: string; status?: string } | undefined>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -47,10 +45,7 @@ export function callbackPage(appBaseUrl: string, toolkit: string | undefined, st
 }
 
 export function createConnectionHandlers(store: Store, service: Service, appBaseUrl: string, catalog?: Catalog) {
-  const ownedSession = async (request: Request) => {
-    const id = readSessionCookie(request);
-    return id && await store.sessionExists(id) ? id : undefined;
-  };
+  const ownedSession = (request: Request) => signedInSession(store, request);
   const bodyToolkit = async (request: Request): Promise<unknown> => {
     try { return ((await request.json()) as { toolkit?: unknown }).toolkit; } catch { return undefined; }
   };
@@ -197,9 +192,7 @@ export function createConnectionHandlers(store: Store, service: Service, appBase
       // ---- Success path: the account is connected; everything that reacts to it lives in onConnected. ----
       try { await onConnected(id, toolkit, attemptId); }
       catch (error) { console.error('Connection success follow-up failed', error); }
-      const page = callbackPage(appBaseUrl, toolkit, 'connected');
-      // A verified Gmail address makes this session the person's main session (never throws).
-      return toolkit === 'gmail' ? signInWithGmail(request, id, attemptId, page) : page;
+      return callbackPage(appBaseUrl, toolkit, 'connected');
     },
   };
 }

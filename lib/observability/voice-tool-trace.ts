@@ -1,4 +1,4 @@
-import { readSessionCookie } from '../http/session';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { clip, outputSummary, recordTrace, type TraceSink } from './trace';
 
 /**
@@ -6,13 +6,13 @@ import { clip, outputSummary, recordTrace, type TraceSink } from './trace';
  * which tool, its arguments, what came back and how long it took. Requests the handler refused
  * (wrong origin, unknown call) are not tool calls and are not recorded.
  */
-export function withVoiceToolTrace(store: Partial<TraceSink>, handler: (request: Request) => Promise<Response>) {
+export function withVoiceToolTrace(store: Partial<TraceSink> & LoginStore, handler: (request: Request) => Promise<Response>) {
   return async (request: Request): Promise<Response> => {
     if (!store.appendTrace) return handler(request);
     const body = await request.clone().json().catch(() => undefined) as Record<string, unknown> | undefined;
     const started = Date.now();
     const response = await handler(request);
-    const sessionId = readSessionCookie(request);
+    const sessionId = response.ok ? await signedInSession(store, request) : undefined;
     const callId = typeof body?.callId === 'string' ? body.callId : undefined;
     const name = typeof body?.name === 'string' ? body.name : undefined;
     if (!response.ok || !sessionId || !callId || !name) return response;

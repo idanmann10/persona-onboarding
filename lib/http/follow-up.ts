@@ -2,11 +2,10 @@ import type { SessionEvent } from '../domain/events';
 import { projectSession } from '../domain/project';
 import { describeTrigger, isSilent, type FollowUpRequest } from '../agent/follow-up';
 import type { TurnTrigger } from '../agent/turn';
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 
-interface Store extends IpQuotaStore {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends IpQuotaStore, LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   reserve(id: string, key: string): Promise<boolean>;
@@ -39,8 +38,8 @@ function recorded(history: SessionEvent[], trigger: TurnTrigger): Response | und
 export function createFollowUpHandler(store: Store, run: (history: SessionEvent[], sessionId: string, trigger: TurnTrigger) => Promise<string>) {
   return async (request: Request): Promise<Response> => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) return new Response('Session required', { status: 401 });
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) return new Response('Session required', { status: 401 });
     let body: unknown;
     try { body = await request.json(); } catch { return new Response('Invalid JSON', { status: 400 }); }
     const parsed = parseRequest(body);

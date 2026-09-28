@@ -1,13 +1,12 @@
 import type { SessionEvent } from '../domain/events';
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { projectSession } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { buildLiveSession } from '../voice/session-config';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { recordTrace, type TraceEntry, type TraceSink } from '../observability/trace';
 
-interface Store extends IpQuotaStore {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends IpQuotaStore, LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   acquireCallLease(id: string, leaseId: string): Promise<boolean>;
@@ -20,8 +19,8 @@ interface Store extends IpQuotaStore {
 export function createVoiceSessionHandler(store: Store, key: string, upstream: typeof fetch, env: Record<string, string | undefined> = {}) {
   return async (request: Request): Promise<Response> => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) return new Response('Session required', { status: 401 });
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) return new Response('Session required', { status: 401 });
     let body: unknown;
     try { body = await request.json(); } catch { return new Response('Invalid JSON', { status: 400 }); }
     const sdp = body && typeof body === 'object' && 'sdp' in body ? (body as { sdp: unknown }).sdp : undefined;

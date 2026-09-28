@@ -11,13 +11,13 @@ import { VOICE_LIMITS, voiceGreeting } from '../../lib/voice/session-config';
 import { createCallOfferHandler } from '../../lib/http/call-offer';
 import { createConnectionHandlers } from '../../lib/http/connections';
 import { createAutomationHandler } from '../../lib/http/automations';
-import { createMemoryStore } from '../app/memory-store';
+import { createMemoryStore, EVAL_LOGIN_TOKEN } from '../app/memory-store';
 import { createFixtureComposio, FIXTURE_VERSION, type FixtureRead } from '../app/fixtures';
 import type { Persona } from './personas';
 import type { LeaveFeeling, SimAction, SimControl, SimUser } from './user';
 import { pendingControls, renderCallScreen, renderScreen } from './screen';
 
-/** A UUID, because the app's endpoints reject any other session cookie. */
+/** The simulated person's conversation; the app's endpoints reach it through the harness's sign-in (EVAL_LOGIN_TOKEN). */
 export const SIM_SESSION = '5e551a70-51a0-4000-8000-000000000001';
 export const SIM_TIMEZONE = 'America/New_York';
 /** The harness ends a call after this many things the person said; the last reply gets the app's wrap-up instruction. */
@@ -162,7 +162,7 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 
 /** The replay's in-memory store, plus the automation methods the app's approve and decline endpoints use. */
 export function createSimStore(connected: Partial<Record<Toolkit, string>>) {
-  const base = createMemoryStore(connected);
+  const base = createMemoryStore(connected, SIM_SESSION);
   const find = (id: string) => base.automations.find((automation) => automation.id === id);
   return {
     ...base,
@@ -224,7 +224,7 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
   // The buttons go through the app's own endpoints, called the way the page calls them.
   const request = (path: string, method: string, body?: unknown) => new Request(`${ORIGIN}${path}`, {
     method,
-    headers: { origin: ORIGIN, cookie: `persona_session=${SIM_SESSION}`, 'content-type': 'application/json' },
+    headers: { origin: ORIGIN, cookie: `persona_auth=${EVAL_LOGIN_TOKEN}`, 'content-type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const notUsed = async (): Promise<never> => { throw new Error('OAuth is not simulated'); };
