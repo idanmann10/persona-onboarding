@@ -7,7 +7,10 @@ import type { StoredTrace, TraceEntry } from '../observability/trace';
 import type { SignedInUser } from '../auth/login';
 
 /** A Google user as the sign-in callback verified them. */
-export interface AccountProfile { sub: string; email: string; fullName?: string; givenName?: string; picture?: string; locale?: string }
+export interface AccountProfile { sub: string; email: string; emailVerified: true; fullName?: string; givenName?: string; picture?: string; locale?: string }
+
+/** An email + password account as stored. */
+export interface PasswordAccount { id: string; mainSessionId: string | null; email: string; passwordHash: string; fullName?: string; givenName?: string }
 
 /** The newest agent-log entries a session keeps on screen. */
 const TRACE_LIMIT = 2_000;
@@ -41,16 +44,44 @@ export function createStore(sql: ReturnType<typeof postgres>) {
       return { id: rows[0].id as string, mainSessionId: (rows[0].main_session_id as string | null) ?? null };
     },
     /**
-     * The account's main conversation. Without one, it takes over the conversation its verified email had
-     * under the retired Gmail sign-in, or else creates `newSessionId`. Locked, so two tabs agree on one.
+     * Creates an email + password account, unless the email already has a password account ('taken') or
+     * belongs to a Google account ('google'): accounts never merge by email.
      */
-    claimMainSession: async (accountId: string, email: string, newSessionId: string): Promise<{ id: string; created: boolean }> => sql.begin(async (tx) => {
+    createPasswordAccount: async (account: { email: string; passwordHash: string; fullName?: string; givenName?: string }): Promise<{ id: string } | 'google' | 'taken'> => sql.begin(async (tx) => {
+      const [existing] = await tx`SELECT google_sub IS NOT NULL AS google FROM persona_accounts WHERE email = ${account.email}
+        ORDER BY (google_sub IS NOT NULL) DESC LIMIT 1`;
+      if (existing) return existing.google ? 'google' : 'taken';
+      const rows = await tx`INSERT INTO persona_accounts (id, email, password_hash, full_name, given_name)
+        VALUES (${crypto.randomUUID()}, ${account.email}, ${account.passwordHash}, ${account.fullName ?? null}, ${account.givenName ?? null})
+        ON CONFLICT (email) WHERE google_sub IS NULL DO NOTHING RETURNING id`;
+      return rows[0] ? { id: rows[0].id as string } : 'taken';
+    }),
+    /** The email + password account for an email, if there is one. */
+    findPasswordAccount: async (email: string): Promise<PasswordAccount | undefined> => {
+      const [row] = await sql`SELECT id, main_session_id, email, password_hash, full_name, given_name FROM persona_accounts
+        WHERE email = ${email} AND google_sub IS NULL AND password_hash IS NOT NULL LIMIT 1`;
+      if (!row) return undefined;
+      return {
+        id: row.id as string, mainSessionId: (row.main_session_id as string | null) ?? null, email: row.email as string, passwordHash: row.password_hash as string,
+        ...(row.full_name ? { fullName: row.full_name as string } : {}), ...(row.given_name ? { givenName: row.given_name as string } : {}),
+      };
+    },
+    /** Notes a password sign-in on the account. */
+    touchAccount: async (accountId: string): Promise<void> => {
+      await sql`UPDATE persona_accounts SET signed_in_at = now() WHERE id = ${accountId}`;
+    },
+    /**
+     * The account's main conversation. Without one, it takes over the conversation `verifiedEmail` had under
+     * the retired Gmail sign-in (Google accounts only), or else creates `newSessionId`. Locked, so two tabs
+     * agree on one.
+     */
+    claimMainSession: async (accountId: string, verifiedEmail: string | undefined, newSessionId: string): Promise<{ id: string; created: boolean }> => sql.begin(async (tx) => {
       const [account] = await tx`SELECT main_session_id FROM persona_accounts WHERE id = ${accountId} FOR UPDATE`;
       if (!account) throw new Error('Unknown account');
       if (account.main_session_id) return { id: account.main_session_id as string, created: false };
-      const [legacy] = await tx`DELETE FROM persona_users WHERE email = ${email}
+      const [legacy] = verifiedEmail ? await tx`DELETE FROM persona_users WHERE email = ${verifiedEmail}
         AND NOT EXISTS (SELECT 1 FROM persona_accounts WHERE main_session_id = persona_users.main_session_id)
-        RETURNING main_session_id`;
+        RETURNING main_session_id` : [];
       const id = (legacy?.main_session_id as string | undefined) ?? newSessionId;
       if (!legacy) await tx`INSERT INTO persona_sessions (id) VALUES (${id})`;
       await tx`UPDATE persona_accounts SET main_session_id = ${id} WHERE id = ${accountId}`;
@@ -63,7 +94,7 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     },
     /** The signed-in user behind an unexpired login. */
     findLogin: async (tokenHash: string): Promise<SignedInUser | undefined> => {
-      const rows = await sql`SELECT a.id, a.main_session_id, a.email, a.full_name, a.given_name, a.picture, a.locale
+      const rows = await sql`SELECT a.id, a.main_session_id, a.email, a.google_sub IS NOT NULL AS email_verified, a.full_name, a.given_name, a.picture, a.locale
         FROM persona_logins l JOIN persona_accounts a ON a.id = l.account_id
         WHERE l.token_hash = ${tokenHash} AND l.expires_at > now() LIMIT 1`;
       const row = rows[0];
@@ -71,7 +102,7 @@ export function createStore(sql: ReturnType<typeof postgres>) {
       const optional = (key: string, value: unknown) => (typeof value === 'string' && value ? { [key]: value } : {});
       return {
         accountId: row.id as string, sessionId: (row.main_session_id as string | null) ?? null, email: row.email as string,
-        ...optional('fullName', row.full_name), ...optional('givenName', row.given_name), ...optional('picture', row.picture), ...optional('locale', row.locale),
+        emailVerified: row.email_verified === true, ...optional('fullName', row.full_name), ...optional('givenName', row.given_name), ...optional('picture', row.picture), ...optional('locale', row.locale),
       };
     },
     /** Signs one browser out. */

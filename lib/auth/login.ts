@@ -8,14 +8,16 @@ import { recordFacts, locationFacts, profileFacts, type FactStore } from './prof
 /**
  * Who is signed in. A signed-in browser holds a random token (the persona_auth cookie); the server
  * keeps only its SHA-256, so a database read cannot be replayed as a login, and signing out deletes it.
- * One Google account is one user with one main conversation: every browser it signs in on opens the
- * same one, and "Start over" swaps it for a fresh one.
+ * One account (Google, or email + password) is one user with one main conversation: every browser it
+ * signs in on opens the same one, and "Start over" swaps it for a fresh one.
  */
 export interface SignedInUser {
   accountId: string;
   /** The user's main conversation, or null after "Start over" until the next page load opens a new one. */
   sessionId: string | null;
   email: string;
+  /** True for Google accounts; a password account's email was only typed, never proven. */
+  emailVerified: boolean;
   fullName?: string;
   givenName?: string;
   picture?: string;
@@ -54,10 +56,10 @@ export async function signedInSession(store: LoginStore, request: Request): Prom
 
 export interface MainSessionStore extends IpQuotaStore, FactStore {
   /**
-   * The account's main conversation. When it has none, it takes over the conversation its verified email
-   * had under the retired Gmail sign-in, or else `newSessionId` is created for it.
+   * The account's main conversation. When it has none, it takes over the conversation `verifiedEmail` had
+   * under the retired Gmail sign-in (Google accounts only), or else `newSessionId` is created for it.
    */
-  claimMainSession(accountId: string, email: string, newSessionId: string): Promise<{ id: string; created: boolean }>;
+  claimMainSession(accountId: string, verifiedEmail: string | undefined, newSessionId: string): Promise<{ id: string; created: boolean }>;
 }
 
 /**
@@ -67,7 +69,7 @@ export interface MainSessionStore extends IpQuotaStore, FactStore {
 export async function openMainSession(store: MainSessionStore, user: SignedInUser, request: Request): Promise<{ id: string; created: boolean; events: SessionEvent[] } | 'limited'> {
   if (user.sessionId) return { id: user.sessionId, created: false, events: await store.readEvents(user.sessionId) };
   if (!(await withinIpLimit(store, request, 'session'))) return 'limited';
-  const session = await store.claimMainSession(user.accountId, user.email, crypto.randomUUID());
+  const session = await store.claimMainSession(user.accountId, user.emailVerified ? user.email : undefined, crypto.randomUUID());
   if (session.created) await store.appendEvent(session.id, greetingEvent());
   let events = await store.readEvents(session.id);
   if (await recordFacts(store, session.id, [...profileFacts(user), ...locationFacts(request)], events, 'signin:profile')) events = await store.readEvents(session.id);

@@ -1,18 +1,19 @@
-/* Sign-in: one calm column on the white canvas, the brand mark on a glass tile, one Google button. */
+/* Sign-in: one calm column on the white canvas, the brand mark on a glass tile, Google first, then email. */
 .signin {
   position: relative;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: calc(40px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+  padding: calc(40px + env(safe-area-inset-top)) 24px calc(18px + env(safe-area-inset-bottom));
+  /* clip, not hidden: nothing (a focus, a scrollIntoView) can scroll the column sideways. */
   overflow: hidden;
+  overflow: clip;
   background: var(--canvas);
 }
 .signin-glow {
   position: absolute;
-  inset: -12% -20% auto;
+  inset: -12% 0 auto;
   height: 75%;
   pointer-events: none;
   background:
@@ -23,6 +24,7 @@
 .signin-panel {
   position: relative;
   width: min(100%, 380px);
+  margin-block: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -82,9 +84,51 @@
 .google-button:active:not(:disabled) { transform: scale(.985); }
 .google-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .google-mark { width: 20px; height: 20px; flex: none; }
+
+/* "or", then email + password: iOS-style fields and one primary button. */
+.signin-or { display: flex; align-items: center; gap: 12px; width: 100%; margin: 20px 0 16px; color: var(--grey); font-size: 12px; font-weight: 500; }
+.signin-or::before, .signin-or::after { content: ""; flex: 1; height: 1px; background: #e3e3e8; }
+.password-form { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.signin-field {
+  width: 100%;
+  height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: #fff;
+  font-size: 16px;
+  letter-spacing: -.01em;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.signin-field::placeholder { color: var(--grey); }
+.signin-field:focus { border-color: var(--blue); box-shadow: 0 0 0 4px rgba(10, 132, 255, .16); }
+.signin-field:focus-visible { outline: none; }
+.signin-field[aria-invalid="true"] { border-color: var(--red); }
+.signin-field[aria-invalid="true"]:focus { box-shadow: 0 0 0 4px rgba(255, 59, 48, .14); }
+.signin-field:disabled { opacity: .6; }
+.signin-error.inline { margin: 2px 0 0; text-align: left; }
+.signin-submit {
+  height: 48px;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(10, 132, 255, .25), 0 6px 18px rgba(10, 132, 255, .18);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  transition: background .15s ease, transform .1s ease;
+}
+.signin-submit:hover:not(:disabled) { background: var(--blue-press); }
+.signin-submit:active:not(:disabled) { transform: scale(.985); }
+.signin-submit:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.signin-switch { margin: 6px 0 0; color: var(--ink-mute); font-size: 13px; }
+.signin-switch .text-button { font-size: 13px; }
 .signin-note {
   max-width: 300px;
-  margin: 14px 0 0;
+  margin: 18px 0 0;
   color: var(--grey);
   font-size: 12px;
   line-height: 1.45;
@@ -93,10 +137,8 @@
 .signin-test { margin-top: 18px; color: var(--blue); font-size: 13px; font-weight: 500; text-decoration: none; }
 .signin-test:hover { text-decoration: underline; }
 .signin-footer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: calc(18px + env(safe-area-inset-bottom));
+  position: relative;
+  margin-top: 28px;
   display: flex;
   justify-content: center;
   gap: 8px;
@@ -109,7 +151,9 @@
 @keyframes signin-in { from { opacity: 0; transform: translateY(10px); } }
 
 @media (max-width: 420px) {
-  .signin { justify-content: flex-start; padding-top: calc(18vh + env(safe-area-inset-top)); }
+  .signin { padding-top: calc(28px + env(safe-area-inset-top)); }
+  .signin-panel h1 { margin-top: 8px; }
+  .google-button { margin-top: 24px; }
   .signin-tile { width: 68px; height: 68px; border-radius: 20px; }
   .signin-mark { width: 34px; height: 34px; }
   .signin-panel h1 { font-size: 27px; }
