@@ -30,7 +30,7 @@ export interface AccountReadClient {
   executeRead: (slug: 'GOOGLECALENDAR_EVENTS_LIST' | 'GMAIL_FETCH_EMAILS', accountId: string, userId: string, args: Record<string, unknown>) => Promise<unknown>;
 }
 
-/** Records a successful read and how much it found (the funnel's "saw something real" signal). */
+/** Records a successful read and how much it found (what "saw something real" means for the first win). */
 export type ReadRecorder = (toolkit: Toolkit, items: number) => Promise<void>;
 
 async function recorded(record: ReadRecorder | undefined, toolkit: Toolkit, items: unknown) {

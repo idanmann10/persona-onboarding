@@ -22,10 +22,10 @@
 - **One assistant, text and voice.** A single conversation that moves between chat and a browser call without losing its place. Calls run on [GPT-Live](https://developers.openai.com/api/docs/guides/live-conversations) over WebRTC with the same personality, memory and tools as the chat.
 - **Onboarding without a form.** For the first 7 days, or until the first recurring task is on, an onboarding prompt sits on top of the main one. It steers toward the next open goal, but anything you ask for comes first, and "just let me in" ends the questions.
 - **A personal first message.** The assistant writes its own hello from what sign-in told it. With a Google-verified email it looks you up once with [Exa](https://exa.ai) and only uses a match that is clearly you.
-- **Real Gmail and Calendar, read-only.** Accounts connect through [Composio](https://composio.dev)'s managed OAuth. The first result comes from your own inbox, then becomes a recurring task (daily, weekdays or weekly) that runs on a schedule and posts in the chat.
+- **Real Gmail and Calendar, read-only.** Accounts connect through [Composio](https://composio.dev)'s managed OAuth. The first result comes from your own inbox, then becomes a recurring task (daily, weekdays or weekly) that runs on a schedule and posts in the chat. Once it's on, its card folds to one line.
 - **It follows up.** When something happens (a call drops mid-sentence, Gmail connects, a task runs, you come back), the assistant wakes up and decides whether a message is worth sending.
 - **Memory.** Typed, labeled memories with their source, a pinned profile, recall ranked for the current turn, corrections and "forget that", and a rolling summary once the conversation gets long.
-- **Make it yours.** Name it anything. Tap its portrait to pick one of 15 looks, paint a new one from a description, or choose any of the 22 GPT-Live voices. Until you choose, it picks a voice that fits its name and look.
+- **Make it yours.** Name it anything. Tap its portrait to pick one of 15 looks, paint a new one from a description, or listen to and choose any of the 22 GPT-Live voices. Until you choose, it picks a voice that fits its name and look, and it changes its voice when you ask.
 - **An agent log.** Every turn is traced: what woke the assistant, each model step and tool call with timing and tokens, memory writes, the context budget and the exact prompt.
 
 <table>

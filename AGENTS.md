@@ -16,6 +16,7 @@ Instructions for coding agents working in this repository. Start with [README.md
 - Tools: one file per tool in `lib/agent/tools/`, with its schema, description, server gate and action. Chat and calls share them; don't fork a tool per channel.
 - State: every change is an event in `lib/domain/events.ts`, projected in `lib/domain/project.ts` and `lib/domain/user-state.ts`. The log is append-only; never update or delete events to change state.
 - Call behaviour: `lib/voice/session-config.ts` (instructions, goals, seeded context) and `lib/voice/client.ts` (the browser side).
+- Call voices: `VOICES` in `lib/domain/persona.ts`. When the list changes, record the picker's samples with `bun scripts/record-voice-samples.ts`.
 
 ## Rules
 

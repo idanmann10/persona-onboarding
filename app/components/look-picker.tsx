@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react';
 import { AVATARS, DEFAULT_AVATAR, DEFAULT_LOOK, VOICES, avatarUrl, type PersonaSettings, type VoiceId } from '@/lib/domain/persona';
 import { Avatar } from './avatar';
-import { CheckIcon, CloseIcon, PaintIcon } from './icons';
+import { CheckIcon, CloseIcon, PaintIcon, PauseIcon, PlayIcon } from './icons';
 
 type Look = { id: string; label: string; url: string };
 
@@ -51,6 +51,8 @@ export function LookPicker({ name, current, painted, voice, onSaved, onClose }: 
   const [error, setError] = useState('');
   const [selectedVoice, setSelectedVoice] = useState(voice);
   const [savingVoice, setSavingVoice] = useState<string | null>(null);
+  const [playing, setPlaying] = useState<string | null>(null);
+  const player = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -66,6 +68,19 @@ export function LookPicker({ name, current, painted, voice, onSaved, onClose }: 
   useEffect(() => { setSelected(current); }, [current]);
   // A voice that follows the look changes with it.
   useEffect(() => { setSelectedVoice(voice); }, [voice]);
+  // The sample stops with the picker.
+  useEffect(() => () => { player.current?.pause(); }, []);
+
+  /** Plays a voice's sample (recorded from GPT-Live by scripts/record-voice-samples.ts); again stops it. */
+  function listen(id: VoiceId, toggle = true) {
+    const audio = player.current ??= new Audio();
+    audio.pause();
+    if (toggle && playing === id) { setPlaying(null); return; }
+    audio.src = `/voices/${id}.m4a`;
+    audio.onended = () => setPlaying(null);
+    setPlaying(id);
+    audio.play().catch(() => setPlaying(null));
+  }
 
   const yours: Look[] = [...new Set([...(current.startsWith('img:') ? [current] : []), ...painted])]
     .map((id) => ({ id, label: 'Painted', url: avatarUrl(id) }));
@@ -94,6 +109,7 @@ export function LookPicker({ name, current, painted, voice, onSaved, onClose }: 
   }
 
   async function pickVoice(id: VoiceId) {
+    listen(id, false);
     if (savingVoice || id === selectedVoice) return;
     const previous = selectedVoice;
     setSelectedVoice(id);
@@ -191,7 +207,7 @@ export function LookPicker({ name, current, painted, voice, onSaved, onClose }: 
           <section className="look-voices" aria-labelledby="voice-title">
             <div className="look-voices-head">
               <h3 id="voice-title">Call voice</h3>
-              <small>Used from the next call.</small>
+              <small>Tap to hear it. Used from the next call.</small>
             </div>
             <ul className="voice-grid" aria-label="Call voices">
               {(Object.keys(VOICES) as VoiceId[]).map((id) => {
@@ -205,6 +221,9 @@ export function LookPicker({ name, current, painted, voice, onSaved, onClose }: 
                         <small>{voiceSounds(id)}</small>
                       </span>
                       {active ? <span className="voice-check" aria-hidden="true">{savingVoice === id ? <span className="look-spinner" /> : <CheckIcon width={11} height={11} />}</span> : null}
+                    </button>
+                    <button type="button" className="voice-play" aria-label={`${playing === id ? 'Stop' : 'Play'} ${VOICES[id].label}`} onClick={() => listen(id)}>
+                      {playing === id ? <PauseIcon width={13} height={13} /> : <PlayIcon width={13} height={13} />}
                     </button>
                   </li>
                 );
