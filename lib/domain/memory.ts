@@ -219,7 +219,8 @@ export function acceptMemory(state: SessionProjection, draft: MemoryDraft, optio
   const live = liveMemories(state);
   const explicit = (draft.replaces ?? []).filter((id) => live.some((memory) => memory.memoryId === id));
   const same = live.find((memory) => normalize(memory.text) === normalize(text));
-  if (same && !explicit.length) return { ok: false, reason: 'duplicate', existing: same.memoryId };
+  // Saying the same line again, even as a "replacement" of itself, changes nothing.
+  if (same && explicit.every((id) => id === same.memoryId)) return { ok: false, reason: 'duplicate', existing: same.memoryId };
   const near = live.filter((memory) => !explicit.includes(memory.memoryId) && memory.kind === draft.kind && overlap(memory.text, text) >= SAME_THING).map((memory) => memory.memoryId);
   const replaces = [...new Set([...explicit, ...near])];
   const labels = normalizeLabels([...draft.labels, ...replaces.flatMap((id) => live.find((memory) => memory.memoryId === id)?.labels ?? [])]);
