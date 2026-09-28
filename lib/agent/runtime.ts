@@ -3,6 +3,8 @@ import { openai } from '@ai-sdk/openai';
 import type { PreparedTurn, TurnDependencies } from './turn';
 import { createComposioClient } from '../integrations/composio';
 import { resolveIdentityClaim } from '../research/service';
+import { lookupPersonCandidate } from '../research/people';
+import { researchMatchedPerson } from '../research/answers';
 import { isTraceSink, type TraceStatus } from '../observability/trace';
 import { turnTracer } from '../observability/turn-trace';
 
@@ -16,8 +18,12 @@ export function turnDependencies(store: TurnDependencies['store'] & ResearchStor
     env,
     ...(isTraceSink(store) ? { trace: store } : {}),
     composio: env.COMPOSIO_API_KEY ? createComposioClient(env.COMPOSIO_API_KEY) : undefined,
-    resolveIdentity: env.CONTEXT_DEV_API_KEY
-      ? (sessionId, userEvent, clue) => resolveIdentityClaim(store, sessionId, userEvent, clue, env.CONTEXT_DEV_API_KEY!)
+    // Exa finds the person; Context.dev (optional) researches a confident match.
+    resolveIdentity: env.EXA_API_KEY
+      ? (sessionId, userEvent, clue) => resolveIdentityClaim(store, sessionId, userEvent, clue, {
+        lookup: (person) => lookupPersonCandidate(person, env.EXA_API_KEY!),
+        research: async (candidate) => env.CONTEXT_DEV_API_KEY ? researchMatchedPerson(candidate, env.CONTEXT_DEV_API_KEY) : null,
+      })
       : undefined,
   };
 }
