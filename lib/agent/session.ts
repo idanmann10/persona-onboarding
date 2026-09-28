@@ -1,19 +1,15 @@
 import type { SessionEvent } from '../domain/events';
-import { projectSession, type SessionProjection } from '../domain/project';
+import type { SessionProjection } from '../domain/project';
 import { localClock, userTimeZone } from '../domain/user-state';
-
-interface Store {
-  appendEvent(id: string, event: SessionEvent): Promise<void>;
-}
 
 export const GREETING_ID = 'greeting:v3';
 
 const GIVEN_NAME = /^[\p{L}][\p{L}' -]{0,29}$/u;
 
 /**
- * The first message, from state and not a model call, so it's instant. Calm, per the soul's onboarding
- * tone: hello by first name when Google gave us one, one line on what it's for, then the one ask that
- * belongs to the chat, a name for the assistant, with an easy way to skip straight to their task.
+ * The short first message used only when the assistant can't write its own (no model, or it failed; see
+ * lib/agent/first-message.ts), and by the eval harness's fixtures. Calm, per the soul's onboarding tone:
+ * hello by first name, one line on what it's for, then the one ask that belongs to the chat.
  */
 export function greetingText(state: SessionProjection, now = new Date()): string {
   const given = state.facts.user_given_name?.value?.trim();
@@ -30,12 +26,4 @@ export function greetingText(state: SessionProjection, now = new Date()): string
 
 export function greetingEvent(state: SessionProjection, at = new Date()): SessionEvent {
   return { id: GREETING_ID, at: at.toISOString(), type: 'message', speaker: 'assistant', channel: 'text', text: greetingText(state, at), origin: 'greeting' };
-}
-
-/** Writes the greeting into a conversation that has no messages yet (sign-in records its facts first). */
-export async function ensureGreeting(store: Store, id: string, events: SessionEvent[]): Promise<SessionEvent[]> {
-  if (events.some((event) => event.type === 'message')) return events;
-  const greeting = greetingEvent(projectSession(events));
-  await store.appendEvent(id, greeting);
-  return [...events, greeting];
 }

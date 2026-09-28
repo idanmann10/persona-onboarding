@@ -30,6 +30,8 @@ export default function Home() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [progress, setProgress] = useState<OnboardingProgress | null>(null);
   const [draft, setDraft] = useState<{ user: Message; assistant: Message } | null>(null);
+  // The assistant's first message while it streams in (a new conversation starts empty; see openConversation).
+  const [opener, setOpener] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -73,11 +75,37 @@ export default function Home() {
   // Follow-ups are decided and written on the server; the page watches for them (see use-follow-ups.ts).
   const { writing, expect: expectFollowUp } = useFollowUps(refresh, sending || loading);
 
+  /** A new conversation has no messages yet: the assistant writes its first one, streamed like a reply. */
+  const openConversation = useCallback(async () => {
+    setSending(true);
+    setOpener('');
+    try {
+      const response = await post('/api/agent/greeting', {});
+      // 'exists' or 'pending' (another tab is writing it) come back as JSON; the poll picks it up.
+      if (response.ok && response.body && !response.headers.get('content-type')?.includes('application/json')) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let text = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          setOpener(text);
+        }
+      }
+      await refresh();
+    } catch { /* the poll catches up */ } finally {
+      setOpener(null);
+      setSending(false);
+    }
+  }, [refresh]);
+
   useEffect(() => {
     let active = true;
     refresh()
       .then(async (snapshot) => {
         if (!active || !snapshot) return;
+        if (!snapshot.messages.length) { setLoading(false); await openConversation(); }
         if (snapshot.automationDue) {
           setThinking(true);
           const response = await post('/api/automations', { action: 'run_due' }).catch(() => undefined);
@@ -88,7 +116,7 @@ export default function Home() {
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'The conversation could not be loaded.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [refresh]);
+  }, [refresh, openConversation]);
 
   // Once the session exists, and after every connection change, warm the Apps sheet so it opens instantly.
   useEffect(() => { if (!loading) prefetchApps(appsVersion); }, [loading, appsVersion]);
@@ -98,7 +126,7 @@ export default function Home() {
     if (loading) return;
     endRef.current?.scrollIntoView({ behavior: scrolledOnce.current ? 'smooth' : 'auto', block: 'end' });
     scrolledOnce.current = true;
-  }, [timeline, draft, thinking, writing, loading]);
+  }, [timeline, draft, opener, thinking, writing, loading]);
 
   useEffect(() => {
     if (callPhase !== 'active') return;
@@ -339,7 +367,7 @@ export default function Home() {
   const onCall = callPhase !== 'idle';
   const busy = sending || loading || deleting;
   const face: Face = { name: assistantName, avatarUrl };
-  const typing = (thinking || writing) && !draft;
+  const typing = (thinking || writing) && !draft && opener === null;
   const groupEnds = assistantGroupEnds(timeline, typing);
   const callLabel = callPhase === 'active' ? 'Hang up' : callPhase === 'connecting' ? 'Connecting…' : callPhase === 'ending' ? 'Ending…' : 'Call';
   const subtitle = callPhase === 'active' ? `On a call · ${duration(callStartedAt)}` : assistantName === 'Persona' ? 'Your new assistant' : 'Your Persona assistant';
@@ -392,6 +420,7 @@ export default function Home() {
               onAnswer={() => void startCall()} onDeclineCall={() => void declineCall()} onConnect={(toolkit) => void connect(toolkit)} onDeclineConnection={(toolkit) => void declineConnection(toolkit)} onAutomation={(action, id) => void automation(action, id)} />
           ))}
           {draft ? <><Bubble speaker="user" text={draft.user.text} /><Bubble speaker="assistant" text={draft.assistant.text} pending face={face} typingLabel={`${assistantName} is typing`} /></> : null}
+          {opener !== null ? <Bubble speaker="assistant" text={opener} pending face={face} typingLabel={`${assistantName} is typing`} /> : null}
           {typing ? <Bubble speaker="assistant" text="" face={face} typingLabel={`${assistantName} is typing`} /> : null}
           <div className="thread-end" ref={endRef} />
         </div>

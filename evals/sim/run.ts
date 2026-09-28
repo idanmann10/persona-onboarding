@@ -6,7 +6,7 @@ import { prepareTurn, type TurnTrigger } from '../../lib/agent/turn';
 import { afterTurn } from '../../lib/agent/follow-ups';
 import { generateTurnResult } from '../../lib/agent/runtime';
 import { PROMPT_VERSION } from '../../lib/agent/prompts';
-import { greetingEvent } from '../../lib/agent/session';
+import { writeFirstMessage } from '../../lib/agent/first-message';
 import { VOICE_LIMITS, voiceGreeting } from '../../lib/voice/session-config';
 import { createCallOfferHandler } from '../../lib/http/call-offer';
 import { createConnectionHandlers } from '../../lib/http/connections';
@@ -408,7 +408,8 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
 
   let errorSource: SimTrace['errorSource'];
   try {
-    await append(greetingEvent(projectSession([]), now()));
+    // The assistant writes its own first message, as the app does when a conversation opens.
+    await writeFirstMessage(deps, SIM_SESSION);
     for (let index = 0; index < maxActions; index++) {
       const state = await project();
       const onCall = Boolean(live);

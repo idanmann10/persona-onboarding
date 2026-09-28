@@ -6,7 +6,7 @@ import { prepareTurn } from '../../lib/agent/turn';
 import { afterTurn, reconcile } from '../../lib/agent/follow-ups';
 import { generateTurnResult } from '../../lib/agent/runtime';
 import { PROMPT_VERSION } from '../../lib/agent/prompts';
-import { greetingEvent } from '../../lib/agent/session';
+import { writeFirstMessage } from '../../lib/agent/first-message';
 import type { TraceEntry } from '../../lib/observability/trace';
 import { createMemoryStore } from './memory-store';
 import { createFixtureComposio, FIXTURE_VERSION, type FixtureRead } from './fixtures';
@@ -126,7 +126,8 @@ export async function replayScenario(scenario: Scenario, options: ReplayOptions)
   const steps: StepTrace[] = [];
   // Start where a real session starts: the opening message is on screen, and accounts connected
   // before the scenario have the event the app records when a connection completes.
-  await store.appendEvent(SESSION, greetingEvent(projectSession([]), now()));
+  // The assistant writes its own first message, as the app does when a conversation opens.
+  await writeFirstMessage(deps, SESSION);
   for (const name of scenario.setup.connected) {
     await store.appendEvent(SESSION, { id: `connection:${name}:setup:connected`, at: now().toISOString(), type: 'connection', toolkit: name, phase: 'connected' });
   }

@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { SessionEvent } from '../domain/events';
-import { ensureGreeting } from '../agent/session';
 import { withinIpLimit, type IpQuotaStore } from '../http/client-key';
 import { AUTH_COOKIE, readCookie } from './cookie';
 import { recordFacts, locationFacts, profileFacts, type FactStore } from './profile';
@@ -72,7 +71,6 @@ export async function openMainSession(store: MainSessionStore, user: SignedInUse
   const session = await store.claimMainSession(user.accountId, user.emailVerified ? user.email : undefined, crypto.randomUUID());
   let events = await store.readEvents(session.id);
   if (await recordFacts(store, session.id, [...profileFacts(user), ...locationFacts(request)], events, 'signin:profile')) events = await store.readEvents(session.id);
-  // The greeting comes after the facts, so it can say hello by first name in their local time of day.
-  events = await ensureGreeting(store, session.id, events);
+  // No greeting here: the assistant writes its own first message from these facts (POST /api/agent/greeting).
   return { ...session, events };
 }
