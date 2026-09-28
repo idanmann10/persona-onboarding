@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SessionEvent } from '../domain/events';
 import { projectSession } from '../domain/project';
-import { DEFAULT_AVATAR, isAvatarId, personaSettings, storedAvatar } from '../domain/persona';
+import { DEFAULT_AVATAR, isAvatarId, isVoiceId, personaSettings, storedAvatar } from '../domain/persona';
 import type { AvatarFailure, AvatarResult } from '../avatars/generate';
 import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
@@ -26,9 +26,10 @@ const UNSAFE = /[\u0000-\u001f\u007f]|https?:\/\/|www\.|\b[\w-]+\.(?:com|net|org
 const PAINTED = /^img:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const clean = (value: string) => value.replace(/\s+/g, ' ').trim();
 
-/** A stock look (or `default`), a portrait painted earlier for this conversation, or a description to paint. */
+/** A stock look (or `default`), a portrait painted earlier for this conversation, a description to paint, or a call voice. */
 export const personaInput = z.union([
   z.object({ avatar: z.string().refine((value) => value === DEFAULT_AVATAR || isAvatarId(value) || PAINTED.test(value)) }).strict(),
+  z.object({ voice: z.string().refine(isVoiceId) }).strict(),
   z.object({ paint: z.string().transform(clean).pipe(z.string().min(3).max(DESCRIPTION_LIMIT).refine((value) => !UNSAFE.test(value))) }).strict(),
 ]);
 
@@ -42,9 +43,10 @@ const PAINT_FAILED: Record<AvatarFailure['error'], [number, string]> = {
 };
 
 /**
- * The look picker in the header. Picking a stock portrait, or painting one from a description, saves the
- * same `avatar` fact the customize tool saves when the user asks in the chat, so the next reply, the next
- * call and the thread (a "New look" line) all follow it.
+ * The look picker in the header. Picking a stock portrait, painting one from a description, or picking a call
+ * voice saves the same `avatar` or `voice` fact the customize tool saves when the user asks in the chat, so
+ * the next reply, the next call and the thread (a "New look" or "Call voice" line) all follow it. A voice
+ * picked here is theirs: the assistant no longer matches its voice to a new look on its own.
  */
 export function createPersonaHandler(store: Store, deps: PersonaDependencies = {}) {
   return async (request: Request): Promise<Response> => {
@@ -55,19 +57,26 @@ export function createPersonaHandler(store: Store, deps: PersonaDependencies = {
     try { body = await request.json(); } catch { return new Response('Invalid JSON', { status: 400 }); }
     const parsed = personaInput.safeParse(body);
     if (!parsed.success) {
-      const paint = typeof body === 'object' && body !== null && 'paint' in body;
-      return new Response(paint ? `Describe the look in ${DESCRIPTION_LIMIT} characters or fewer, without links.` : 'Unknown look', { status: 400 });
+      const field = typeof body === 'object' && body !== null ? ('paint' in body ? 'paint' : 'voice' in body ? 'voice' : 'avatar') : 'avatar';
+      return new Response(field === 'paint' ? `Describe the look in ${DESCRIPTION_LIMIT} characters or fewer, without links.` : field === 'voice' ? 'Unknown voice' : 'Unknown look', { status: 400 });
     }
     const input = parsed.data;
     if (!(await withinIpLimit(store, request, 'paint' in input ? 'paint' : 'look'))) return new Response('Too many changes right now. Please try again later.', { status: 429 });
 
     const state = projectSession(await store.readEvents(sessionId));
+    const unchanged = () => Response.json({ settings: personaSettings(state, deps.env?.OPENAI_VOICE), changed: false }, { headers: { 'Cache-Control': 'no-store' } });
+    let key: 'avatar' | 'voice' = 'avatar';
     let value: string;
-    if ('avatar' in input) {
+    if ('voice' in input) {
+      // Already the call voice, whether they chose it or it came with the look.
+      if (personaSettings(state, deps.env?.OPENAI_VOICE).voice === input.voice) return unchanged();
+      key = 'voice';
+      value = input.voice;
+    } else if ('avatar' in input) {
       value = input.avatar.toLowerCase();
       // Going back to an earlier painting: only one painted for this conversation.
       if (value.startsWith('img:') && !(await store.getAvatar(value.slice(4), sessionId))) return new Response('Unknown look', { status: 404 });
-      if (storedAvatar(state.facts.avatar?.value) === value) return Response.json({ settings: personaSettings(state, deps.env?.OPENAI_VOICE), changed: false }, { headers: { 'Cache-Control': 'no-store' } });
+      if (storedAvatar(state.facts.avatar?.value) === value) return unchanged();
     } else {
       if (!deps.paint) return new Response(PAINT_FAILED.not_configured[1], { status: 503 });
       const saved = state.onboarding.assistantName;
@@ -86,7 +95,7 @@ export function createPersonaHandler(store: Store, deps: PersonaDependencies = {
     // A `settings:` source is what gives the change its line in the thread (see projectSession).
     const change = crypto.randomUUID();
     await store.appendEvent(sessionId, {
-      id: `settings:avatar:${change}`, at: new Date().toISOString(), type: 'fact', key: 'avatar', value,
+      id: `settings:${key}:${change}`, at: new Date().toISOString(), type: 'fact', key, value,
       evidence: 'confirmed', provenance: 'user_confirmed', sourceEventId: `settings:${change}`,
     });
     const updated = projectSession(await store.readEvents(sessionId));

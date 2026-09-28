@@ -48,6 +48,7 @@ export default function Home() {
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   // The saved look behind avatarUrl (a stock id, `default` or `img:<uuid>`), for the look picker.
   const [look, setLook] = useState('default');
+  const [callVoice, setCallVoice] = useState('marin');
   const [lookOpen, setLookOpen] = useState(false);
   // The signed-in account (sign-in comes before chat; see proxy.ts).
   const [account, setAccount] = useState<Account | null>(null);
@@ -78,7 +79,7 @@ export default function Home() {
     const snapshot = await response.json() as Snapshot;
     setTimeline(snapshot.timeline ?? timelineFromMessages(snapshot.messages));
     if (snapshot.progress) setProgress(snapshot.progress);
-    if (snapshot.settings) { setAvatarUrl(snapshot.settings.avatarUrl || undefined); setLook(snapshot.settings.avatar); }
+    if (snapshot.settings) { setAvatarUrl(snapshot.settings.avatarUrl || undefined); setLook(snapshot.settings.avatar); setCallVoice(snapshot.settings.voice); }
     setAccount(snapshot.account ?? null);
     return snapshot;
   }, []);
@@ -384,10 +385,11 @@ export default function Home() {
     lookButtonRef.current?.focus();
   }
 
-  /** A look saved from the picker: show it now, then reload so its "New look" line joins the thread. */
+  /** A look or voice saved from the picker: show it now, then reload so its line joins the thread. */
   function lookSaved(settings: PersonaSettings) {
     setAvatarUrl(settings.avatarUrl || undefined);
     setLook(settings.avatar);
+    setCallVoice(settings.voice);
     void refresh().catch(() => undefined);
   }
 
@@ -406,7 +408,7 @@ export default function Home() {
           <div className="topbar-inner">
             <div className="topbar-lead">
               <span className="brand" aria-label="Persona"><PersonaMark className="brand-mark" /><span className="brand-word" aria-hidden="true">Persona</span></span>
-              <button ref={lookButtonRef} type="button" className="identity" aria-haspopup="dialog" aria-expanded={lookOpen} title="Change look" onClick={() => setLookOpen(true)}>
+              <button ref={lookButtonRef} type="button" className="identity" aria-haspopup="dialog" aria-expanded={lookOpen} title="Change look and voice" onClick={() => setLookOpen(true)}>
                 <Avatar src={avatarUrl} name={assistantName} size={36} className="identity-avatar" />
                 <span className="identity-text">
                   <strong><span className="identity-name">{assistantName}</span><ChevronDownIcon className="identity-chevron" width={14} height={14} /></strong>
@@ -457,7 +459,7 @@ export default function Home() {
       </div>
 
       {appsOpen ? <ConnectionsSheet connecting={connecting} version={appsVersion} onConnect={(slug) => void connect(slug)} onChanged={() => void refresh().catch(() => undefined)} onClose={closeApps} /> : null}
-      {lookOpen ? <LookPicker name={assistantName} current={look} painted={paintedLooks(timeline)} onSaved={lookSaved} onClose={closeLook} /> : null}
+      {lookOpen ? <LookPicker name={assistantName} current={look} painted={paintedLooks(timeline)} voice={callVoice} onSaved={lookSaved} onClose={closeLook} /> : null}
 
       <CallScreen phase={callPhase} name={assistantName} avatarUrl={avatarUrl} startedAt={callStartedAt} feed={callFeed} timeline={timeline} signingIn={Boolean(connecting)} error={error}
         onHangUp={hangUp} onMute={(muted) => voiceRef.current?.setMuted(muted)} onType={typeIntoCall} onConnect={(toolkit) => void connect(toolkit)} />

@@ -117,7 +117,7 @@ export function TimelineEntry({ item, assistantName, liveCallId, busy, face, ava
       return (
         <div className="event-card">
           <CardHead icon={iconTile(<RepeatIcon width={17} height={17} />, 'blue')} title={item.title}>
-            <small>{item.schedule.charAt(0).toUpperCase() + item.schedule.slice(1)}{item.status === 'active' ? ` · ${nextRunLabel(item.nextRunAt)}` : ' in your time zone'}</small>
+            <small>{item.status === 'active' ? <><span className="status-on">On</span> · </> : null}{item.schedule.charAt(0).toUpperCase() + item.schedule.slice(1)}{item.status === 'active' ? ` · ${nextRunLabel(item.nextRunAt)}` : ' in your time zone'}</small>
             {item.instruction ? <small className="event-detail">{item.instruction}</small> : null}
           </CardHead>
           <div className="event-actions">

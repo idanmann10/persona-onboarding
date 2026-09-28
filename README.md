@@ -15,7 +15,7 @@ One assistant, one conversation, in text and voice. In the first days it learns 
 - **Recurring tasks that run.** A preview card (daily, weekdays or weekly at a time) runs only after you tap Approve; Run now and Turn off are on the card. A scheduler checks for due tasks every 5 minutes.
 - **It follows up by itself, during onboarding.** When something happens (a call ends mid-sentence, Gmail connects, a task runs, you come back), the assistant is woken and decides whether a message is worth sending or stays quiet.
 - **It remembers.** Typed, labeled memories with where each came from, a pinned profile from sign-in, recall of what's relevant to this turn, corrections and "forget that", and a rolling summary once the conversation gets long.
-- **Make it yours.** Tap its portrait to pick one of 15 looks or describe a new one to paint; ask to change its name, personality or call voice.
+- **Make it yours.** Tap its portrait to pick one of 15 looks, describe a new one to paint, or choose any of the 22 GPT-Live call voices. It picks a voice that fits its name and look until you do. Ask in the chat to change its name or personality.
 - **Apps.** Connect any app Composio offers from the Apps sheet. Gmail and Calendar are the two it reads today.
 
 ## Try to break it
