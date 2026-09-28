@@ -71,6 +71,8 @@ export interface SessionProjection {
   connections: Record<Toolkit, ConnectionPhase | 'none'>;
   /** How the latest decline came: a tapped "Not now" (not yet) or a said/typed no (closed). */
   declinedBy: Partial<Record<Toolkit, 'tapped' | 'said'>>;
+  /** Each tapped "Not now" on a card (not a said no): the app wakes the assistant so it can carry on. */
+  notNow: Array<{ id: string; at: string; what: Toolkit | 'call' }>;
   /** Apps other than Gmail and Calendar, by slug, from the Apps sheet. */
   apps: Record<string, { name: string; phase: Extract<SessionEvent, { type: 'app_connection' }>['phase'] }>;
   decisions: Record<string, 'messaged' | 'silent'>;
@@ -103,7 +105,7 @@ const ENDED: CallPhase[] = ['ended', 'dropped'];
 export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
-    connections: { gmail: 'none', calendar: 'none' }, declinedBy: {}, apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
+    connections: { gmail: 'none', calendar: 'none' }, declinedBy: {}, notNow: [], apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
     memory: { soulNotes: { assistant: [], memory: [] }, memories: [], labels: {}, loops: [], readLines: 0, followUps: [], checkIns: [] },
     activity: { visits: [], reads: [], runs: [] },
     onboarding: {
@@ -180,6 +182,8 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
           state.timeline.push(callOffer);
           holdForTurn(event.id, callOffer);
         } else if (event.phase === 'declined') {
+          // The call card's Not now (the call-offer route), not a said "no calls" (note_decline).
+          if (!event.id.startsWith('call-decline:')) state.notNow.push({ id: event.id, at: event.at, what: 'call' });
           if (callOffer?.status === 'pending') callOffer.status = 'declined';
         } else if (event.callId) {
           if (callOffer?.status === 'pending') callOffer.status = 'answered';
@@ -201,6 +205,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
       case 'connection': {
         state.connections[event.toolkit] = event.phase;
         if (event.phase === 'declined') state.declinedBy[event.toolkit] = event.id.startsWith('connection-decline:') ? 'said' : 'tapped';
+        if (event.phase === 'declined' && !event.id.startsWith('connection-decline:')) state.notNow.push({ id: event.id, at: event.at, what: event.toolkit });
         if (event.phase === 'offered') {
           const offer: Extract<TimelineItem, { kind: 'connection_offer' }> = { kind: 'connection_offer', id: event.id, toolkit: event.toolkit, status: 'pending', ...(event.reason ? { reason: event.reason } : {}) };
           connectionOffers[event.toolkit] = offer;

@@ -28,7 +28,7 @@ export interface FollowUpDeps extends TurnDependencies {
 /** What woke the assistant. The id is stable, so each one is decided once. */
 export interface WakeTrigger {
   id: string;
-  kind: 'call_ended' | 'connected' | 'connect_failed' | 'task_ran' | 'task_failed' | 'returned' | 'check_in';
+  kind: 'call_ended' | 'connected' | 'connect_failed' | 'not_now' | 'task_ran' | 'task_failed' | 'returned' | 'check_in';
   at: string;
   /** One plain line on what happened, for the assistant and the log. */
   detail: string;
@@ -78,6 +78,11 @@ export function pendingTriggers(state: SessionProjection, now: Date): WakeTrigge
     triggers.push(item.phase === 'connected'
       ? { id: `connection:${item.id}`, kind: 'connected', at: item.at!, detail: `they just connected ${name}, and the app confirmed it`, include: [item.toolkit] }
       : { id: `connection:${item.id}`, kind: 'connect_failed', at: item.at!, detail: `connecting ${name} didn't finish (Google's sign-in was cancelled or failed)` });
+  }
+  for (const tap of state.notNow) {
+    if (!recent(tap.at)) continue;
+    const what = tap.what === 'call' ? 'the Answer button for a call' : `the Connect ${tap.what === 'gmail' ? 'Gmail' : 'Google Calendar'} button`;
+    triggers.push({ id: `not-now:${tap.id}`, kind: 'not_now', at: tap.at, detail: `they tapped Not now on ${what}` });
   }
   for (const run of state.activity.runs) {
     if (!recent(run.at)) continue;

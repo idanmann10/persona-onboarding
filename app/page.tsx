@@ -265,7 +265,8 @@ export default function Home() {
       // Every browser API is wrapped, never passed bare: called detached from its object, it throws "Illegal invocation".
       const controller = await startBrowserCall(callbacks, {
         createPeer: () => new RTCPeerConnection(),
-        getMicrophone: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }),
+        // Voice isolation (where the browser has it) filters background voices and noise before the model hears them.
+        getMicrophone: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: true } as MediaTrackConstraints }),
         createAudio: () => new Audio(),
         fetchFn: (input, init) => fetch(input, init),
         signal,
@@ -291,6 +292,8 @@ export default function Home() {
   async function declineCall() {
     await fetch('/api/voice/offer', { method: 'DELETE' }).catch(() => undefined);
     await refresh().catch(() => undefined);
+    // The assistant carries on after a Not now (lib/agent/follow-ups.ts); watch for its message.
+    expectFollowUp();
   }
 
   /** Opens the sign-in window for any app slug: Gmail and Calendar from the thread, the rest from the Apps sheet. */
@@ -344,6 +347,7 @@ export default function Home() {
   async function declineConnection(toolkit: Toolkit) {
     await post('/api/connections/decline', { toolkit }).catch(() => undefined);
     await refresh().catch(() => undefined);
+    expectFollowUp();
   }
 
   /** Start over: clears the conversation and revokes connected accounts, then reloads a fresh chat. */
