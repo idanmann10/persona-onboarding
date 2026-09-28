@@ -15,7 +15,7 @@ import { customize } from './customize';
 import { noteDecline } from './note-decline';
 import { graduate } from './graduate';
 import { offerCall } from './offer-call';
-import { proposeAutomation } from './propose-automation';
+import { approveAutomation, proposeAutomation } from './propose-automation';
 import { showConnection } from './show-connection';
 import { readCalendarWindow, searchGmail } from './read-account';
 import { resolveIdentity } from './resolve-identity';
@@ -29,7 +29,7 @@ export type { ToolContext, ToolStore } from './types';
 /** Every tool the assistant has, text and call alike. Order is the order models see them. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const AGENT_TOOLS: ReadonlyArray<AgentTool<any>> = [
-  remember, saveMemory, recallMemory, forgetMemory, customize, noteDecline, graduate, offerCall, proposeAutomation, showConnection, searchGmail, readCalendarWindow, resolveIdentity, soulNote,
+  remember, saveMemory, recallMemory, forgetMemory, customize, noteDecline, graduate, offerCall, proposeAutomation, approveAutomation, showConnection, searchGmail, readCalendarWindow, resolveIdentity, soulNote,
   stayQuiet, scheduleCheckIn, endCall,
 ];
 
@@ -43,7 +43,7 @@ export function capToolResult(output: unknown): string {
 export const VOICE_TOOL_NAMES = AGENT_TOOLS.filter((item) => item.channels.includes('voice')).map((item) => item.name);
 
 export interface ToolDeps {
-  store: ToolStore & { getActiveConnection(sessionId: string, toolkit: Toolkit): Promise<string | undefined> } & Partial<Pick<AutomationStore, 'proposeAutomation'>> & { saveAvatar?: NonNullable<ToolContext['avatars']>['save'] };
+  store: ToolStore & { getActiveConnection(sessionId: string, toolkit: Toolkit): Promise<string | undefined> } & Partial<Pick<AutomationStore, 'proposeAutomation' | 'approveAutomation' | 'getAutomation'>> & { saveAvatar?: NonNullable<ToolContext['avatars']>['save'] };
   env: Record<string, string | undefined>;
   composio?: AccountReadClient;
   /** The identity check for a stated name and company, bound per turn to the user's message that stated it. */
@@ -66,7 +66,7 @@ export async function toolContext(deps: ToolDeps, sessionId: string, state: Sess
     capabilities: { voice: capabilities.voice, gmail: capabilities.gmail, calendar: capabilities.calendar },
     accounts, relevant: relevantToolkits({ userTexts: words, lastAssistant: answeredQuestion(state), include: options.include }),
     ...(deps.composio ? { composio: deps.composio } : {}),
-    ...(deps.store.proposeAutomation ? { automations: { proposeAutomation: deps.store.proposeAutomation } } : {}),
+    ...(deps.store.proposeAutomation ? { automations: { proposeAutomation: deps.store.proposeAutomation, ...(deps.store.approveAutomation ? { approveAutomation: deps.store.approveAutomation } : {}), ...(deps.store.getAutomation ? { getAutomation: deps.store.getAutomation } : {}) } } : {}),
     // Painting a new look was cut from calls: it takes a few seconds and the look shows in the chat.
     ...(options.channel === 'text' && deps.store.saveAvatar && deps.env.OPENAI_API_KEY ? { avatars: { generate: (input) => generateAvatar(input, { env: deps.env }), save: deps.store.saveAvatar } } : {}),
     ...(resolve && latestUser ? { resolveIdentity: (clue) => resolve(sessionId, latestUser, clue) } : {}),
@@ -75,7 +75,7 @@ export async function toolContext(deps: ToolDeps, sessionId: string, state: Sess
 }
 
 /** Tools that can move onboarding along: their result carries the next goal, from the state they just changed. */
-const MOVES_SETUP = new Set(['remember', 'customize', 'note_decline', 'graduate', 'show_connection', 'offer_call', 'propose_automation']);
+const MOVES_SETUP = new Set(['remember', 'customize', 'note_decline', 'graduate', 'show_connection', 'offer_call', 'propose_automation', 'approve_automation']);
 
 /**
  * The goal line in the prompt is read once, at the start of a turn (or a call). When a tool changes where
