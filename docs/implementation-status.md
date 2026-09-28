@@ -1,5 +1,7 @@
 # Implementation status
 
+> **Historical.** This page records the foundation as it stood on the morning of 2026-09-27, before the build went live. For the current state, read [the handoff](CLAUDE-HANDOFF.md). It covers production, prompt v4, sign-in, avatars, verified tools and next work.
+
 Build status for the private preview branch (`feat/foundation`, draft PR #1). The [architecture review](superpowers/specs/2026-09-27-persona-architecture-review.md) remains the product contract; its "proposed design" heading records the pre-build decision point. Last updated 2026-09-27.
 
 ## What the product does now
