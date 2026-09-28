@@ -3,8 +3,8 @@ import { projectSession } from './project';
 
 /**
  * The onboarding funnel, derived from a session's events. Activation is the first approved recurring
- * task: in Arlo's data a day-1 scheduled task predicted retention (66.7% vs 17.1%) while connecting an
- * account alone did not (23.3% vs 22.5%), so connecting is a step, not the goal.
+ * task: in an earlier product, a scheduled task on day one predicted retention while connecting an
+ * account alone did not, so connecting is a step, not the goal.
  */
 export const FUNNEL_STAGES = [
   'replied', 'stayed', 'named', 'knowsUser', 'needKnown', 'callOffered', 'callHappened',

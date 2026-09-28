@@ -82,13 +82,13 @@ function renderItem(item: TimelineItem, name: string, liveCallId?: string): stri
     case 'call_offer':
       if (item.status === 'answered') return undefined;
       if (item.status === 'declined') return '(Call declined)';
-      return `[Card] ${name} is ready to call — A short call in your browser. Answering asks for your microphone. — buttons: Answer (answer_call) / Not now (not_now_call)`;
+      return `[Card] ${name} is ready to call: A short call in your browser. Answering asks for your microphone.. Buttons: Answer (answer_call) / Not now (not_now_call)`;
     case 'connection_offer': {
       const toolkit = TOOLKIT_NAMES[item.toolkit];
       if (item.status === 'connected') return undefined;
       if (item.status === 'declined') return `(Skipped ${toolkit} for now)`;
       const connect = item.status === 'failed' ? 'Try again' : `Connect ${toolkit}`;
-      return `[Card] Connect ${toolkit} — ${item.reason || `So ${name} can help with this.`} Read-only. Start over disconnects it. — buttons: ${connect} (${CONNECT[item.toolkit]}) / Not now (${NOT_NOW[item.toolkit]})`;
+      return `[Card] Connect ${toolkit}: ${item.reason || `So ${name} can help with this.`} Read-only. Start over disconnects it.. Buttons: ${connect} (${CONNECT[item.toolkit]}) / Not now (${NOT_NOW[item.toolkit]})`;
     }
     case 'connection_notice': {
       const toolkit = TOOLKIT_NAMES[item.toolkit];
@@ -99,7 +99,7 @@ function renderItem(item: TimelineItem, name: string, liveCallId?: string): stri
       if (item.status === 'disabled') return `(Turned off "${item.title}")`;
       if (item.status === 'active') return `(Recurring task on: "${item.title}", ${item.schedule})`;
       const schedule = item.schedule.charAt(0).toUpperCase() + item.schedule.slice(1);
-      return `[Card] Recurring task preview: "${item.title}", ${schedule} in your time zone${item.instruction ? ` — ${item.instruction}` : ''} — buttons: Approve (approve_task) / Not now (not_now_task)`;
+      return `[Card] Recurring task preview: "${item.title}", ${schedule} in your time zone${item.instruction ? `: ${item.instruction}` : ''}. Buttons: Approve (approve_task) / Not now (not_now_task)`;
     }
     case 'automation_notice':
       return `("${item.title}" couldn't run this time)`;

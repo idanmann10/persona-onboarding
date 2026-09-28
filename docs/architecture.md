@@ -1,6 +1,6 @@
 # Architecture
 
-How Persona works today. The original design review from before the build is kept in [history/](history/2026-09-27-architecture-review.md); where they differ, this file is current.
+How Persona works today, from the request path to memory.
 
 ## Runtime
 

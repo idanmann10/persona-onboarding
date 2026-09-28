@@ -2,8 +2,8 @@
 /**
  * LOCAL CI: the jobs from .github/workflows/ci.yml, run on this machine.
  *
- * GitHub Actions does not start jobs on this account (billing / spending limit), so CI runs locally,
- * the way Arlo's does: same steps, same environment (no provider keys, no database).
+ * The same steps and environment as CI (no provider keys, no database), for when you want the verdict
+ * before pushing.
  *
  *   node scripts/ci-local.mjs                 install, typecheck, build
  *   node scripts/ci-local.mjs --jobs build    a subset

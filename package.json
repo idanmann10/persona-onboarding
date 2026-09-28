@@ -1,6 +1,12 @@
 {
   "name": "persona-onboarding",
   "version": "0.1.0",
+  "description": "An assistant that onboards new users by chat and a browser voice call, then sets up a task that runs on its own.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/idanmann10/persona-onboarding"
+  },
   "private": true,
   "scripts": {
     "dev": "next dev",
