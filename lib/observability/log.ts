@@ -38,6 +38,8 @@ export interface TurnItem {
   toolsOffered: string[];
   userText?: string;
   trigger?: string;
+  /** Set for a background agent's run (the onboarding coach, the memory); its reply is its JSON decision. */
+  agent?: string;
   reply?: string;
   error?: string;
   stalls: number;
@@ -119,7 +121,7 @@ export function groupTurns(traces: StoredTrace[], now = Date.now()): TurnItem[] 
       model: str(data.model), promptVersion: str(data.promptVersion), instructions: str(data.instructions),
       messageCount: typeof data.messageCount === 'number' ? data.messageCount : undefined,
       toolsOffered: Array.isArray(data.tools) ? data.tools.filter((name): name is string => typeof name === 'string') : [],
-      userText: str(data.userText), trigger: str(data.trigger), stalls: 0, steps: [],
+      userText: str(data.userText), trigger: str(data.trigger), ...(str(data.agent) ? { agent: str(data.agent) } : {}), stalls: 0, steps: [],
       totals: { toolCalls: 0, tokensIn: 0, cachedIn: 0, tokensOut: 0, reasoningTokens: 0 },
     };
     turns.push(item);
@@ -206,8 +208,9 @@ function callItems(state: SessionProjection, traces: StoredTrace[]): CallItem[] 
 
 const TOOLKIT = { gmail: 'Gmail', calendar: 'Google Calendar' } as const;
 const FACT_LABELS: Record<string, string> = { assistant_name: 'Assistant name', preferred_name: 'User name', name: 'User name', current_need: 'Need', personality: 'Personality', voice: 'Voice' };
+const AGENT_NAMES = { assistant: 'Assistant', coach: 'Coach', memory: 'Memory' } as const;
 
-/** Moments a reviewer cares about: accounts, call offers, recurring tasks and saved facts. */
+/** Moments a reviewer cares about: accounts, call offers, recurring tasks, saved facts, and what the agents learned and decided. */
 export function notableEvents(events: SessionEvent[]): EventItem[] {
   const items: EventItem[] = [];
   const seen = new Set<string>();
@@ -235,12 +238,29 @@ export function notableEvents(events: SessionEvent[]): EventItem[] {
       });
     } else if (event.type === 'account_read') {
       items.push({ ...base, kind: 'event', tone: 'neutral', label: `Read ${TOOLKIT[event.toolkit]}`, detail: `${event.items} item${event.items === 1 ? '' : 's'}` });
+    } else if (event.type === 'soul_note') {
+      items.push({ ...base, kind: 'event', tone: 'good', label: `${AGENT_NAMES[event.agent]} added to its soul`, detail: event.text, tag: 'soul note' });
+    } else if (event.type === 'label') {
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Label ${event.action === 'add' ? 'added' : 'removed'}: ${event.label}`, detail: `${event.confidence} confidence · ${event.evidence}`, tag: event.provenance.replace(/_/g, ' ') });
+    } else if (event.type === 'note') {
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Memory kept a ${event.kind}`, detail: event.text, tag: `from ${event.source}` });
+    } else if (event.type === 'loop') {
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: event.action === 'open' ? 'Open loop' : 'Loop closed', detail: event.text });
+    } else if (event.type === 'summary') {
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Summary updated (${event.lines} lines)`, detail: event.text });
+    } else if (event.type === 'coach') {
+      const decision = event.reachOut === 'now' ? 'reach out now' : event.reachOut === 'later' ? `check in at ${event.wakeAt?.slice(11, 16) ?? '?'} UTC` : 'stay quiet';
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Coach: ${decision} · focus ${event.focus.replace(/_/g, ' ')}`, detail: `${event.why}\n${event.guidance}${event.guard ? `\nGuardrail: ${event.guard}` : ''}`, tag: event.trigger.split(':')[0] });
+    } else if (event.type === 'setup_ask') {
+      items.push({ ...base, kind: 'event', tone: 'neutral', label: `Asked about ${event.item.replace(/_/g, ' ')}` });
     }
   }
   return items;
 }
 
-export function summarize(turns: TurnItem[], calls: CallItem[]): LogSummary {
+export function summarize(all: TurnItem[], calls: CallItem[]): LogSummary {
+  // Background agents run after the reply; they are not replies, so they stay out of the reply numbers.
+  const turns = all.filter((turn) => !turn.agent);
   const done = turns.filter((turn) => turn.status !== 'running' && typeof turn.durationMs === 'number');
   const durations = done.map((turn) => turn.durationMs!);
   const firstTokens = turns.map((turn) => turn.firstTokenMs).filter((ms): ms is number => typeof ms === 'number');

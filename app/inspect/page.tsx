@@ -19,6 +19,8 @@ interface Inspection {
     settings: Settings;
     connections: Record<string, string>;
     facts: Array<{ key: string; value: string; evidence: string; provenance: string }>;
+    user?: { lifecycle: { stage: string; day: number }; labels: Array<{ label: string; confidence: string }>; coach: { focus: string; guidance: string } | null };
+    soulNotes?: Record<string, string[]>;
   };
   summary: LogSummary;
   items: LogItem[];
@@ -353,6 +355,10 @@ function Knows({ data }: { data: Inspection['state'] }) {
         {row('Recurring task', automation.status === 'none' ? undefined : `${automation.title ?? 'Task'}${automation.schedule ? ` · ${automation.schedule}` : ''}`, automation.status === 'none' ? undefined : automation.status)}
         {row('Personality', personality, fact('personality')?.provenance ?? 'default')}
         {row('Voice', settings.voice, fact('voice')?.provenance ?? 'default')}
+        {data.user && row('Stage', `${sentence(data.user.lifecycle.stage)} · day ${data.user.lifecycle.day}`)}
+        {data.user && row('Coach focus', data.user.coach ? `${humanize(data.user.coach.focus)}: ${data.user.coach.guidance}` : undefined)}
+        {data.user && row('Labels', data.user.labels.length ? data.user.labels.map((label) => `${label.label} (${label.confidence})`).join(', ') : undefined)}
+        {Object.entries(data.soulNotes ?? {}).map(([agent, notes]) => row(`${sentence(agent)} soul notes`, notes.length ? notes.join(' · ') : undefined))}
       </dl>
     </div>
   );

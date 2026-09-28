@@ -3,6 +3,7 @@ import { projectSession } from '../domain/project';
 import { personaSettings } from '../domain/persona';
 import type { AutomationRecord } from '../domain/automation';
 import { buildAgentLog } from '../observability/log';
+import { buildUserState } from '../domain/user-state';
 import type { StoredTrace } from '../observability/trace';
 import { signedInSession, type LoginStore } from '../auth/login';
 
@@ -37,6 +38,12 @@ export function createInspectHandler(store: Store, env: Record<string, string | 
           ? automations.map((item) => ({ id: item.id, title: item.title, status: item.status, cadence: item.cadence, time: item.time, ...(item.nextRunAt ? { nextRunAt: item.nextRunAt } : {}) }))
           : state.automations.map((item) => ({ id: item.automationId, title: item.title, status: item.status, schedule: item.schedule, ...(item.nextRunAt ? { nextRunAt: item.nextRunAt } : {}) })),
         facts,
+        // The labeled state the agents read, and what each agent added to its own soul for this user.
+        user: (() => {
+          const user = buildUserState(state, new Date(), env.OPENAI_VOICE);
+          return { lifecycle: user.lifecycle, setup: user.setup, labels: user.labels, openLoops: user.openLoops, coach: user.coach ?? null, notes: user.notes };
+        })(),
+        soulNotes: Object.fromEntries(Object.entries(state.memory.soulNotes).map(([agent, notes]) => [agent, notes.map((note) => note.text)])),
       },
       ...log,
       generatedAt: new Date().toISOString(),
