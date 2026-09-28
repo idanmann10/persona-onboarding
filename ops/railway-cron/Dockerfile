@@ -2,4 +2,4 @@
 # it calls the app's run-due endpoint once and exits. Vercel's Hobby cron can only run once a day.
 FROM curlimages/curl:8.10.1
 ENTRYPOINT []
-CMD ["sh", "-c", "curl -fsS --max-time 290 -H \"Authorization: Bearer $CRON_SECRET\" \"$APP_URL/api/automations/run-due\""]
+CMD ["sh", "-c", "curl -fsS --max-time 290 -w ' HTTP %{http_code}\\n' -H \"Authorization: Bearer $CRON_SECRET\" \"$APP_URL/api/automations/run-due\""]
