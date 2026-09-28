@@ -32,8 +32,19 @@ export const IP_LIMITS: Record<IpScope, [number, number]> = {
  */
 export function clientAddress(request: Request): string {
   const vercel = process.env.VERCEL ? request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim() : undefined;
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',').map((part) => part.trim()).filter(Boolean).at(-1);
+  const chain = request.headers.get('x-forwarded-for')?.split(',').map((part) => part.trim()).filter(Boolean) ?? [];
+  // Through the Vercel front door, the right-most entry is Vercel's own address (every user would share one
+  // limit); the one before it is the visitor, as Vercel saw them. A caller who skips the front door and
+  // fakes this can only dodge the per-network limits; per-conversation and per-email limits still apply.
+  const forwarded = viaFrontDoor(request) && chain.length >= 2 ? chain.at(-2) : chain.at(-1);
   return vercel || forwarded || request.headers.get('x-real-ip')?.trim() || 'unknown';
+}
+
+/** The request came through the app's public address (Vercel passing it on), not straight to this server. */
+function viaFrontDoor(request: Request): boolean {
+  if (process.env.VERCEL || !request.headers.get('x-vercel-id')) return false;
+  try { return Boolean(process.env.APP_BASE_URL) && new URL(process.env.APP_BASE_URL!).host !== new URL(request.url).host; }
+  catch { return false; }
 }
 
 /**

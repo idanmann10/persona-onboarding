@@ -94,7 +94,9 @@ function undashStream() {
   return {
     push(chunk: string): string {
       const text = held + chunk;
-      const tail = /[\s–—]*$/.exec(text)![0];
+      // Trailing spaces and dashes wait for the next chunk, and so does the word before a trailing dash, so a
+      // range split at the dash ("9:00–" + "10:00") is judged whole.
+      const tail = /(?:[^\s–—]*\s*[–—][\s–—]*|\s*)$/.exec(text)![0];
       held = tail;
       return undash(text.slice(0, text.length - tail.length));
     },

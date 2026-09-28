@@ -100,10 +100,12 @@ export async function lookupByHandle(fullName: string, handle: string, key: stri
   if (!response.ok) throw new Error(`Exa handle search failed (${response.status})`);
   const payload = await response.json() as { requestId?: string; results?: ExaResult[] };
   const nameIn = new RegExp(`(^|\\W)${escaped(normalized(name))}(\\W|$)`);
+  // The handle itself, not a longer one that starts with it (danalee42 is not danalee42x).
+  const handleIn = new RegExp(`(^|[^a-z0-9._-])${escaped(handle)}([^a-z0-9_-]|$)`);
   const profiles = (payload.results ?? []).filter((result) => {
     if (!/^https:\/\//.test(result.url ?? '')) return false;
     const text = normalized([result.title, ...(result.highlights ?? [])].join(' '));
-    return (result.url!.toLowerCase().includes(handle) || text.includes(handle)) && nameIn.test(text);
+    return (handleIn.test(result.url!.toLowerCase()) || handleIn.test(text)) && nameIn.test(text);
   }).slice(0, 3).map((result) => ({
     title: (result.title ?? '').slice(0, 120),
     url: result.url!,

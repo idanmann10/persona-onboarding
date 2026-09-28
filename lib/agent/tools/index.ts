@@ -101,6 +101,7 @@ export function voiceToolSchemas(capabilities: ToolContext['capabilities']) {
 export async function runVoiceTool(ctx: ToolContext, name: string, args: unknown): Promise<{ output: ToolResult; ui?: ToolUi }> {
   const item = AGENT_TOOLS.find((candidate) => candidate.name === name && candidate.channels.includes('voice'));
   if (!item) return { output: { status: 'unknown_tool' } };
+  if (item.offered && !item.offered(ctx)) return { output: { status: 'not_available', note: 'That tool is not available right now.' } };
   const parsed = item.input.safeParse(args);
   if (!parsed.success) return { output: { status: 'invalid_arguments' } };
   const output = await item.execute(ctx, parsed.data);

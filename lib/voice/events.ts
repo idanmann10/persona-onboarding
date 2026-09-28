@@ -16,3 +16,9 @@ export function parseLiveEvent(event: unknown): ParsedLiveEvent | null {
       typeof value.start_ms !== 'number' || typeof value.end_ms !== 'number') return null;
   return { kind: 'transcript', eventId: value.event_id, speaker: value.type === 'session.input_transcript.delta' ? 'user' : 'assistant', text: value.delta, startMs: value.start_ms, endMs: value.end_ms };
 }
+
+/** A short turn that ends on a goodbye ("okay, bye", "talk to you later"), not one that only mentions one. */
+export function isFarewell(turn: string): boolean {
+  const words = turn.trim().split(/\s+/);
+  return words.length <= 6 && new RegExp(`${SPOKEN_GOODBYE.source}[\\s.!,]*(for now|then|now)?[\\s.!]*$`, 'i').test(turn.trim());
+}

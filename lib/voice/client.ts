@@ -1,6 +1,6 @@
 import type { CallEndReason } from '../domain/events';
 import type { ParsedLiveEvent } from './events';
-import { parseLiveEvent, SPOKEN_GOODBYE } from './events';
+import { isFarewell, parseLiveEvent } from './events';
 import { truncateToTokens } from './tokens';
 
 export interface VoiceController {
@@ -312,8 +312,8 @@ export async function startBrowserCall(callbacks: VoiceCallbacks, deps: VoiceDep
         assistantSpoke = true;
         lastAssistantAt = lastActivity;
         lastAssistantEndMs = Math.max(lastAssistantEndMs, parsed.endMs);
-        // A short turn that says goodbye ("okay, bye"), not "say bye to the old system, then...".
-        if (userTurn) { repliedToGoodbye = userTurn.trim().split(/\s+/).length <= 10 && SPOKEN_GOODBYE.test(userTurn); userTurn = ''; }
+        // A short turn that is a goodbye ("okay, bye"), not one that mentions it ("say bye to Dana for me").
+        if (userTurn) { repliedToGoodbye = isFarewell(userTurn); userTurn = ''; }
       }
       queue.push({ eventId: parsed.eventId, speaker: parsed.speaker, text: parsed.text, startMs: parsed.startMs, endMs: parsed.endMs });
       if (queue.length >= 40) void flush();
