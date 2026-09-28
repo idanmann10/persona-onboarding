@@ -108,7 +108,7 @@ function followUpNote(trigger: CoachTrigger, output: CoachOutput): string {
     `What happened: ${trigger.detail}.`,
     `Why it's worth a message: ${output.why}`,
     `Aim: ${aim}. ${output.guidance}`,
-    "One short message, a bubble or two. Pick up where things are; don't recap, and don't mention this note or that anything prompted you.",
+    "Write like a person picking the thread back up: a few words on what just happened if it helps (\"looks like we got cut off\"), then the point. One short message, a bubble or two. No recap, and don't mention this note or that anything prompted you.",
   ].join('\n');
 }
 

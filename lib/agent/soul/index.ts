@@ -18,7 +18,8 @@ export function soul(agent: AgentName): string {
   let text = cache.get(agent);
   if (text === undefined) {
     text = readFileSync(join(process.cwd(), 'lib', 'agent', 'soul', `${agent}.md`), 'utf8').trim();
-    cache.set(agent, text);
+    // Cached in production; in development an edit to a soul shows up on the next turn.
+    if (process.env.NODE_ENV === 'production') cache.set(agent, text);
   }
   return text;
 }

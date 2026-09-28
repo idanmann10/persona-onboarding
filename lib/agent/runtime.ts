@@ -77,6 +77,32 @@ function turnSettings(turn: PreparedTurn, env: Env, override?: LanguageModel) {
 
 export const failureStatus = (error: unknown): TraceStatus => isTimeout(error) ? 'timeout' : 'error';
 
+/**
+ * No em or en dashes in anything the assistant writes (the soul says so; this makes sure): a dash used as
+ * punctuation becomes a comma, and a number range keeps a plain hyphen.
+ */
+export function undash(text: string): string {
+  return text.replace(/(\d)\s*[–—]\s*(\d)/g, '$1-$2').replace(/([\p{L}\p{N}])–(?=[\p{L}\p{N}])/gu, '$1-').replace(/^[ \t]*[–—][ \t]*/gm, '').replace(/\s*[–—]+\s*/g, ', ');
+}
+
+/** `undash` for a stream: a dash or the spaces around it can straddle two chunks, so those are held back a moment. */
+function undashStream() {
+  let held = '';
+  return {
+    push(chunk: string): string {
+      const text = held + chunk;
+      const tail = /[\s–—]*$/.exec(text)![0];
+      held = tail;
+      return undash(text.slice(0, text.length - tail.length));
+    },
+    flush(): string {
+      const rest = held;
+      held = '';
+      return undash(rest.replace(/^\s*[–—]+\s*/, ' ').replace(/[–—]/g, '')).replace(/^\s+$/, '');
+    },
+  };
+}
+
 /** Stream a turn's text. A tool step between two pieces of text gets a paragraph break. */
 export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): AsyncGenerator<string> {
   const tracer = turnTracer(turn.trace);
@@ -84,6 +110,7 @@ export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, ov
   let reply = '';
   let firstTokenMs: number | undefined;
   let outcome: { status: TraceStatus; error?: unknown } = { status: 'error', error: 'The reply stream was closed before it finished' };
+  const dashes = undashStream();
   try {
     for (let attempt = 1; ; attempt++) {
       let emitted = false;
@@ -93,13 +120,17 @@ export async function* streamTurn(turn: PreparedTurn, env: Env = process.env, ov
         for await (const part of result.fullStream) {
           if (part.type === 'finish-step') pendingBreak = emitted;
           else if (part.type === 'text-delta' && part.text) {
-            if (pendingBreak) { yield '\n\n'; reply += '\n\n'; pendingBreak = false; }
+            const text = `${pendingBreak ? '\n\n' : ''}${dashes.push(part.text)}`;
+            pendingBreak = false;
             emitted = true;
             firstTokenMs ??= tracer.elapsed();
-            reply += part.text;
-            yield part.text;
+            if (!text) continue;
+            reply += text;
+            yield text;
           } else if (part.type === 'error') throw part.error;
         }
+        const rest = dashes.flush();
+        if (rest) { reply += rest; yield rest; }
         outcome = { status: 'ok' };
         return;
       } catch (error) {
@@ -141,5 +172,5 @@ export async function generateTurnResult(turn: PreparedTurn, env: Env = process.
 
 export async function generateTurn(turn: PreparedTurn, env: Env = process.env, override?: LanguageModel): Promise<string> {
   const result = await generateTurnResult(turn, env, override);
-  return result.steps.map((step) => step.text.trim()).filter(Boolean).join('\n\n');
+  return undash(result.steps.map((step) => step.text.trim()).filter(Boolean).join('\n\n'));
 }
