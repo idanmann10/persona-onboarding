@@ -26,12 +26,12 @@ export const IP_LIMITS: Record<IpScope, [number, number]> = {
 };
 
 /**
- * The caller's address, as set by the platform: Vercel's own header first, then the right-most
- * X-Forwarded-For entry (appended by the nearest proxy; left-most entries are caller-controlled),
- * then X-Real-IP.
+ * The caller's address, as set by the platform: Vercel's own header first (only on Vercel, which
+ * overwrites it; anywhere else a caller could send it), then the right-most X-Forwarded-For entry
+ * (appended by the nearest proxy, e.g. Railway's; left-most entries are caller-controlled), then X-Real-IP.
  */
 export function clientAddress(request: Request): string {
-  const vercel = request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
+  const vercel = process.env.VERCEL ? request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim() : undefined;
   const forwarded = request.headers.get('x-forwarded-for')?.split(',').map((part) => part.trim()).filter(Boolean).at(-1);
   return vercel || forwarded || request.headers.get('x-real-ip')?.trim() || 'unknown';
 }

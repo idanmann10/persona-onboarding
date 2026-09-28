@@ -31,8 +31,12 @@ const plain = (value: string, max: number) => {
   return text && text.length <= max ? text : undefined;
 };
 
-/** Where the request comes from, per Vercel's geolocation headers. Empty off Vercel. */
+/**
+ * Where the request comes from, per Vercel's geolocation headers. Empty off Vercel: elsewhere (Railway) a
+ * caller could send these headers themselves, so they aren't read at all.
+ */
 export function locationFacts(request: Request): SeedFact[] {
+  if (!process.env.VERCEL) return [];
   const header = (name: string) => request.headers.get(name)?.trim() || undefined;
   const facts: SeedFact[] = [];
   const rawCity = header('x-vercel-ip-city');

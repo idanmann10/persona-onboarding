@@ -211,6 +211,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .event-text small { color: var(--ink-mute); font-size: 13px; line-height: 1.4; }
 .event-text .event-detail { color: var(--ink); }
 .event-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--surface-alt); color: var(--ink-mute); }
+.event-icon.logo { background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .1); }
+.toolkit-logo { display: block; object-fit: contain; }
 .event-icon.blue { background: rgba(10, 132, 255, .1); color: var(--blue); }
 .event-icon.green { background: rgba(52, 199, 89, .12); color: #248a3d; }
 .event-actions { display: flex; gap: 8px; margin-top: 14px; }
