@@ -1,6 +1,6 @@
 import type { SVGProps } from 'react';
 import {
-  ArrowUp, ArrowUpRight, Calendar, Check, ChevronDown, Keyboard, LayoutGrid, LogOut, Mail, Mic, MicOff, Phone, Repeat2, RotateCcw, ScrollText, Search, Sparkles, X,
+  ArrowUp, ArrowUpRight, Calendar, Check, ChevronDown, Keyboard, LayoutGrid, LogOut, Mail, Mic, MicOff, Pause, Phone, Play, Repeat2, RotateCcw, ScrollText, Search, Sparkles, X,
   type LucideIcon, type LucideProps,
 } from 'lucide-react';
 
@@ -48,3 +48,5 @@ export const PaintIcon = lucide(Sparkles);
 export const MicIcon = lucide(Mic);
 export const MicOffIcon = lucide(MicOff);
 export const KeyboardIcon = lucide(Keyboard);
+export const PlayIcon = lucide(Play);
+export const PauseIcon = lucide(Pause);

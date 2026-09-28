@@ -1,9 +1,9 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { CallEndReason } from '@/lib/domain/events';
 import type { TimelineItem } from '@/lib/domain/project';
 import { PERSONALITIES, VOICES, avatarPalette, isPersonalityId, isVoiceId } from '@/lib/domain/persona';
 import { Avatar } from './components/avatar';
-import { PhoneIcon, RepeatIcon } from './components/icons';
+import { ChevronDownIcon, PhoneIcon, RepeatIcon } from './components/icons';
 import { ToolkitLogo } from './components/toolkit-logo';
 
 export type Toolkit = 'gmail' | 'calendar';
@@ -107,6 +107,38 @@ function CardHead({ icon, title, children }: { icon: ReactNode; title: ReactNode
 
 const iconTile = (glyph: ReactNode, tone = '') => <span className={`event-icon${tone ? ` ${tone}` : ''}`} aria-hidden="true">{glyph}</span>;
 
+const scheduleLabel = (schedule: string) => schedule.charAt(0).toUpperCase() + schedule.slice(1);
+
+type TaskItem = Extract<TimelineItem, { kind: 'automation' }>;
+
+/** A task that's on: one line until opened for Run now or Turn off, and folded again after a run. */
+function ActiveTask({ item, busy, onAutomation }: { item: TaskItem; busy: boolean; onAutomation: ItemProps['onAutomation'] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`event-card task-card${open ? ' open' : ''}`}>
+      <button type="button" className="task-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="event-head">
+          {iconTile(<RepeatIcon width={17} height={17} />, 'blue')}
+          <span className="event-text">
+            <strong>{item.title}</strong>
+            <small><span className="status-on">On</span> · {scheduleLabel(item.schedule)} · {nextRunLabel(item.nextRunAt)}</small>
+          </span>
+        </span>
+        <ChevronDownIcon className="task-chevron" width={18} height={18} aria-hidden="true" />
+      </button>
+      {open ? (
+        <>
+          {item.instruction ? <p className="task-detail">{item.instruction}</p> : null}
+          <div className="event-actions">
+            <button type="button" className="pill primary" onClick={() => { setOpen(false); onAutomation('run_now', item.automationId); }} disabled={busy}>Run now</button>
+            <button type="button" className="pill" onClick={() => onAutomation('disable', item.automationId)} disabled={busy}>Turn off</button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function TimelineEntry({ item, assistantName, liveCallId, busy, face, avatarUrl, onAnswer, onDeclineCall, onConnect, onDeclineConnection, onAutomation }: ItemProps) {
   switch (item.kind) {
     case 'message':
@@ -114,24 +146,16 @@ export function TimelineEntry({ item, assistantName, liveCallId, busy, face, ava
     case 'automation': {
       if (item.status === 'declined') return <p className="system-line">Skipped “{item.title}”</p>;
       if (item.status === 'disabled') return <p className="system-line">Turned off “{item.title}”</p>;
+      if (item.status === 'active') return <ActiveTask item={item} busy={busy} onAutomation={onAutomation} />;
       return (
         <div className="event-card">
           <CardHead icon={iconTile(<RepeatIcon width={17} height={17} />, 'blue')} title={item.title}>
-            <small>{item.status === 'active' ? <><span className="status-on">On</span> · </> : null}{item.schedule.charAt(0).toUpperCase() + item.schedule.slice(1)}{item.status === 'active' ? ` · ${nextRunLabel(item.nextRunAt)}` : ' in your time zone'}</small>
+            <small>{scheduleLabel(item.schedule)} in your time zone</small>
             {item.instruction ? <small className="event-detail">{item.instruction}</small> : null}
           </CardHead>
           <div className="event-actions">
-            {item.status === 'proposed' ? (
-              <>
-                <button type="button" className="pill primary" onClick={() => onAutomation('approve', item.automationId)} disabled={busy}>Approve</button>
-                <button type="button" className="pill" onClick={() => onAutomation('decline', item.automationId)} disabled={busy}>Not now</button>
-              </>
-            ) : (
-              <>
-                <button type="button" className="pill primary" onClick={() => onAutomation('run_now', item.automationId)} disabled={busy}>Run now</button>
-                <button type="button" className="pill" onClick={() => onAutomation('disable', item.automationId)} disabled={busy}>Turn off</button>
-              </>
-            )}
+            <button type="button" className="pill primary" onClick={() => onAutomation('approve', item.automationId)} disabled={busy}>Approve</button>
+            <button type="button" className="pill" onClick={() => onAutomation('decline', item.automationId)} disabled={busy}>Not now</button>
           </div>
         </div>
       );

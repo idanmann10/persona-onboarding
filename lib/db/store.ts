@@ -1,7 +1,5 @@
 import type postgres from 'postgres';
 import type { SessionEvent } from '../domain/events';
-import { readFile } from 'node:fs/promises';
-import type { KnowledgeFact } from '../domain/knowledge';
 import type { AutomationRecord, AutomationStatus } from '../domain/automation';
 import type { StoredTrace, TraceEntry } from '../observability/trace';
 import type { SignedInUser } from '../auth/login';
@@ -27,10 +25,6 @@ function automationFrom(row: Record<string, unknown>): AutomationRecord {
 
 export function createStore(sql: ReturnType<typeof postgres>) {
   return {
-    initialize: async () => {
-      const schema = await readFile(new URL('./schema.sql', import.meta.url), 'utf8');
-      await sql.unsafe(schema);
-    },
     createSession: async (id: string) => {
       await sql`INSERT INTO persona_sessions (id) VALUES (${id}) ON CONFLICT (id) DO NOTHING`;
     },
@@ -109,41 +103,10 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     deleteLogin: async (tokenHash: string): Promise<void> => {
       await sql`DELETE FROM persona_logins WHERE token_hash = ${tokenHash}`;
     },
-    sessionExists: async (id: string) => {
-      const rows = await sql`SELECT 1 FROM persona_sessions WHERE id = ${id} LIMIT 1`;
-      return rows.length > 0;
-    },
     appendEvent: async (id: string, event: SessionEvent) => {
-      if (event.type !== 'fact') {
-        await sql`INSERT INTO persona_events (session_id, event_id, payload)
-          VALUES (${id}, ${event.id}, ${sql.json(event)})
-          ON CONFLICT (session_id, event_id) DO NOTHING`;
-        return;
-      }
-      await sql.begin(async (tx) => {
-        const inserted = await tx`INSERT INTO persona_events (session_id, event_id, payload)
-          VALUES (${id}, ${event.id}, ${tx.json(event)})
-          ON CONFLICT (session_id, event_id) DO NOTHING RETURNING seq`;
-        if (!inserted.length) return;
-        await tx`UPDATE persona_graph_facts SET evidence = 'superseded'
-          WHERE session_id = ${id} AND subject = 'user' AND predicate = ${event.key}
-          AND evidence IN ('tentative', 'confirmed')`;
-        await tx`INSERT INTO persona_graph_facts
-          (id, session_id, event_id, subject, predicate, object_value, evidence, provenance, source_url, source_event_id)
-          VALUES (${crypto.randomUUID()}, ${id}, ${event.id}, 'user', ${event.key}, ${event.value}, ${event.evidence}, ${event.provenance}, ${event.sourceUrl || null}, ${event.sourceEventId})`;
-      });
-    },
-    /** The newest sessions with their events, for the funnel. */
-    recentSessions: async (limit = 500): Promise<Array<{ id: string; events: SessionEvent[] }>> => {
-      const rows = await sql`SELECT s.id, e.payload FROM (SELECT id, created_at FROM persona_sessions ORDER BY created_at DESC LIMIT ${limit}) s
-        JOIN persona_events e ON e.session_id = s.id ORDER BY s.created_at DESC, s.id, e.seq`;
-      const sessions = new Map<string, SessionEvent[]>();
-      for (const row of rows) {
-        const events = sessions.get(row.id as string) ?? [];
-        events.push(row.payload as SessionEvent);
-        sessions.set(row.id as string, events);
-      }
-      return [...sessions].map(([id, events]) => ({ id, events }));
+      await sql`INSERT INTO persona_events (session_id, event_id, payload)
+        VALUES (${id}, ${event.id}, ${sql.json(event)})
+        ON CONFLICT (session_id, event_id) DO NOTHING`;
     },
     /** The auth config Persona made for a toolkit other than Gmail and Calendar, if any. */
     getAppAuthConfig: async (toolkit: string): Promise<string | undefined> => {
@@ -172,17 +135,6 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     getCallLease: async (id: string): Promise<{ callId?: string; active: boolean } | undefined> => {
       const rows = await sql`SELECT call_id, expires_at > now() AS active FROM persona_call_leases WHERE session_id = ${id} LIMIT 1`;
       return rows[0] ? { callId: (rows[0].call_id as string | null) || undefined, active: rows[0].active as boolean } : undefined;
-    },
-    readGraphFacts: async (id: string): Promise<Array<Pick<KnowledgeFact, 'value' | 'evidence' | 'provenance' | 'sourceUrl'> & { key: string }>> => {
-      const rows = await sql`SELECT predicate AS key, object_value AS value, evidence, provenance, source_url AS "sourceUrl"
-        FROM persona_graph_facts WHERE session_id = ${id} ORDER BY created_at, id`;
-      return rows.map((row) => ({
-        key: row.key as string,
-        value: row.value as string,
-        evidence: row.evidence as KnowledgeFact['evidence'],
-        provenance: row.provenance as KnowledgeFact['provenance'],
-        sourceUrl: (row.sourceUrl as string | null) || undefined,
-      }));
     },
     createConnectionAttempt: async (sessionId: string, attemptId: string, toolkit: string, accountId: string, authConfigId: string, expiresAt: string, callbackHash?: string) => {
       await sql`INSERT INTO persona_connections (attempt_id, session_id, toolkit, connected_account_id, auth_config_id, expires_at, callback_hash)

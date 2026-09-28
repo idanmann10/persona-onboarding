@@ -6,8 +6,8 @@ import { defineConfig } from '@playwright/test';
  * build never serves. Uses the installed Chrome, so there is no browser download.
  */
 export default defineConfig({
-  testDir: 'e2e',
-  globalSetup: './e2e/global-setup.ts',
+  testDir: '.',
+  globalSetup: './global-setup.ts',
   timeout: 60_000,
   expect: { timeout: 20_000 },
   fullyParallel: true,

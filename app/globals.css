@@ -173,13 +173,17 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .look-voices-head h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.015em; }
 .look-voices-head small { color: var(--grey); font-size: 12px; }
 .voice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
-.voice-option { position: relative; display: flex; width: 100%; min-height: 64px; padding: 10px 30px 10px 12px; border: 0; border-radius: 12px; background: rgba(118, 118, 128, .08); color: var(--ink); text-align: left; box-shadow: inset 0 0 0 1.5px transparent; transition: box-shadow .15s ease, background .15s ease; }
+.voice-option { position: relative; display: flex; width: 100%; min-height: 64px; padding: 10px 44px 10px 12px; border: 0; border-radius: 12px; background: rgba(118, 118, 128, .08); color: var(--ink); text-align: left; box-shadow: inset 0 0 0 1.5px transparent; transition: box-shadow .15s ease, background .15s ease; }
 .voice-option:hover:not(:disabled) { background: rgba(118, 118, 128, .14); }
 .voice-option:disabled { opacity: .55; }
 .voice-option[aria-pressed="true"] { background: rgba(10, 132, 255, .08); box-shadow: inset 0 0 0 2px var(--blue); }
 .voice-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .voice-option-text strong { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
 .voice-option-text small { overflow: hidden; color: var(--ink-mute); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.voice-grid li { position: relative; }
+.voice-play { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: rgba(118, 118, 128, .16); color: var(--ink); }
+.voice-play:hover { background: rgba(118, 118, 128, .26); }
+.voice-play svg { margin-left: 1px; }
 .voice-check { position: absolute; top: 10px; right: 10px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--blue); color: #fff; }
 .look-spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .45); border-top-color: #fff; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -229,6 +233,12 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .toolkit-logo { display: block; object-fit: contain; }
 .event-icon.blue { background: rgba(10, 132, 255, .1); color: var(--blue); }
 .event-icon.green { background: rgba(52, 199, 89, .12); color: #248a3d; }
+.task-card { padding: 12px 14px 12px 16px; }
+.task-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.task-toggle .event-head { flex: 1; align-items: center; min-width: 0; }
+.task-chevron { flex: none; color: var(--grey); transition: transform .2s ease; }
+.task-card.open .task-chevron { transform: rotate(180deg); }
+.task-detail { margin: 10px 0 0 48px; color: var(--ink); font-size: 13px; line-height: 1.4; }
 .event-actions { display: flex; gap: 8px; margin-top: 14px; }
 .event-actions .pill { flex: 1; height: 36px; font-size: 14px; }
 .transcript { margin-top: 12px; border-top: 1px solid var(--step); padding-top: 10px; }

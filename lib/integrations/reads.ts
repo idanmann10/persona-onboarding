@@ -6,7 +6,7 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
 /**
  * Composio wraps provider payloads inconsistently (`data.items`, `data.response_data.items`,
  * `data.messages`, ...). Walk the known wrapper keys breadth-first and return the first list found,
- * the same way Arlo's production reader does.
+ * the way a production reader has to.
  */
 export function listItems(payload: unknown, keys: string[]): Array<Record<string, unknown>> {
   const queue: unknown[] = [payload];

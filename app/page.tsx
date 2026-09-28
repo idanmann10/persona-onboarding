@@ -414,7 +414,7 @@ export default function Home() {
                   <strong><span className="identity-name">{assistantName}</span><ChevronDownIcon className="identity-chevron" width={14} height={14} /></strong>
                   <small>{subtitle}</small>
                 </span>
-                <span className="visually-hidden">, change look</span>
+                <span className="visually-hidden">, change look and voice</span>
               </button>
             </div>
             <div className="topbar-actions">
