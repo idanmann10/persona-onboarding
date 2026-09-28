@@ -1,7 +1,7 @@
 import type { SessionProjection } from '../domain/project';
 import { buildSystemPrompt } from '../agent/prompts';
 import { voiceToolSchemas } from '../agent/tools';
-import { modelMessages } from '../agent/conversation';
+import { conversationLines, modelMessages } from '../agent/conversation';
 import { otherFacts } from '../agent/turn';
 import { soulSection } from '../agent/soul';
 import { soulNotes } from '../domain/memory';
@@ -56,7 +56,7 @@ export function voiceInstructions(state: SessionProjection, capabilities: Capabi
   const assistant = user.assistant.name;
   const them = user.identity.callThem;
   const open = stillOpen(user);
-  const tools = voiceToolSchemas({ voice: true, ...capabilities }).map((item) => `- ${item.name}: ${item.description.split('. ')[0].replace(/\.$/, '')}.`);
+  const tools = voiceToolSchemas({ voice: true, ...capabilities }).map((item) => `- ${item.name}: ${item.description.split(/(?<!e\.g)\. /)[0].replace(/\.$/, '')}.`);
   const notes = soulNotes(state, 'assistant');
   return `You are ${assistant ?? "the user's new assistant"}, on a live browser call with the user.${assistant ? ` They chose the name ${assistant}.` : ' You have no name yet; if they offer one, save it with customize.'}
 This call continues the same conversation as the chat, and you know what was said there. ${them ? `Call them ${them.name}${them.confirmed ? '' : ' (from their Google account; check it once if it fits)'}.` : "You don't know what to call them yet."}
@@ -87,14 +87,53 @@ Never say you saved, read, connected or scheduled anything unless the backend co
 Keep listening while they pause to think. Do not treat a cough, music, or nearby conversation as a new request.`;
 }
 
-/** Spoken greeting instruction, sent with session.instructions.append once session.started arrives. */
+/** Scripts that name their language outright; Latin-script languages are told apart by common words. */
+const SCRIPTS: Array<[RegExp, string]> = [
+  [/\p{Script=Hebrew}/u, 'Hebrew'], [/\p{Script=Arabic}/u, 'Arabic'], [/\p{Script=Cyrillic}/u, 'Russian'], [/\p{Script=Greek}/u, 'Greek'],
+  [/\p{Script=Devanagari}/u, 'Hindi'], [/\p{Script=Thai}/u, 'Thai'], [/\p{Script=Hangul}/u, 'Korean'], [/[\p{Script=Hiragana}\p{Script=Katakana}]/u, 'Japanese'], [/\p{Script=Han}/u, 'Chinese'],
+];
+/** Whole words, including accented ones (`\\b` only knows ASCII letters). */
+const words = (list: string) => new RegExp(`(?<!\\p{L})(${list})(?!\\p{L})`, 'giu');
+const WORDS: Record<string, RegExp> = {
+  English: words("the|and|is|are|my|you|what|with|for|this|that|please|thanks|hi|hey"),
+  Spanish: words("hola|gracias|quiero|necesito|correo|también|pero|porque|está|qué|cómo|mañana|por favor|tengo|mis"),
+  Portuguese: words("olá|obrigad[oa]|quero|preciso|você|não|também|amanhã|tenho|meus|minhas"),
+  French: words("bonjour|merci|je|suis|veux|besoin|avec|pour|c'est|oui|mon|mes|j'ai"),
+  German: words("hallo|danke|ich|bin|möchte|brauche|und|nicht|bitte|mein|meine|habe"),
+  Italian: words("ciao|grazie|voglio|bisogno|sono|anche|domani|perché|ho|mio|mia"),
+};
+
+/**
+ * The one language to greet in: what they've been writing and saying, else their Google locale, else
+ * English. GPT-Live greets reliably only when the language is named outright.
+ */
+export function conversationLanguage(state: SessionProjection): string {
+  const said = conversationLines(state).filter((line) => line.speaker === 'user').slice(-6).map((line) => line.text).join(' ');
+  if (said.trim()) {
+    for (const [script, language] of SCRIPTS) if (script.test(said)) return language;
+    const scores = Object.entries(WORDS).map(([language, words]) => [language, said.match(words)?.length ?? 0] as const);
+    const [best, score] = scores.reduce((top, entry) => (entry[1] > top[1] ? entry : top));
+    if (score >= 2) return best;
+  }
+  const locale = state.facts.user_locale?.value?.split(/[-_]/)[0];
+  if (locale && /^[a-z]{2,3}$/i.test(locale)) {
+    try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(locale.toLowerCase()) ?? 'English'; } catch { /* unknown code */ }
+  }
+  return 'English';
+}
+
+/**
+ * Spoken greeting instruction, sent with session.instructions.append once session.started arrives. Per the
+ * GPT-Live guidance it names one language, says what to say, and tells the model to start now.
+ */
 export function voiceGreeting(state: SessionProjection, now = new Date()): string {
   const user = buildUserState(state, now);
   const open = stillOpen(user);
   const previous = state.calls.at(-1);
-  const back = previous && (previous.reason === 'connection_lost' || previous.reason === 'lost') ? " You're glad the line is back after it dropped." : '';
+  const back = previous && (previous.reason === 'connection_lost' || previous.reason === 'lost') ? ", say you're glad the line is back" : '';
   const hook = user.openLoops.length ? `pick up where things were left (${user.openLoops.at(-1)!.text})` : open.length ? `ease into ${open[0]}` : 'ask where they want to start';
-  return `Greet them now, in the language they've been using (English if unsure)${user.assistant.name ? `, as ${user.assistant.name}` : ''}${user.identity.callThem ? `, by name (${user.identity.callThem.name})` : ''}. You're picking up from the chat; ${hook}.${back} One or two short sentences, then pause and listen.`;
+  const them = user.identity.callThem?.name;
+  return `Greet the caller now in ${conversationLanguage(state)}. Start speaking now${user.assistant.name ? `, as ${user.assistant.name}` : ''}: say hi${them ? ` to ${them}` : ''}${back}, mention you're picking up from the chat, and ${hook}. One or two short, easy sentences, like a friend picking up the phone. Then pause and listen.`;
 }
 
 /** Seed history: app context as a developer message, then the most recent turns within budget. */
