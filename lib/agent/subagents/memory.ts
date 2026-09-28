@@ -38,22 +38,18 @@ const RULES = `# Rules (these win over the soul above)
 - If "summarize" is null, summary must be null. If it's given, return the updated summary covering the previous summary plus those lines.
 - Answer with the JSON object only. Empty arrays are a fine answer.`;
 
-/**
- * Reads what's new in the conversation and keeps what's worth knowing: notes with provenance, labels
- * with evidence, open loops, and a rolling summary of lines that no longer fit the prompt window.
- * Everything it proposes passes the checks in lib/domain/memory.ts before it becomes an event.
- */
-export async function runMemory(deps: SubagentDeps, sessionId: string, state: SessionProjection, now: Date): Promise<SessionEvent[]> {
+/** Exactly what the memory is given now, or undefined when there's nothing new worth a call. */
+export function memoryPrompt(state: SessionProjection) {
   const lines = conversationLines(state);
   const fresh = lines.slice(state.memory.readLines);
   const start = windowStart(lines);
   const covered = state.memory.summary?.lines ?? 0;
   const summarize = start - covered >= SUMMARY_BATCH ? lines.slice(covered, start) : undefined;
   // Nothing substantive from them since the last read, and nothing to summarize: no call.
-  if (!summarize && !fresh.some((line) => line.speaker === 'user' && line.text.trim().split(/\s+/).length >= 3)) return [];
+  if (!summarize && !fresh.some((line) => line.speaker === 'user' && line.text.trim().split(/\s+/).length >= 3)) return undefined;
   const openLoops = state.memory.loops.filter((loop) => loop.open);
-  const output = await runSubagent(deps, {
-    agent: 'memory', sessionId, turnId: `memory:${lines.length}`,
+  return {
+    lines: lines.length, summarizeTo: summarize ? start : undefined, openLoops,
     system: `${soulWithNotes('memory', soulNotes(state, 'memory'))}\n\n${RULES}`,
     input: {
       known: {
@@ -66,11 +62,22 @@ export async function runMemory(deps: SubagentDeps, sessionId: string, state: Se
       new_lines: recentLines(fresh, NEW_LINES, 400),
       summarize: summarize ? { previous: state.memory.summary?.text ?? null, lines: recentLines(summarize, summarize.length, 300) } : null,
     },
-    schema: memoryOutput,
-  });
+  };
+}
+
+/**
+ * Reads what's new in the conversation and keeps what's worth knowing: notes with provenance, labels
+ * with evidence, open loops, and a rolling summary of lines that no longer fit the prompt window.
+ * Everything it proposes passes the checks in lib/domain/memory.ts before it becomes an event.
+ */
+export async function runMemory(deps: SubagentDeps, sessionId: string, state: SessionProjection, now: Date): Promise<SessionEvent[]> {
+  const prompt = memoryPrompt(state);
+  if (!prompt) return [];
+  const { lines, summarizeTo, openLoops } = prompt;
+  const output = await runSubagent(deps, { agent: 'memory', sessionId, turnId: `memory:${lines}`, system: prompt.system, input: prompt.input, schema: memoryOutput });
   if (!output) return [];
   const at = now.toISOString();
-  const run = `${lines.length}`;
+  const run = `${lines}`;
   const events: SessionEvent[] = [];
   for (const [index, note] of output.notes.entries()) {
     const accepted = acceptNote(state, note.text);
@@ -92,12 +99,12 @@ export async function runMemory(deps: SubagentDeps, sessionId: string, state: Se
     const loop = openLoops.find((item) => item.loopId === id);
     if (loop) events.push({ id: `loop:${run}:${id}:closed`, at, type: 'loop', loopId: id, action: 'close', text: loop.text });
   }
-  const summary = summarize && output.summary ? cleanLine(output.summary, SUMMARY_CHARS) : undefined;
-  if (summary) events.push({ id: `summary:${start}`, at, type: 'summary', text: summary, lines: start });
+  const summary = output.summary ? cleanLine(output.summary, SUMMARY_CHARS) : undefined;
+  if (summary && summarizeTo !== undefined) events.push({ id: `summary:${summarizeTo}`, at, type: 'summary', text: summary, lines: summarizeTo });
   if (output.soul_note) {
     const accepted = acceptSoulNote(state, 'memory', output.soul_note);
     if (accepted.ok) events.push({ id: `soul:memory:${run}`, at, type: 'soul_note', agent: 'memory', text: accepted.text, source: `memory:${run}` });
   }
-  events.push({ id: `memory-run:${run}`, at, type: 'memory_run', lines: lines.length });
+  events.push({ id: `memory-run:${run}`, at, type: 'memory_run', lines });
   return events;
 }

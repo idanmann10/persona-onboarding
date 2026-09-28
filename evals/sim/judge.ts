@@ -1,6 +1,6 @@
 import type { SessionEvent, Toolkit } from '../../lib/domain/events';
 import { projectSession } from '../../lib/domain/project';
-import { END_REASONS } from '../../lib/agent/turn';
+import { END_REASONS } from '../../lib/domain/user-state';
 import { settingsLine, setupLine } from './screen';
 
 export const JEV_URL = 'https://api.typesafe.ai/v1/systemone';

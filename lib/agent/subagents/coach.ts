@@ -60,13 +60,14 @@ function coachInput(trigger: CoachTrigger, user: UserState, state: SessionProjec
   };
 }
 
+/** Exactly what the coach is given for a trigger (also printed by scripts/show-prompt.ts). */
+export function coachPrompt(trigger: CoachTrigger, state: SessionProjection, user: UserState, now: Date) {
+  return { system: `${soulWithNotes('coach', soulNotes(state, 'coach'))}\n\n${RULES}`, input: coachInput(trigger, user, state, now) };
+}
+
 /** The coach's read after a trigger. Undefined when the model call failed (the trigger can be retried). */
 export async function runCoach(deps: SubagentDeps, sessionId: string, trigger: CoachTrigger, state: SessionProjection, user: UserState, now: Date): Promise<CoachOutput | undefined> {
-  return runSubagent(deps, {
-    agent: 'coach', sessionId, turnId: `coach:${trigger.id}`,
-    system: `${soulWithNotes('coach', soulNotes(state, 'coach'))}\n\n${RULES}`,
-    input: coachInput(trigger, user, state, now), schema: coachOutput,
-  });
+  return runSubagent(deps, { agent: 'coach', sessionId, turnId: `coach:${trigger.id}`, ...coachPrompt(trigger, state, user, now), schema: coachOutput });
 }
 
 export const isSetupItem = (focus: CoachFocus): focus is SetupItem => (SETUP_ITEMS as readonly string[]).includes(focus);

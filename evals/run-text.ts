@@ -4,6 +4,9 @@ import { generateText } from 'ai';
 import cases from './cases/base.json';
 import { selectScenarios } from './select';
 import { buildSystemPrompt, PROMPT_VERSION } from '../lib/agent/prompts';
+import { greetingEvent } from '../lib/agent/session';
+import { projectSession } from '../lib/domain/project';
+import { buildUserState } from '../lib/domain/user-state';
 
 const args = process.argv.slice(2);
 const selected = selectScenarios(cases, args);
@@ -15,6 +18,9 @@ if (!process.env.OPENAI_API_KEY || !model) throw new Error('OPENAI_API_KEY and O
 await mkdir(new URL('./results/', import.meta.url), { recursive: true });
 const runId = `${new Date().toISOString().replaceAll(':', '-')}-${crypto.randomUUID().slice(0, 8)}`;
 const output = new URL(`./results/${runId}.jsonl`, import.meta.url);
+// A fresh conversation: only the greeting has been said.
+const fresh = projectSession([greetingEvent(projectSession([]))]);
+const system = buildSystemPrompt({ user: buildUserState(fresh, new Date()), capabilities: ['text'] });
 
 for (const scenario of selected) {
   const userText = scenario.turns.filter((turn) => turn.actor === 'user').map((turn) => turn.content).join('\n');
@@ -23,7 +29,7 @@ for (const scenario of selected) {
     const base = { runId, caseId: scenario.id, group: scenario.group, attempt, model, promptVersion: PROMPT_VERSION,
       expected: scenario.expected, critical: scenario.critical, mode: 'prompt_only', scored: false };
     try {
-      const result = await generateText({ model: openai(model), system: buildSystemPrompt({ facts: [], capabilities: ['text'] }),
+      const result = await generateText({ model: openai(model), system,
         prompt: userText });
       await appendFile(output, JSON.stringify({ ...base, response: result.text, durationMs: Date.now() - started, status: 'completed' }) + '\n');
     } catch (error) {
