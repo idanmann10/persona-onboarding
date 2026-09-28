@@ -14,10 +14,10 @@ One assistant, one conversation, in text and voice. It learns the brief's four t
   - Hang up mid-sentence and it texts you where you left off ("you were saying the investor updates…").
   - If the line drops, it offers to call back.
   - Say goodbye and it stays quiet.
-- **Real Gmail.** Google sign-in runs through Composio's managed OAuth, works with any Google account, and is read-only. It comes back with something real from your inbox, plus a one-tap recurring rundown (for example, every weekday at 8) that actually runs.
+- **Real Gmail.** Connecting Gmail runs through Composio's managed OAuth, works with any Google account, and is read-only. It comes back with something real from your inbox, plus a one-tap recurring rundown (for example, every weekday at 8) that actually runs.
 - **Make it yours.** Rename it, change its look, or change its personality or call voice, just by asking. Looks are painted portraits: describe any look and it paints one.
 - **Apps.** Connect any app Composio offers from the Apps sheet. Gmail and Calendar are the two it reads today.
-- **No sign-up form.** Connecting Gmail verifies your address, and your one main session follows you across browsers.
+- **Sign in with Google first.** One tap, and Google shares only your name, email and photo (Gmail stays a separate, optional connection). One Google account is one conversation, on any browser.
 
 ## Try to break it
 
@@ -97,6 +97,7 @@ bun run dev
 Open `http://localhost:3000`. Set `APP_BASE_URL` to the exact app origin; it's used for OAuth callbacks and deletion requests.
 
 Provider keys go in the ignored `.env.local` or the host's secret manager, never in Git:
+- **Sign-in:** a Google OAuth web client, `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, with the redirect URI `$APP_BASE_URL/api/auth/google/callback`. For local end-to-end tests without Google, `E2E_TEST_LOGIN=on` enables `/api/auth/test-login` under `bun run dev` on localhost only.
 - **Text:** `OPENAI_API_KEY` and `OPENAI_TEXT_MODEL` (`gpt-6-luna`).
 - **Browser calls:** a key with GPT-Live access.
 - **Gmail and Calendar:** Composio needs `COMPOSIO_API_KEY` plus one managed-auth config ID per toolkit.
@@ -104,7 +105,7 @@ Provider keys go in the ignored `.env.local` or the host's secret manager, never
 
 Without an OpenAI key the UI still loads: Persona's greeting shows, unsent text stays as a draft, and pressing Call shows the server's error instead of connecting.
 
-To inspect the timeline cards without keys, open the app once, then run `bun scripts/seed-demo.ts`. It seeds the newest local session with a named assistant, a call offer, a call that ended mid-sentence, the follow-up text, and a Connect Gmail card, and it refuses non-local databases.
+To inspect the timeline cards without keys, sign in once, then run `bun scripts/seed-demo.ts`. It seeds the newest local session with a named assistant, a call offer, a call that ended mid-sentence, the follow-up text, and a Connect Gmail card, and it refuses non-local databases.
 
 ## Verify
 

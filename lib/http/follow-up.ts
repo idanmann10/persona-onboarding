@@ -1,7 +1,6 @@
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 
-interface Store {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends LoginStore {
   latestEventSeq(id: string): Promise<number>;
   hasActiveReservation(id: string, prefix: string, seconds: number): Promise<boolean>;
 }
@@ -20,8 +19,8 @@ const lastWake = new Map<string, number>();
  */
 export function createUpdatesHandler(store: Store, wake: (sessionId: string) => void) {
   return async (request: Request): Promise<Response> => {
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) return new Response('Session required', { status: 401 });
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) return new Response('Session required', { status: 401 });
     if (new URL(request.url).searchParams.get('wake') === '1' && Date.now() - (lastWake.get(sessionId) ?? 0) > WAKE_EVERY_MS) {
       lastWake.set(sessionId, Date.now());
       if (lastWake.size > 5_000) lastWake.clear();

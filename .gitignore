@@ -12,3 +12,4 @@ test-results/
 *.log
 evals/results/
 .vercel
+.claude/worktrees/

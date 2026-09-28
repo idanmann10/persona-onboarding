@@ -1,14 +1,13 @@
 import type { SessionEvent, Toolkit } from '../domain/events';
 import { projectSession } from '../domain/project';
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { runVoiceTool, toolContext, VOICE_TOOL_NAMES } from '../agent/tools';
 import type { AccountReadClient } from '../agent/tools/accounts';
 import { withVoiceToolTrace } from '../observability/voice-tool-trace';
 import type { TraceSink } from '../observability/trace';
 
-interface Store extends IpQuotaStore {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends IpQuotaStore, LoginStore {
   hasEvent(id: string, eventId: string): Promise<boolean>;
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
@@ -27,8 +26,8 @@ export { VOICE_TOOL_NAMES };
 export function createVoiceToolHandler(store: Store, env: Record<string, string | undefined>, composio?: AccountReadClient) {
   return withVoiceToolTrace(store, async (request: Request): Promise<Response> => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) return new Response('Session required', { status: 401 });
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) return new Response('Session required', { status: 401 });
     let body: Record<string, unknown>;
     try { body = await request.json() as Record<string, unknown>; } catch { return new Response('Invalid JSON', { status: 400 }); }
     const { callId, callItemId, name } = body ?? {};

@@ -150,13 +150,40 @@ CREATE TABLE IF NOT EXISTS persona_traces (
 );
 CREATE INDEX IF NOT EXISTS persona_traces_session ON persona_traces (session_id, id);
 
--- One person, one main session: the verified Gmail address (lowercased) of whoever connected Gmail first.
--- Deleting the main session ("Start over") deletes the row, so the address can start fresh.
+-- Retired: the main session of a Gmail address under the old Gmail-as-sign-in. Read once, when a Google
+-- account with that verified email first signs in, which takes the conversation over and deletes the row.
 CREATE TABLE IF NOT EXISTS persona_users (
   email TEXT PRIMARY KEY CHECK (email = lower(email)),
   main_session_id UUID NOT NULL UNIQUE REFERENCES persona_sessions(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One Google account (its stable `sub`) is one user with one main conversation. The profile columns are
+-- what Google last said at sign-in. "Start over" deletes the conversation, which clears main_session_id;
+-- the next page load opens a fresh one.
+CREATE TABLE IF NOT EXISTS persona_accounts (
+  id UUID PRIMARY KEY,
+  google_sub TEXT NOT NULL UNIQUE CHECK (length(google_sub) BETWEEN 1 AND 255),
+  email TEXT NOT NULL CHECK (email = lower(email)),
+  full_name TEXT,
+  given_name TEXT,
+  picture TEXT,
+  locale TEXT,
+  main_session_id UUID UNIQUE REFERENCES persona_sessions(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  signed_in_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- A signed-in browser: the SHA-256 of the random token in its persona_auth cookie, never the token.
+-- Signing out deletes the row.
+CREATE TABLE IF NOT EXISTS persona_logins (
+  token_hash TEXT PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  account_id UUID NOT NULL REFERENCES persona_accounts(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS persona_logins_account ON persona_logins (account_id);
+CREATE INDEX IF NOT EXISTS persona_logins_expiry ON persona_logins (expires_at);
 
 CREATE TABLE IF NOT EXISTS persona_avatars (
   id UUID PRIMARY KEY,
