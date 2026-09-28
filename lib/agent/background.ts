@@ -6,7 +6,7 @@ import { turnDependencies } from './runtime';
 import { reconcile } from './follow-ups';
 
 /**
- * For routes: once this response is sent (Next's `after`), let the onboarding coach and the memory settle
+ * For routes: once this response is sent (Next's `after`), let the assistant (woken by what happened) and the memory settle
  * whatever the request just recorded (a call ended, an account connected, a task ran). It never delays or
  * fails the response, and running it twice is harmless: each trigger is decided once.
  */

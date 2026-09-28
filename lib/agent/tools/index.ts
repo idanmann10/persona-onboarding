@@ -18,6 +18,7 @@ import { showConnection } from './show-connection';
 import { readCalendarWindow, searchGmail } from './read-account';
 import { resolveIdentity } from './resolve-identity';
 import { soulNote } from './soul-note';
+import { endCall, scheduleCheckIn, stayQuiet } from './follow-up-tools';
 
 export type { ToolContext, ToolStore } from './types';
 
@@ -25,6 +26,7 @@ export type { ToolContext, ToolStore } from './types';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const AGENT_TOOLS: ReadonlyArray<AgentTool<any>> = [
   remember, customize, noteDecline, graduate, offerCall, proposeAutomation, showConnection, searchGmail, readCalendarWindow, resolveIdentity, soulNote,
+  stayQuiet, scheduleCheckIn, endCall,
 ];
 
 export const VOICE_TOOL_NAMES = AGENT_TOOLS.filter((item) => item.channels.includes('voice')).map((item) => item.name);

@@ -14,7 +14,7 @@ export interface TurnDependencies extends ToolDeps {
 }
 
 /**
- * Something other than a user message woke the assistant: a follow-up the coach asked for, a recurring
+ * Something other than a user message woke the assistant: an app event it may follow up on, a recurring
  * task's run, a line the call needs. The note is added after the conversation as an app note.
  */
 export interface TurnTrigger {
@@ -60,6 +60,7 @@ export async function prepareTurn(deps: TurnDependencies, sessionId: string, his
   const instructions = buildSystemPrompt({
     user: buildUserState(state, now, deps.env.OPENAI_VOICE), mode: channel === 'voice' ? 'voice_backend' : 'text',
     capabilities: capabilityLabels(ctx, state), soulNotes: soulNotes(state, 'assistant'), facts: otherFacts(state),
+    noOverlay: Boolean(options.trigger?.id.startsWith('automation:')),
   });
   const messages = modelMessages(state);
   if (options.trigger) messages.push({ role: 'system', content: options.trigger.instruction });

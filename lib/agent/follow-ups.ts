@@ -1,20 +1,19 @@
 import type { LanguageModel } from 'ai';
 import type { SessionEvent } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
-import { buildUserState, callDuration, cutOffLine, END_REASONS, endReason, type UserState } from '../domain/user-state';
-import { acceptSoulNote } from '../domain/memory';
-import { SETUP_LABELS } from '../domain/onboarding';
+import { buildUserState, callDuration, cutOffLine, END_REASONS, endReason, lifecycleOf, localClock, type UserState } from '../domain/user-state';
 import { nextRun } from '../domain/schedule';
 import { conversationLines } from './conversation';
 import { prepareTurn, type TurnDependencies } from './turn';
-import { generateTurn } from './runtime';
-import { isSetupItem, runCoach, type CoachOutput, type CoachTrigger } from './subagents/coach';
+import { generateTurnResult, undash } from './runtime';
 import { runMemory } from './subagents/memory';
 
 /**
- * Background work after the assistant speaks or the app records something: the onboarding coach decides
- * whether to reach out and what to steer toward, the memory keeps what's worth knowing. Runs in Next's
- * `after()`, so no reply waits on it. Code guardrails here have the last word over the coach.
+ * Follow-ups, server-side. An app event (a call ended, an account connected or failed, a recurring task
+ * ran, they came back, a check-in came due) wakes the assistant itself, with its onboarding overlay and
+ * a plain note on what happened: it writes one message or calls stay_quiet. Code guardrails decide first
+ * and have the last word. The memory reads what's new after every reply and every wake. All of it runs in
+ * Next's `after()`, so nothing the user waits on.
  */
 export interface FollowUpDeps extends TurnDependencies {
   store: TurnDependencies['store'] & {
@@ -26,38 +25,54 @@ export interface FollowUpDeps extends TurnDependencies {
   model?: LanguageModel;
 }
 
+/** What woke the assistant. The id is stable, so each one is decided once. */
+export interface WakeTrigger {
+  id: string;
+  kind: 'call_ended' | 'connected' | 'connect_failed' | 'task_ran' | 'task_failed' | 'returned' | 'check_in';
+  at: string;
+  /** One plain line on what happened, for the assistant and the log. */
+  detail: string;
+  /** Accounts the follow-up may read (Gmail just connected). */
+  include?: Array<'gmail' | 'calendar'>;
+  /** The call ended with a goodbye: at most one short line toward the recurring task. */
+  afterGoodbye?: boolean;
+}
+
 const DAY_MS = 86_400_000;
 const FRESH_MS = 5 * 60_000;
 export const DAILY_UNPROMPTED_LIMIT = 2;
 const QUIET = { from: 22, to: 8 };
 
-const GOODBYE = /\b(bye|goodbye|good night|gotta go|got to go|talk (to you )?(later|soon)|ttyl|see (you|ya)|cya|that'?s all|that'?s it for now|i'?m done|signing off)\b/i;
+export const GOODBYE = /\b(bye|goodbye|good night|gotta go|got to go|talk (to you )?(later|soon)|ttyl|see (you|ya)|cya|that'?s all|that'?s it for now|i'?m done|signing off)\b/i;
 const STOP = /^\s*(please\s+)?stop\s*[.!]*\s*$|\b(stop (messaging|texting|following up|pinging|writing)|don'?t (message|text|ping|write to) me|no more (messages|follow-?ups|reminders|nudges)|leave me alone|unsubscribe)\b/i;
 
-/** They said goodbye last, or asked recently for no more messages. */
-export function saidStop(state: SessionProjection): string | undefined {
+const isQuiet = (hour: number) => hour >= QUIET.from || hour < QUIET.to;
+const lastUserTextAt = (state: SessionProjection) => state.messages.filter((message) => message.speaker === 'user').at(-1)?.at ?? '';
+
+/** They asked recently for no more messages, or their last words were a goodbye. */
+export function saidStop(state: SessionProjection): 'stop' | 'goodbye' | undefined {
   const said = conversationLines(state).filter((line) => line.speaker === 'user').map((line) => line.text);
-  if (said.slice(-20).some((text) => STOP.test(text))) return 'they asked not to be messaged';
-  if (GOODBYE.test(said.at(-1) ?? '')) return 'their last words were a goodbye';
+  if (said.slice(-20).some((text) => STOP.test(text))) return 'stop';
+  if (GOODBYE.test(said.at(-1) ?? '')) return 'goodbye';
   return undefined;
 }
 
-const isQuiet = (hour: number) => hour >= QUIET.from || hour < QUIET.to;
-
 /** Triggers in the log nobody has decided on yet: newer than their last message, from the last day. */
-export function pendingTriggers(state: SessionProjection, now: Date): CoachTrigger[] {
-  const decided = new Set(state.memory.coach.map((decision) => decision.trigger));
-  const lastUserText = state.messages.filter((message) => message.speaker === 'user').at(-1)?.at ?? '';
-  const recent = (at?: string) => Boolean(at) && at! > lastUserText && now.getTime() - Date.parse(at!) < DAY_MS;
-  const triggers: CoachTrigger[] = [];
+export function pendingTriggers(state: SessionProjection, now: Date): WakeTrigger[] {
+  const decided = new Set(state.memory.followUps.map((decision) => decision.trigger));
+  const since = lastUserTextAt(state);
+  const recent = (at?: string) => Boolean(at) && at! > since && now.getTime() - Date.parse(at!) < DAY_MS;
+  const triggers: WakeTrigger[] = [];
   for (const call of state.calls) {
     if ((call.phase !== 'ended' && call.phase !== 'dropped') || !recent(call.endedAt)) continue;
     const reason = endReason(call);
     const cutOff = cutOffLine(call);
+    const lastUser = [...call.utterances].reverse().find((utterance) => utterance.speaker === 'user')?.text ?? '';
+    const afterGoodbye = reason === 'goodbye' || GOODBYE.test(lastUser);
     const detail = reason === 'setup_failed' || (!call.startedAt && !call.utterances.length)
-      ? "a call they started never connected"
-      : `the browser call ended because ${END_REASONS[reason]}${callDuration(call.startedAt, call.endedAt) ? `, after ${callDuration(call.startedAt, call.endedAt)}` : ''}${cutOff ? `; their last line looks cut off: "${cutOff}"` : ''}`;
-    triggers.push({ id: `call:${call.callId}`, kind: 'call_ended', at: call.endedAt!, detail });
+      ? 'a call they started never connected'
+      : `the browser call ended because ${END_REASONS[reason]}${callDuration(call.startedAt, call.endedAt) ? `, after ${callDuration(call.startedAt, call.endedAt)}` : ''}${cutOff ? `; their last line looks cut off: "${cutOff}"` : ''}${afterGoodbye ? '; it ended with a goodbye' : ''}`;
+    triggers.push({ id: `call:${call.callId}`, kind: 'call_ended', at: call.endedAt!, detail, ...(afterGoodbye ? { afterGoodbye } : {}) });
   }
   for (const item of state.timeline) {
     if (item.kind !== 'connection_notice' || item.phase === 'disconnected' || !recent(item.at)) continue;
@@ -72,99 +87,89 @@ export function pendingTriggers(state: SessionProjection, now: Date): CoachTrigg
   }
   const visit = state.activity.visits.at(-1);
   if (visit && recent(visit)) triggers.push({ id: `visit:${visit}`, kind: 'returned', at: visit, detail: 'they came back to the conversation after a while away' });
-  // Only the newest decision's check-in counts: a later read replaces an earlier plan.
-  const latest = state.memory.coach.at(-1);
-  if (latest?.reachOut === 'later' && latest.wakeAt && latest.wakeAt <= now.toISOString() && latest.at > lastUserText) {
-    triggers.push({ id: `wake:${latest.id}`, kind: 'check_in', at: latest.wakeAt, detail: `a check-in scheduled earlier is due (${latest.why})` });
+  // Only the newest check-in counts, and anything they wrote since cancels it.
+  const checkIn = state.memory.checkIns.at(-1);
+  if (checkIn && checkIn.at > since && checkIn.wakeAt <= now.toISOString()) {
+    triggers.push({ id: `check-in:${checkIn.id}`, kind: 'check_in', at: checkIn.wakeAt, detail: `a check-in you scheduled is due: ${checkIn.reason}` });
   }
   return triggers.filter((trigger) => !decided.has(trigger.id)).sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/** The coach proposes; these rules dispose. Returns the final decision and what overrode it, if anything. */
-export function guard(trigger: CoachTrigger, output: CoachOutput, user: UserState, state: SessionProjection, now: Date): { reachOut: 'now' | 'later' | 'no'; wakeAt?: string; guard?: string } {
+/**
+ * The code guardrails, before any model runs. Undefined lets the assistant decide; otherwise the reason
+ * it may not write now, and for quiet hours, when to try again.
+ */
+export function guard(trigger: WakeTrigger, user: UserState, state: SessionProjection, now: Date): { reason: string; retryAt?: string } | undefined {
   const stop = saidStop(state);
-  if (output.reach_out === 'no') return { reachOut: 'no' };
-  if (stop) return { reachOut: 'no', guard: stop };
-  const zone = user.now.timezone ?? 'UTC';
-  const morning = () => nextRun({ cadence: 'daily', time: '08:00' }, zone, now).toISOString();
-  if (output.reach_out === 'later') {
-    const at = new Date(now.getTime() + (output.later_in_minutes ?? 180) * 60_000);
-    const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hourCycle: 'h23' }).format(at)) % 24;
-    return isQuiet(hour) ? { reachOut: 'later', wakeAt: nextRun({ cadence: 'daily', time: '08:00' }, zone, at).toISOString(), guard: 'moved out of quiet hours' } : { reachOut: 'later', wakeAt: at.toISOString() };
-  }
-  if (trigger.kind === 'after_turn') return { reachOut: 'no', guard: 'they just got a reply' };
-  if (state.calls.some((call) => call.phase === 'accepted' || call.phase === 'started')) return { reachOut: 'no', guard: 'a call is live; the call handles it' };
-  if (user.engagement.unpromptedLast24h >= DAILY_UNPROMPTED_LIMIT) return { reachOut: 'no', guard: `already ${DAILY_UNPROMPTED_LIMIT} unprompted messages in the last day` };
-  // Quiet hours protect people who've stepped away; someone who hung up or opened the page a minute ago is still here.
   const fresh = now.getTime() - Date.parse(trigger.at) < FRESH_MS && trigger.kind !== 'check_in';
-  if (isQuiet(user.now.hour) && !fresh) return { reachOut: 'later', wakeAt: morning(), guard: 'quiet hours' };
-  return { reachOut: 'now' };
+  if (stop === 'stop') return { reason: 'they asked not to be messaged' };
+  // After a goodbye, only the call's own wake-up, within a few minutes, may add one line toward the recurring task.
+  if (stop === 'goodbye' && !(trigger.kind === 'call_ended' && trigger.afterGoodbye && fresh)) return { reason: 'their last words were a goodbye' };
+  if (state.calls.some((call) => call.phase === 'accepted' || call.phase === 'started')) return { reason: 'a call is live; the call handles it' };
+  if (user.engagement.unpromptedLast24h >= DAILY_UNPROMPTED_LIMIT) return { reason: `already ${DAILY_UNPROMPTED_LIMIT} unprompted messages in the last day` };
+  // Quiet hours protect people who've stepped away; someone who hung up or opened the page a minute ago is still here.
+  if (isQuiet(user.now.hour) && !fresh) return { reason: 'quiet hours', retryAt: nextRun({ cadence: 'daily', time: '08:30' }, user.now.timezone ?? 'UTC', now).toISOString() };
+  return undefined;
 }
 
-function followUpNote(trigger: CoachTrigger, output: CoachOutput): string {
-  const aim = isSetupItem(output.focus) ? SETUP_LABELS[output.focus] : output.focus.replace(/_/g, ' ');
+/** The recurring task is the clear next step: an account is connected and no task was proposed, approved or turned down yet. */
+export function recurringIsNext(user: UserState): boolean {
+  return (user.accounts.gmail === 'connected' || user.accounts.calendar === 'connected') && user.activation.recurring.status === 'none';
+}
+
+/** The app note a wake-up adds after the conversation (also printed by scripts/show-prompt.ts). */
+export function wakeNote(trigger: WakeTrigger, user?: UserState): string {
+  const afterGoodbye = !trigger.afterGoodbye ? ''
+    : user && recurringIsNext(user)
+      ? 'They said goodbye, and there is one clear next step: their account is connected and they have no recurring task yet. Write one short line that recaps the call in a few words, and put up the preview card with propose_automation, built from what they need (e.g. a weekday-morning rundown of who is waiting on them). Nothing else, no question beyond the card.'
+      : 'They said goodbye and there is no clear next step toward a recurring task: call stay_quiet.';
   return [
-    "App note, not from the user: you're writing first, unprompted.",
+    'App note, not from the user: the app woke you; they did not write.',
     `What happened: ${trigger.detail}.`,
-    `Why it's worth a message: ${output.why}`,
-    `Aim: ${aim}. ${output.guidance}`,
-    "Write like a person picking the thread back up: a few words on what just happened if it helps (\"looks like we got cut off\"), then the point. One short message, a bubble or two. No recap, and don't mention this note or that anything prompted you.",
+    afterGoodbye || 'Decide, as your onboarding guidance says: write one short message (a bubble or two), or call stay_quiet with a short reason. Silence is the default.',
+    "If you write, pick the thread back up like a person, then the point. Don't mention this note.",
   ].join('\n');
 }
 
-async function reachOut(deps: FollowUpDeps, sessionId: string, trigger: CoachTrigger, output: CoachOutput): Promise<boolean> {
-  const key = `reach:${trigger.id}`;
-  if (!(await deps.store.reserve(sessionId, key))) return false;
+export type WakeResult = { trigger: string; outcome: 'messaged' | 'quiet' | 'skipped'; reason?: string };
+
+/** Decide one trigger once: the guardrails, then the assistant writes or stays quiet. */
+export async function wake(deps: FollowUpDeps, sessionId: string, trigger: WakeTrigger): Promise<WakeResult> {
+  const skipped: WakeResult = { trigger: trigger.id, outcome: 'skipped' };
+  const key = `wake:${trigger.id}`;
+  if (!(await deps.store.reserve(sessionId, key))) return skipped;
+  const id = `followup:${trigger.id}`;
+  const record = async (outcome: 'messaged' | 'quiet', reason: string, guarded?: string) => {
+    await deps.store.appendEvent(sessionId, { id: `follow-up:${trigger.id}`, at: (deps.now?.() ?? new Date()).toISOString(), type: 'follow_up', trigger: trigger.id, outcome, reason, ...(guarded ? { guard: guarded } : {}) });
+    return { trigger: trigger.id, outcome, reason };
+  };
   try {
     const events = await deps.store.readEvents(sessionId);
-    const id = `followup:${trigger.id}`;
-    const turn = await prepareTurn(deps, sessionId, events, { turnId: id, trigger: { id, instruction: followUpNote(trigger, output), ...(trigger.include ? { include: trigger.include } : {}) } });
-    const text = (await generateTurn(turn, deps.env, deps.model)).trim();
+    const state = projectSession(events);
+    if (state.memory.followUps.some((decision) => decision.trigger === trigger.id)) return skipped;
+    const now = deps.now?.() ?? new Date();
+    const user = buildUserState(state, now, deps.env.OPENAI_VOICE);
+    const blocked = guard(trigger, user, state, now);
+    if (blocked) {
+      if (blocked.retryAt) await deps.store.appendEvent(sessionId, { id: `check-in:quiet:${trigger.id}`, at: now.toISOString(), type: 'check_in', wakeAt: blocked.retryAt, reason: `after quiet hours: ${trigger.detail}` });
+      return await record('quiet', blocked.retryAt ? `moved to ${localClock(new Date(blocked.retryAt), user.now.timezone).local}` : blocked.reason, blocked.reason);
+    }
+    const turn = await prepareTurn(deps, sessionId, events, { turnId: id, trigger: { id, instruction: wakeNote(trigger, user), ...(trigger.include ? { include: trigger.include } : {}) } });
+    const result = await generateTurnResult(turn, deps.env, deps.model);
+    const quiet = result.steps.flatMap((step) => step.toolResults).find((item) => item.toolName === 'stay_quiet');
+    if (quiet) return await record('quiet', String((quiet.input as { reason?: unknown } | undefined)?.reason ?? 'chose to stay quiet'));
+    const text = undash(result.steps.map((step) => step.text.trim()).filter(Boolean).join('\n\n'));
     // They wrote while this was being written: their reply is answered instead, and this one would talk over it.
     const latest = projectSession(await deps.store.readEvents(sessionId));
-    if (!text || latest.messages.filter((message) => message.speaker === 'user').length > turn.state.messages.filter((message) => message.speaker === 'user').length) return false;
-    const at = (deps.now?.() ?? new Date()).toISOString();
-    await deps.store.appendEvent(sessionId, { id: `answer:${id}`, at, type: 'message', speaker: 'assistant', channel: 'text', text, origin: 'follow_up' });
-    if (isSetupItem(output.focus)) await deps.store.appendEvent(sessionId, { id: `ask:${id}:${output.focus}`, at, type: 'setup_ask', item: output.focus, source: id });
-    return true;
-  } finally {
+    if (lastUserTextAt(latest) !== lastUserTextAt(state)) return await record('quiet', 'they wrote in the meantime');
+    if (!text) return await record('quiet', 'no message written');
+    await deps.store.appendEvent(sessionId, { id: `answer:${id}`, at: (deps.now?.() ?? new Date()).toISOString(), type: 'message', speaker: 'assistant', channel: 'text', text, origin: 'follow_up' });
+    return await record('messaged', trigger.detail);
+  } catch (error) {
+    // A failed model call releases the trigger so the next wake can try again.
     await deps.store.releaseReservation(sessionId, key);
+    throw error;
   }
-}
-
-export type CoachResult = { trigger: string; decision: 'skipped' | 'no' | 'later' | 'now'; messaged?: boolean; guard?: string };
-
-/** Decide one trigger once: the coach reads, the guard rules, and a "now" becomes one follow-up message. */
-export async function decideTrigger(deps: FollowUpDeps, sessionId: string, trigger: CoachTrigger): Promise<CoachResult> {
-  const skipped: CoachResult = { trigger: trigger.id, decision: 'skipped' };
-  const state = projectSession(await deps.store.readEvents(sessionId));
-  if (state.memory.coach.some((decision) => decision.trigger === trigger.id)) return skipped;
-  const now = deps.now?.() ?? new Date();
-  const user = buildUserState(state, now, deps.env.OPENAI_VOICE);
-  // The coach exists for onboarding; once they're settled in, silence.
-  if (user.lifecycle.stage !== 'onboarding') return skipped;
-  const key = `coach:${trigger.id}`;
-  if (!(await deps.store.reserve(sessionId, key))) return skipped;
-  const output = await runCoach({ env: deps.env, trace: deps.trace, model: deps.model }, sessionId, trigger, state, user, now);
-  if (!output) { await deps.store.releaseReservation(sessionId, key); return skipped; }
-  const ruled = guard(trigger, output, user, state, now);
-  // A declined item is closed, whatever the coach thought.
-  const focus = isSetupItem(output.focus) && user.setup[output.focus].status === 'declined' ? 'nothing' : output.focus;
-  const decided = { ...output, focus };
-  const at = now.toISOString();
-  await deps.store.appendEvent(sessionId, {
-    id: key, at, type: 'coach', trigger: trigger.id, reachOut: ruled.reachOut, ...(ruled.wakeAt ? { wakeAt: ruled.wakeAt } : {}),
-    why: output.why, focus, guidance: output.guidance, ...(ruled.guard ? { guard: ruled.guard } : {}),
-  });
-  if (trigger.kind === 'after_turn') {
-    for (const item of new Set(output.asked_in_last_reply)) await deps.store.appendEvent(sessionId, { id: `ask:${trigger.id}:${item}`, at, type: 'setup_ask', item, source: trigger.id });
-  }
-  if (output.soul_note) {
-    const accepted = acceptSoulNote(state, 'coach', output.soul_note);
-    if (accepted.ok) await deps.store.appendEvent(sessionId, { id: `soul:coach:${trigger.id}`, at, type: 'soul_note', agent: 'coach', text: accepted.text, source: key });
-  }
-  const messaged = ruled.reachOut === 'now' ? await reachOut(deps, sessionId, trigger, decided) : undefined;
-  return { trigger: trigger.id, decision: ruled.reachOut, ...(messaged === undefined ? {} : { messaged }), ...(ruled.guard ? { guard: ruled.guard } : {}) };
 }
 
 /** Let the memory read what's new. Idempotent per conversation length. */
@@ -177,26 +182,27 @@ export async function updateMemory(deps: FollowUpDeps, sessionId: string): Promi
   return events.length;
 }
 
-/** After the assistant answered a user message: the coach (while onboarding) and the memory, side by side. */
+/** After the assistant answered a user message: the memory reads it. No other model call. */
 export async function afterTurn(deps: FollowUpDeps, sessionId: string, userEventId: string): Promise<void> {
   const events = await deps.store.readEvents(sessionId);
-  const answer = events.find((event) => event.id === `answer:${userEventId}`);
-  if (!answer) return;
-  const trigger: CoachTrigger = { id: `turn:${userEventId}`, kind: 'after_turn', at: answer.at, detail: 'the assistant just answered their message' };
-  await Promise.allSettled([decideTrigger(deps, sessionId, trigger), updateMemory(deps, sessionId)]);
+  if (!events.some((event) => event.id === `answer:${userEventId}`)) return;
+  await updateMemory(deps, sessionId).catch((error) => console.error('Memory failed', error));
 }
 
 /**
- * Everything owed for a session: triggers nobody decided on (a call ended, an account connected or
- * failed, a task ran, they came back, a check-in came due), then the memory. Safe to call any number
- * of times from any route: each trigger is decided once.
+ * Everything owed for a session: triggers nobody decided on, then the memory. Safe to call any number of
+ * times from any route: each trigger is decided once. Only during onboarding: settled-in users get no
+ * unprompted messages.
  */
-export async function reconcile(deps: FollowUpDeps, sessionId: string): Promise<CoachResult[]> {
+export async function reconcile(deps: FollowUpDeps, sessionId: string): Promise<WakeResult[]> {
   const now = deps.now?.() ?? new Date();
-  const results: CoachResult[] = [];
-  for (const trigger of pendingTriggers(projectSession(await deps.store.readEvents(sessionId)), now)) {
-    try { results.push(await decideTrigger(deps, sessionId, trigger)); }
-    catch (error) { console.error('Follow-up trigger failed', trigger.id, error); }
+  const state = projectSession(await deps.store.readEvents(sessionId));
+  const results: WakeResult[] = [];
+  if (lifecycleOf(state, now).stage === 'onboarding') {
+    for (const trigger of pendingTriggers(state, now)) {
+      try { results.push(await wake(deps, sessionId, trigger)); }
+      catch (error) { console.error('Follow-up failed', trigger.id, error); }
+    }
   }
   try { await updateMemory(deps, sessionId); } catch (error) { console.error('Memory failed', error); }
   return results;

@@ -16,7 +16,7 @@ export async function POST(request: Request): Promise<Response> {
     const response = await createAutomationHandler(store, configured
       ? async (history, sessionId, trigger) => generateTurn(await prepareTurn(deps, sessionId, history, { turnId: trigger.id, trigger }))
       : undefined)(request);
-    // A run that happened or failed wakes the onboarding coach, after the response.
+    // A run that happened or failed wakes the assistant to decide on a follow-up, after the response.
     if (response.ok) await settleAfterRequest(request);
     return response;
   } catch (error) {

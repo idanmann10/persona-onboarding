@@ -28,6 +28,7 @@ const KNOWN: Record<string, (args: Args) => ToolStatus> = {
   graduate: () => ({ running: 'Skipping the rest of setup…', done: 'Skipped the rest of setup' }),
   propose_automation: () => ({ running: 'Drafting a recurring task…', done: 'Drafted a recurring task' }),
   offer_call: () => ({ running: 'Setting up a call…', done: 'Call is ready' }),
+  end_call: () => ({ running: 'Saying goodbye…', done: 'Call ended' }),
 };
 
 /** Unknown tools: guess from the words in the name, e.g. `search_calendar_events` reads as the calendar. */

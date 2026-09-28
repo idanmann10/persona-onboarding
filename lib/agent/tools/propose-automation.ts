@@ -8,6 +8,7 @@ const proposedThisTurn = new WeakMap<ToolContext, boolean>();
 /**
  * Preview a recurring task. It only creates a proposal card: nothing is scheduled until the user
  * approves it in the UI, which also records their time zone. One active recurring task per session.
+ * On a call the card appears in the chat behind the call and still needs their tap.
  */
 export const proposeAutomation = defineTool({
   name: 'propose_automation',
@@ -20,11 +21,11 @@ export const proposeAutomation = defineTool({
     time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).describe('24-hour local time in the user\'s time zone, e.g. "08:00".'),
     toolkits: z.array(z.enum(['gmail', 'calendar'])).max(2).optional().describe('Accounts it reads, if any.'),
   }),
-  channels: ['text'],
+  channels: ['text', 'voice'],
   // A recurring task's own run never proposes another one.
   offered: (ctx) => Boolean(ctx.automations) && !ctx.trigger?.startsWith('automation:'),
   async execute(ctx, input) {
-    if (!ctx.automations || ctx.channel === 'voice') return { status: 'unavailable', note: 'Recurring tasks are set up in the chat, not on a call.' };
+    if (!ctx.automations) return { status: 'unavailable', note: 'Recurring tasks are not available here.' };
     const schedule = { cadence: input.cadence, weekday: input.cadence === 'weekly' ? input.weekday : undefined, time: input.time };
     if (!isValidSchedule(schedule)) return { status: 'invalid', note: 'A weekly task needs a weekday, and the time must be HH:MM.' };
     if (ctx.state.automations.some((item) => item.status === 'active')) {
@@ -41,6 +42,7 @@ export const proposeAutomation = defineTool({
       id: `automation-proposal:${ctx.turnId}`, at: timestamp(ctx), type: 'automation', automationId: id, phase: 'proposed',
       title: input.title, schedule: describeSchedule(schedule), instruction: input.instruction,
     });
-    return { status: 'proposed', schedule: describeSchedule(schedule), note: 'A preview card with Approve is in the chat. Nothing is scheduled until they approve it; do not say it is set up.' };
+    return { status: 'proposed', schedule: describeSchedule(schedule), note: `A preview card with Approve is in the chat${ctx.channel === 'voice' ? ', behind the call' : ''}. Nothing is scheduled until they approve it; do not say it is set up.` };
   },
+  voiceUi: (result) => result.status === 'proposed' || result.status === 'already_proposed' ? { type: 'automation_proposal' } : undefined,
 });

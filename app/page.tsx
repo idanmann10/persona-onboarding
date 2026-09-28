@@ -177,7 +177,7 @@ export default function Home() {
       setAppsVersion((value) => value + 1);
       void refresh().then(() => {
         if (!toolkit) return;
-        // On a call the live model says it; in text the server's coach decides on a follow-up.
+        // On a call the live model says it; in text the server wakes the assistant to decide on a follow-up.
         if (voiceRef.current && event.data.status === 'connected') voiceRef.current.notify(`The user just connected ${TOOLKIT_NAMES[toolkit]}, and the app confirmed it. Tell them briefly and offer to take a look for them.`);
         else expectFollowUp();
       });
