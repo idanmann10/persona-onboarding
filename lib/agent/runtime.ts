@@ -28,8 +28,11 @@ export function turnDependencies<Store extends TurnDependencies['store'] & Resea
   };
 }
 
-/** Model steps per turn. Saving several facts and showing a card can take one step each. */
-export const MAX_STEPS = 6;
+/**
+ * Model steps per turn: room for real multi-step work (several reads, saves and a card) before the reply.
+ * The last step may only write, so a turn always ends in a reply.
+ */
+export const MAX_STEPS = 16;
 
 /** A stalled request fails in under a minute instead of leaving the user watching dots; it is retried once. */
 export function timeoutFor(env: Env) {
@@ -67,7 +70,8 @@ export function modelSettings(env: Env, override?: LanguageModel, options: { mod
   const effort = options.effort ?? env.OPENAI_REASONING_EFFORT;
   return {
     model: openai(options.model ?? env.OPENAI_TEXT_MODEL!) as LanguageModel,
-    providerOptions: { openai: { reasoningEffort: effort === 'none' || effort === 'medium' || effort === 'high' ? effort : 'low' } },
+    // Replies think (medium unless configured); subagents pass 'low' themselves.
+    providerOptions: { openai: { reasoningEffort: effort === 'none' || effort === 'low' || effort === 'high' ? effort : 'medium' } },
   };
 }
 

@@ -19,7 +19,7 @@ export const remember = defineTool({
   name: 'remember',
   description: 'Save something new or changed: what to call the user (preferred_name), what they want help with (current_need), or a correction to their profile: where they are (location) or their time zone (timezone, as an IANA zone like "America/New_York"). Use declined only when they refuse to share that exact thing.',
   input: z.object({
-    key: z.enum(REMEMBER_KEYS).describe("preferred_name: the user's own name, only when they say it is theirs or confirm the name you used. current_need: the task or problem they want handled, in their words. location: a city or place they say they are. timezone: the IANA zone for where they say they are."),
+    key: z.enum(REMEMBER_KEYS).describe("preferred_name: the user's own name, only when they say it is theirs or confirm the name you used. current_need: the task or pain they want off their plate, in their words ('investor updates eat my Mondays'), never who they are or what they're building ('building Arlo' is context: save that with save_memory). location: a city or place they say they are. timezone: the IANA zone for where they say they are."),
     value: z.string().max(300).optional().describe('The value, as the user said it. Omit when declined is true.'),
     declined: z.boolean().optional().describe('True only when they refuse to share this exact thing. Saying no to a call or an account is note_decline, not this.'),
   }),

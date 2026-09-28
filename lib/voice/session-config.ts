@@ -1,4 +1,5 @@
 import type { SessionProjection } from '../domain/project';
+import { onboardingGoals } from '../agent/goals';
 import { buildSystemPrompt } from '../agent/prompts';
 import { voiceToolSchemas } from '../agent/tools';
 import { conversationLines, historyWindow } from '../agent/conversation';
@@ -40,36 +41,10 @@ export { estimateTokens } from './tokens';
 type InputMessage = { type: 'message'; role: 'developer' | 'user' | 'assistant'; content: Array<{ type: 'input_text' | 'output_text'; text: string }> };
 type Capabilities = { gmail: boolean; calendar: boolean };
 
-/** What's still worth learning on this call, from state: never an answered or declined item. */
-function stillOpen(user: UserState): string[] {
-  if (user.lifecycle.stage !== 'onboarding' || user.lifecycle.skippedSetup) return [];
-  return (['preferred_name', 'need', 'gmail'] as const)
-    .filter((item) => user.setup[item].status === 'unknown' || user.setup[item].status === 'asked')
-    .map((item) => item === 'preferred_name' && user.identity.callThem ? `whether "${user.identity.callThem.name}" is what they like to be called`
-      : item === 'gmail' ? 'whether they want to connect Gmail so you can show them something real' : SETUP_LABELS[item]);
-}
-
-/**
- * The call's goals in order (the open basics, the first win, then the recurring task) and the one to aim
- * for now. Onboarding goals only: once they're settled in, a call is about whatever they called about.
- */
+/** The call's goals in order (the open basics, the first win, then the recurring task) and the one to aim for now. */
 export function callGoals(user: UserState): { steps: string[]; target: string } {
-  const inOnboarding = user.lifecycle.stage === 'onboarding';
-  // Skipping setup ends the questions, not the steering toward value.
-  const basics = inOnboarding && !user.lifecycle.skippedSetup ? stillOpen(user) : [];
-  const gmail = user.accounts.gmail === 'connected';
-  const won = Boolean(user.activation.firstValueAt);
-  const firstWin = !inOnboarding || won ? '' : gmail
-    ? 'the first win: look in their inbox (or calendar) for what they need and tell them one specific thing, like who is waiting on them'
-    : user.setup.gmail.status === 'declined'
-      ? 'the first win: help with what they tell you right now, something real and specific'
-      : "the first win: when their need touches email, put the Connect Gmail button on their screen (show_connection), then read their inbox once they're in";
-  const task = user.activation.recurring;
-  const recurring = !inOnboarding || task.status === 'active' ? '' : task.status === 'proposed'
-    ? 'their first recurring task: the preview card is waiting in the chat, so tell them to tap Approve'
-    : task.status === 'declined' ? '' : 'their first recurring task: offer to make the win happen on its own (propose_automation puts a preview card in the chat, e.g. a weekday-morning rundown of who is waiting on them), and tell them to tap Approve';
-  const steps = [...(basics.length ? [`the basics, one at a time and only when it fits: ${basics.join('; ')}`] : []), firstWin, recurring].filter(Boolean);
-  return { steps, target: steps[0] ?? 'whatever they called about; leave them with one clear next step' };
+  const goals = onboardingGoals(user, { channel: 'voice' });
+  return { steps: goals.steps, target: goals.target ?? 'whatever they called about; leave them with one clear next step' };
 }
 
 /**
@@ -246,7 +221,8 @@ export function voiceInput(state: SessionProjection, now = new Date()): InputMes
 export function buildLiveSession(state: SessionProjection, env: Record<string, string | undefined>, capabilities: Capabilities, now = new Date()) {
   const user = buildUserState(state, now, env.OPENAI_VOICE);
   const delegate = env.OPENAI_VOICE_DELEGATION !== 'off';
-  const effort = env.OPENAI_REASONING_EFFORT === 'none' || env.OPENAI_REASONING_EFFORT === 'medium' ? env.OPENAI_REASONING_EFFORT : 'low';
+  // The call's tool brain answers while someone waits on the line: quick by default, its own setting.
+  const effort = env.OPENAI_VOICE_REASONING_EFFORT === 'none' || env.OPENAI_VOICE_REASONING_EFFORT === 'medium' ? env.OPENAI_VOICE_REASONING_EFFORT : 'low';
   const session = {
     model: 'gpt-live-1',
     instructions: voiceInstructions(state, delegate ? capabilities : { gmail: false, calendar: false }, delegate, now),
