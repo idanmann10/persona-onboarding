@@ -4,6 +4,8 @@ import { UNSAFE, saidByUser, timestamp } from './gates';
 import { defineTool, type ToolContext } from './types';
 
 const ASSISTANT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} .'-]*$/u;
+/** Their latest words ask how the assistant comes across ("be more direct", "less chatty", "change your tone"). */
+const STYLE_ASK = /\b(personality|tone|style|vibe|sound|come across|attitude|be (more|less)|more (direct|playful|formal|casual|fun|polished|serious|chill|concise)|less (chatty|formal|playful|wordy|serious))\b/i;
 const AVATAR_DESCRIPTION_LIMIT = 200;
 const paintedThisTurn = new WeakMap<ToolContext, boolean>();
 
@@ -76,16 +78,20 @@ export const customize = defineTool({
       } else paint = avatarText;
     }
     const personalityText = clean(input.personality);
+    let skipped: string | undefined;
     if (personalityText !== undefined) {
       const preset = personalityFrom(personalityText);
       if (preset.id === 'custom' && (personalityText.length < 3 || personalityText.length > CUSTOM_PERSONALITY_LIMIT || UNSAFE.test(personalityText))) {
         return { status: 'rejected', reason: `Describe the personality in ${CUSTOM_PERSONALITY_LIMIT} characters or fewer, without links, or pick ${Object.keys(PERSONALITIES).join(', ')}.` };
       }
+      // Their style is theirs to set: the model doesn't restyle itself unasked (seen live: it "saved" the default on being named).
+      const presetSaid = preset.id !== 'custom' && [preset.id, PERSONALITIES[preset.id].label].some((word) => saidByUser(word, ctx.userWords.slice(-1)));
+      if (!presetSaid && !STYLE_ASK.test(ctx.userWords.at(-1) ?? '')) skipped = 'Your personality changes only when they ask for a different style.';
       // A preset is stored by id; anything else is kept in their words and quoted as a style, never as rules.
-      wanted.personality = preset.id === 'custom' ? { value: personalityText, words: [personalityText] } : { value: preset.id, words: [preset.id, PERSONALITIES[preset.id].label] };
+      else wanted.personality = preset.id === 'custom' ? { value: personalityText, words: [personalityText] } : { value: preset.id, words: [preset.id, PERSONALITIES[preset.id].label] };
     }
     if (input.voice !== undefined) wanted.voice = { value: input.voice, words: [input.voice, VOICES[input.voice].label] };
-    if (!Object.keys(wanted).length && !paint) return { status: 'rejected', reason: 'Say what to change: name, avatar, personality or voice.' };
+    if (!Object.keys(wanted).length && !paint) return { status: 'rejected', reason: skipped ?? 'Say what to change: name, avatar, personality or voice.' };
 
     // Everything else checked out; now paint the described look. A failed painting still saves the other changes.
     let paintFailure: string | undefined;
@@ -116,7 +122,7 @@ export const customize = defineTool({
       return { status: 'unchanged', note: 'That is already how it is set.' };
     }
     return {
-      status: 'saved', changed, ...(paintFailure ? { failed: { avatar: paintFailure } } : {}),
+      status: 'saved', changed, ...(paintFailure ? { failed: { avatar: paintFailure } } : {}), ...(skipped ? { not_changed: { personality: skipped } } : {}),
       note: `The app shows the change in the chat. Switch to it right away.${changed.voice && ctx.channel === 'voice' ? ' The new voice applies from the next call.' : ''}${paintFailure ? " The new look couldn't be painted this time; say so in a few words." : ''}`,
     };
   },
