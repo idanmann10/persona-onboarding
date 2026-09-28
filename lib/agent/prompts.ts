@@ -3,6 +3,7 @@ import { SETUP_LABELS } from '../domain/onboarding';
 import { SETUP_ITEMS } from '../domain/events';
 import { memoryLine, profileLine } from '../domain/memory';
 import type { SetupItemState, UserState } from '../domain/user-state';
+import { onboardingGoals } from './goals';
 import { BUDGET, clipToTokens, estimateTokens, withinBudget } from './budget';
 import { SOUL_VERSION, soul, soulWithNotes } from './soul';
 import { productMemory } from './company';
@@ -131,6 +132,11 @@ function stateBlock(input: PromptInput): string {
   ];
   if (onboarding && !user.lifecycle.skippedSetup) lines.push('What you know so far:', ...SETUP_ITEMS.map((item) => setupLine(item, user.setup[item])));
   else if (user.setup.need.value) lines.push(`What they want help with: ${user.setup.need.value}`);
+  const goals = onboardingGoals(user, { channel: input.mode === 'voice_backend' ? 'voice' : 'text', voice: input.capabilities.some((label) => /call/.test(label)) });
+  if (goals.target) {
+    lines.push(`Where you're headed (open goals, in order): ${goals.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`);
+    lines.push(`Aim now: ${goals.target}. Unless they're in the middle of something that needs your whole answer, said goodbye or stop, or haven't answered what you just asked, end this reply by moving it forward in one light line, question or card.`);
+  }
   const accounts = [
     `Gmail ${user.accounts.gmail === 'none' ? 'not connected' : user.accounts.gmail}`,
     `Calendar ${user.accounts.calendar === 'none' ? 'not connected' : user.accounts.calendar}`,
