@@ -7,7 +7,7 @@ import { startBrowserCall, type VoiceController, type VoiceCallbacks } from '@/l
 import type { PersonaSettings } from '@/lib/domain/persona';
 import { assistantGroupEnds, Bubble, duration, TimelineEntry, type Face, type Toolkit } from './thread';
 import { Avatar } from './components/avatar';
-import { ConnectionsSheet } from './components/connections-sheet';
+import { ConnectionsSheet, prefetchApps } from './components/connections-sheet';
 import { AppsIcon, ArrowUpIcon, PersonaMark, PhoneIcon } from './components/icons';
 
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
@@ -104,6 +104,9 @@ export default function Home() {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [refresh, runFollowUps]);
+
+  // Once the session exists, and after every connection change, warm the Apps sheet so it opens instantly.
+  useEffect(() => { if (!loading) prefetchApps(appsVersion); }, [loading, appsVersion]);
 
   const scrolledOnce = useRef(false);
   useEffect(() => {

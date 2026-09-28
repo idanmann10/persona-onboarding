@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { fallbackAppName, isAppSlug, listApps, type AppEntry as CatalogEntry } from '@/lib/domain/apps';
+import { SNAPSHOT_APPS } from '@/lib/integrations/catalog';
 import { CloseIcon, SearchIcon } from './icons';
 
 export type AppEntry = { slug: string; name: string; logo?: string; category?: string; connected: boolean };
@@ -36,22 +38,72 @@ export function appsFromResponse(body: unknown): AppEntry[] {
     .map(([slug, app]) => ({ slug, ...app, connected: record[slug] === true }));
 }
 
-export function matchesQuery(app: AppEntry, query: string): boolean {
+export function matchesQuery(app: Pick<AppEntry, 'slug' | 'name' | 'category'>, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
   return [app.name, app.slug, app.category ?? ''].some((value) => value.toLowerCase().includes(needle));
 }
 
+const ACRONYMS = new Set(['ai', 'crm', 'hr', 'sms', 'seo']);
+
+/** Composio's categories come lowercase ("team chat", "crm"): "Team chat", "CRM". */
+function categoryLabel(category?: string): string {
+  return (category ?? '').split(' ').map((word, index) => ACRONYMS.has(word) ? word.toUpperCase() : index ? word : word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
+// ---- Connection status: one small request, shared by the page's prefetch and the sheet. ----
+
+type Status = { version: number; request: Promise<string[]>; connected?: string[]; at?: number };
+let status: Status | undefined;
+/** A status older than this is shown at once but checked again, e.g. for a change made in another tab. */
+const STATUS_TTL_MS = 30_000;
+
+async function fetchConnected(): Promise<string[]> {
+  const response = await fetch('/api/connections/status', { cache: 'no-store' });
+  if (!response.ok) throw new Error(response.status === 503 ? 'Apps are not available right now.' : 'Apps could not be loaded.');
+  const body = await response.json() as { connected?: unknown };
+  return Array.isArray(body.connected) ? body.connected.filter(isAppSlug) : [];
+}
+
+/**
+ * The apps this session has connected. `version` is the page's count of finished connections, so a
+ * change made while the sheet was closed is never answered from the cache.
+ */
+function loadConnected(version: number, force = false): Promise<string[]> {
+  if (!force && status?.version === version && (status.at === undefined || Date.now() - status.at < STATUS_TTL_MS)) return status.request;
+  const entry: Status = { version, request: fetchConnected() };
+  entry.request.then((connected) => { entry.connected = connected; entry.at = Date.now(); }, () => { if (status === entry) status = undefined; });
+  status = entry;
+  return entry.request;
+}
+
+let logosWarmed = false;
+
+/**
+ * Called by the page once it has a session, and again after each connection change: loads the status now
+ * and, when the browser is idle, the logos of the sheet's first screen, so the sheet opens complete.
+ */
+export function prefetchApps(version: number): void {
+  loadConnected(version).catch(() => undefined);
+  if (logosWarmed || typeof window === 'undefined') return;
+  logosWarmed = true;
+  const warm = () => {
+    for (const app of listApps([...SNAPSHOT_APPS], [], null, 10)) if (app.logo) new Image().src = app.logo;
+  };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(warm, { timeout: 4_000 });
+  else setTimeout(warm, 1_500);
+}
+
 function AppLogo({ app }: { app: AppEntry }) {
   const [broken, setBroken] = useState(false);
-  if (app.logo && !broken) return <img className="app-logo" src={app.logo} alt="" width={36} height={36} loading="lazy" onError={() => setBroken(true)} />;
+  if (app.logo && !broken) return <img className="app-logo" src={app.logo} alt="" width={36} height={36} loading="lazy" decoding="async" onError={() => setBroken(true)} />;
   return <span className="app-logo app-logo-letter" aria-hidden="true">{(Array.from(app.name.trim())[0] ?? '?').toUpperCase()}</span>;
 }
 
 interface SheetProps {
   /** The app whose sign-in window is open, if any. */
   connecting: string | null;
-  /** Bumped by the page when a connection finishes, so the list reloads. */
+  /** Bumped by the page when a connection finishes, so the status reloads. */
   version: number;
   onConnect(slug: string): void;
   /** Called after a disconnect so the page can refresh the conversation. */
@@ -59,12 +111,21 @@ interface SheetProps {
   onClose(): void;
 }
 
-/** The "Apps" sheet: search the catalog, connect or disconnect accounts. */
+/**
+ * The "Apps" sheet: connect or disconnect accounts. It lists and searches the bundled catalog snapshot,
+ * so it renders on the first frame; only the session's status is fetched (usually already prefetched),
+ * and the server's live catalog is searched only when the snapshot has no match.
+ */
 export function ConnectionsSheet({ connecting, version, onConnect, onChanged, onClose }: SheetProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
-  const [apps, setApps] = useState<AppEntry[] | null>(null);
+  // null until the status is known: rows show, but their buttons wait for it.
+  const [connected, setConnected] = useState<string[] | null>(() => status?.version === version ? status.connected ?? null : null);
+  // Apps the server search found beyond the snapshot, kept so they stay listed.
+  const [found, setFound] = useState<CatalogEntry[]>([]);
+  // Texts the server search already answered; `empty` when it found nothing.
+  const [searched, setSearched] = useState<{ needle: string; empty: boolean }[]>([]);
   const [error, setError] = useState('');
   const [removing, setRemoving] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -79,22 +140,44 @@ export function ConnectionsSheet({ connecting, version, onConnect, onChanged, on
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const request = loadConnected(version, reload > 0);
+    request
+      // A newer request (a disconnect, a retry) may have replaced this one: only the latest answer counts.
+      .then((list) => { if (active && status?.request === request) { setConnected(list); setError(''); } })
+      .catch((cause) => { if (active) setError(cause instanceof Error && cause.message ? cause.message : 'Apps could not be loaded.'); });
+    return () => { active = false; };
+  }, [version, reload]);
+
+  const apps = useMemo(() => {
+    const catalog = new Map<string, CatalogEntry>(SNAPSHOT_APPS.map((app) => [app.slug, app]));
+    for (const app of found) if (!catalog.has(app.slug)) catalog.set(app.slug, app);
+    // An app connected since the snapshot still shows, so it can be disconnected.
+    for (const slug of connected ?? []) if (!catalog.has(slug)) catalog.set(slug, { slug, name: fallbackAppName(slug) });
+    return listApps([...catalog.values()], connected ?? [], null, Infinity);
+  }, [connected, found]);
+  const visible = apps.filter((app) => matchesQuery(app, query));
+  const needle = query.trim().toLowerCase();
+  // Only a text the snapshot can't match goes to the server. Search is by substring, so a text containing
+  // one the server found nothing for can't match either.
+  const miss = Boolean(needle) && !visible.length && !searched.some((done) => done.needle === needle || (done.empty && needle.includes(done.needle)));
+
+  useEffect(() => {
+    if (!miss) return;
     const controller = new AbortController();
-    const q = query.trim();
     const timer = setTimeout(() => {
-      fetch(`/api/connections${q ? `?q=${encodeURIComponent(q)}` : ''}`, { cache: 'no-store', signal: controller.signal })
-        .then(async (response) => {
-          if (!response.ok) throw new Error(response.status === 503 ? 'Apps are not available right now.' : 'Apps could not be loaded.');
-          setApps(appsFromResponse(await response.json()));
-          setError('');
-        })
-        .catch((cause) => {
+      fetch(`/api/connections?q=${encodeURIComponent(needle)}`, { cache: 'no-store', signal: controller.signal })
+        .then(async (response) => response.ok ? appsFromResponse(await response.json()).map(({ connected: _, ...app }): CatalogEntry => app) : undefined)
+        .catch(() => undefined)
+        .then((results) => {
           if (controller.signal.aborted) return;
-          setError(cause instanceof Error && cause.message ? cause.message : 'Apps could not be loaded.');
+          if (results?.length) setFound((list) => [...list, ...results.filter((app) => !list.some((known) => known.slug === app.slug))]);
+          // A failed search reads as no match for this exact text; the snapshot stays listed.
+          setSearched((list) => [...list, { needle, empty: results?.length === 0 }]);
         });
-    }, q ? 220 : 0);
+    }, 250);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [query, version, reload]);
+  }, [miss, needle]);
 
   function close() {
     const dialog = dialogRef.current;
@@ -112,14 +195,12 @@ export function ConnectionsSheet({ connecting, version, onConnect, onChanged, on
     try {
       const response = await fetch('/api/connections', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toolkit: slug }) });
       if (!response.ok) throw new Error((await response.text().catch(() => '')).trim() || 'That app could not be disconnected.');
-      setApps((list) => list?.map((app) => app.slug === slug ? { ...app, connected: false } : app) ?? list);
+      setConnected((list) => list?.filter((item) => item !== slug) ?? list);
       onChanged();
       setReload((value) => value + 1);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'That app could not be disconnected.'); }
     finally { setRemoving(null); }
   }
-
-  const visible = apps?.filter((app) => matchesQuery(app, query)) ?? [];
 
   return (
     <dialog ref={dialogRef} className="sheet" aria-labelledby="apps-title" onClose={onClose} onClick={onBackdrop}>
@@ -136,20 +217,19 @@ export function ConnectionsSheet({ connecting, version, onConnect, onChanged, on
           <input ref={searchRef} type="search" placeholder="Search apps" aria-label="Search apps" value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" spellCheck={false} />
         </label>
         {error ? <p className="sheet-error" role="alert">{error} <button type="button" className="text-button" onClick={() => setReload((value) => value + 1)}>Retry</button></p> : null}
-        <ul className="app-list" aria-busy={apps === null}>
-          {apps === null && !error ? <li className="app-empty">Loading apps…</li> : null}
-          {apps !== null && !visible.length ? <li className="app-empty">{query.trim() ? `No apps match “${query.trim()}”` : 'No apps yet'}</li> : null}
+        <ul className="app-list" aria-busy={connected === null || miss}>
+          {!visible.length ? <li className="app-empty">{miss ? 'Searching all apps…' : `No apps match “${query.trim()}”`}</li> : null}
           {visible.map((app) => (
             <li className="app-row" key={app.slug}>
               <AppLogo app={app} />
               <span className="app-text">
                 <strong>{app.name}</strong>
-                <small>{app.connected ? <><span className="connected-dot" aria-hidden="true" />Connected{app.category ? ` · ${app.category}` : ''}</> : app.category ?? ''}</small>
+                <small>{app.connected ? <><span className="connected-dot" aria-hidden="true" />Connected{app.category ? ` · ${categoryLabel(app.category)}` : ''}</> : categoryLabel(app.category)}</small>
               </span>
               {app.connected ? (
                 <button type="button" className="pill" disabled={removing === app.slug} onClick={() => void disconnect(app.slug)} aria-label={`Disconnect ${app.name}`}>{removing === app.slug ? 'Removing…' : 'Disconnect'}</button>
               ) : (
-                <button type="button" className="pill primary" disabled={Boolean(connecting)} onClick={() => onConnect(app.slug)} aria-label={`Connect ${app.name}`}>{connecting === app.slug ? 'Opening…' : 'Connect'}</button>
+                <button type="button" className="pill primary" disabled={connected === null || Boolean(connecting)} onClick={() => onConnect(app.slug)} aria-label={`Connect ${app.name}`}>{connecting === app.slug ? 'Opening…' : 'Connect'}</button>
               )}
             </li>
           ))}
