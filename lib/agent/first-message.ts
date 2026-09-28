@@ -1,6 +1,6 @@
 import type { SessionEvent } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
-import { lookupPersonCandidate } from '../research/people';
+import { distinctiveHandle, lookupByHandle, lookupPersonCandidate } from '../research/people';
 import { prepareTurn } from './turn';
 import { generateTurn, streamTurn, undash } from './runtime';
 import { greetingText } from './session';
@@ -31,29 +31,41 @@ export function workEmailCompany(email?: string): string | undefined {
 }
 
 /**
- * The identity check for sign-in: a verified Google name plus a work email's company, looked up with Exa.
- * Same gate as a stated identity (lib/research): only a single confident match is recorded. Runs once.
+ * The identity check for sign-in, once, from a Google-verified email only (a typed one could be anyone's).
+ * A work email: the verified name plus the domain's company, looked up with Exa; only a single confident
+ * match counts (the same gate as a stated identity, lib/research). A personal email: its handle
+ * ("idanmann10") plus the name, keeping only pages that carry both. Found profiles are tentative facts.
  */
 async function signInIdentity(deps: FollowUpDeps, sessionId: string, state: SessionProjection): Promise<void> {
   const key = deps.env.EXA_API_KEY;
   if (!key || state.facts.identity_lookup_status || state.history.some((fact) => fact.key === 'identity_lookup_status')) return;
-  // Only a Google-verified address: an email typed into a password sign-up could be anyone's.
   const email = state.facts.user_email;
-  const company = email?.evidence === 'confirmed' ? workEmailCompany(email.value) : undefined;
-  const full = state.facts.user_full_name?.value?.trim().split(/\s+/) ?? [];
-  if (!company || full.length < 2) return;
+  const fullName = state.facts.user_full_name?.value?.trim() ?? '';
+  const full = fullName.split(/\s+/);
+  if (email?.evidence !== 'confirmed' || full.length < 2) return;
+  const company = workEmailCompany(email.value);
+  const handle = company ? undefined : distinctiveHandle(email.value, full[0]);
+  if (!company && !handle) return;
   const at = () => (deps.now?.() ?? new Date()).toISOString();
   const fact = (name: string, value: string, sourceUrl?: string): SessionEvent => ({ id: `signin:identity:${name}`, at: at(), type: 'fact', key: name, value, evidence: 'tentative', provenance: 'tool_observed', sourceEventId: 'signin:identity', ...(sourceUrl ? { sourceUrl } : {}) });
+  // A slow lookup never holds up the hello for long.
+  const timeout = <T>(work: Promise<T>) => Promise.race([work, new Promise<null>((resolve) => setTimeout(() => resolve(null), 6_000))]);
   try {
-    // A slow lookup never holds up the hello for long.
-    const candidate = await Promise.race([
-      lookupPersonCandidate({ first: full[0], last: full.slice(1).join(' '), company, provenance: 'tool_observed' }, key),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 6_000)),
-    ]);
-    await deps.store.appendEvent(sessionId, fact('identity_lookup_status', candidate?.status ?? 'not_found'));
-    if (candidate?.status === 'matched_for_research') {
-      await deps.store.appendEvent(sessionId, fact('public_identity_candidate', `${candidate.name} at ${candidate.company}`, candidate.sourceUrl));
-      if (candidate.headline) await deps.store.appendEvent(sessionId, fact('public_headline', candidate.headline, candidate.sourceUrl));
+    if (company) {
+      const candidate = await timeout(lookupPersonCandidate({ first: full[0], last: full.slice(1).join(' '), company, provenance: 'tool_observed' }, key));
+      await deps.store.appendEvent(sessionId, fact('identity_lookup_status', candidate?.status ?? 'not_found'));
+      if (candidate?.status === 'matched_for_research') {
+        await deps.store.appendEvent(sessionId, fact('public_identity_candidate', `${candidate.name} at ${candidate.company}`, candidate.sourceUrl));
+        if (candidate.headline) await deps.store.appendEvent(sessionId, fact('public_headline', candidate.headline, candidate.sourceUrl));
+      }
+      return;
+    }
+    const found = await timeout(lookupByHandle(fullName, handle!, key));
+    await deps.store.appendEvent(sessionId, fact('identity_lookup_status', found ? 'matched_for_research' : 'not_found'));
+    if (found) {
+      await deps.store.appendEvent(sessionId, fact('public_identity_candidate', `${found.name} (${found.handle} online)`, found.profiles[0].url));
+      const profile = found.profiles.map((item) => `${item.title}: ${item.snippet} (${item.url})`).join(' | ').slice(0, 700);
+      await deps.store.appendEvent(sessionId, fact('public_profile', profile, found.profiles[0].url));
     }
   } catch (error) {
     console.error('Sign-in identity lookup failed', error instanceof Error ? error.message : error);
@@ -62,7 +74,7 @@ async function signInIdentity(deps: FollowUpDeps, sessionId: string, state: Sess
 
 const NOTE = `App note, not from the user: they just signed in, and this is the very first message of your conversation. Write it now, like a person texting someone they just met, not like a product.
 - Open with "hey" and their first name if you have it.
-- If "Other facts" has a confident public match (public_identity_candidate, maybe public_headline), make it personal: say what they do in plain words, lightly, as something you noticed, and offer one concrete thing you could take off their plate because of it. For example: "hey Dana, looks like you're running Acme. I could take investor updates or inbox triage off your hands if you want." Keep it to their work, never their private life, and never pretend to be sure.
+- If "Other facts" has a public match (public_identity_candidate, with public_headline or public_profile), make it personal: say what they do in plain words, lightly, as something you noticed, and offer one concrete thing you could take off their plate because of it. For example: "hey Dana, looks like you're running Acme. I could take investor updates or inbox triage off your hands if you want." Keep it to their work, never their private life, and never pretend to be sure.
 - Without a match, skip the pitch: a short, warm hello and one real question about what's eating their time.
 - Somewhere in there, casually, ask what they want to call you ("oh and what do you want to call me?").
 - Don't describe yourself or list what you do. No slogans, no cute bits, no wordplay. If a line would make a friend cringe, cut it.

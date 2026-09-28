@@ -70,3 +70,44 @@ export async function lookupPersonCandidate(clue: PersonClue, key: string, fetch
     requestId: payload.requestId,
   };
 }
+
+const GENERIC_HANDLES = new Set(['info', 'contact', 'hello', 'hi', 'admin', 'mail', 'email', 'me', 'support', 'team', 'office', 'sales', 'hey', 'inbox', 'test', 'user', 'noreply']);
+
+/** The part of an email before "@", when it's distinctive enough to find someone by (not "info", not just a first name). */
+export function distinctiveHandle(email: string, first?: string): string | undefined {
+  const handle = email.split('@')[0]?.toLowerCase().replace(/\+.*$/, '');
+  if (!handle || handle.length < 5 || !/[a-z]/.test(handle) || GENERIC_HANDLES.has(handle)) return undefined;
+  if (first && handle === first.toLowerCase()) return undefined;
+  return /^[a-z0-9._-]{5,40}$/.test(handle) ? handle : undefined;
+}
+
+export interface HandleProfile { name: string; handle: string; profiles: Array<{ title: string; url: string; snippet: string }>; requestId?: string }
+
+/**
+ * A personal email's handle ("idanmann10") is usually their username elsewhere (GitHub, Peerlist...). Only
+ * pages that carry both the handle (in the address or text) and the exact full name count: the handle ties
+ * them to this person, where a name alone could be anyone. Returns their public profile snippets, or null.
+ */
+export async function lookupByHandle(fullName: string, handle: string, key: string, fetchFn: typeof fetch = fetch): Promise<HandleProfile | null> {
+  const name = fullName.trim().replace(/\s+/g, ' ');
+  if (name.split(' ').length < 2) return null;
+  const response = await fetchFn('https://api.exa.ai/search', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: `${handle} ${name}`, type: 'auto', numResults: 6, contents: { highlights: true } }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`Exa handle search failed (${response.status})`);
+  const payload = await response.json() as { requestId?: string; results?: ExaResult[] };
+  const nameIn = new RegExp(`(^|\\W)${escaped(normalized(name))}(\\W|$)`);
+  const profiles = (payload.results ?? []).filter((result) => {
+    if (!/^https:\/\//.test(result.url ?? '')) return false;
+    const text = normalized([result.title, ...(result.highlights ?? [])].join(' '));
+    return (result.url!.toLowerCase().includes(handle) || text.includes(handle)) && nameIn.test(text);
+  }).slice(0, 3).map((result) => ({
+    title: (result.title ?? '').slice(0, 120),
+    url: result.url!,
+    snippet: (result.highlights ?? []).join(' ').replace(/[#*]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240),
+  }));
+  return profiles.length ? { name, handle, profiles, requestId: payload.requestId } : null;
+}
