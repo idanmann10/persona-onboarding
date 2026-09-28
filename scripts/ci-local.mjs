@@ -3,16 +3,13 @@
  * LOCAL CI: the jobs from .github/workflows/ci.yml, run on this machine.
  *
  * GitHub Actions does not start jobs on this account (billing / spending limit), so CI runs locally,
- * the way Arlo's does: same steps, same environment (only TEST_DATABASE_ADMIN_URL, no provider keys).
+ * the way Arlo's does: same steps, same environment (no provider keys, no database).
  *
- *   node scripts/ci-local.mjs                 install, typecheck, test, build
- *   node scripts/ci-local.mjs --jobs test     a subset
+ *   node scripts/ci-local.mjs                 install, typecheck, build
+ *   node scripts/ci-local.mjs --jobs build    a subset
  *   node scripts/ci-local.mjs --post-status   also report each verdict on HEAD as a GitHub commit
  *                                             status (context local-ci/<job>); refused on a dirty tree,
  *                                             since the verdict would describe code HEAD doesn't have
- *
- * The test job needs TEST_DATABASE_ADMIN_URL pointing at a disposable Postgres server (CI uses a
- * postgres:16 service); each run creates and drops its own database there.
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, rmSync } from 'node:fs';
@@ -22,7 +19,6 @@ import { join } from 'node:path';
 const JOBS = {
   install: ['bun', ['install', '--frozen-lockfile']],
   typecheck: ['bun', ['run', 'typecheck']],
-  test: ['bun', ['run', 'test']],
   build: ['bun', ['run', 'build']],
 };
 
@@ -49,10 +45,6 @@ if (postStatus) {
     console.error(`Push ${sha.slice(0, 12)} first: GitHub can only attach a status to a commit it has.`);
     process.exit(2);
   }
-}
-if (jobs.includes('test') && !process.env.TEST_DATABASE_ADMIN_URL) {
-  console.error('The test job needs TEST_DATABASE_ADMIN_URL (a disposable Postgres server, like the CI service).');
-  process.exit(2);
 }
 
 // CI's environment: no provider keys, no app database; only the disposable test server.

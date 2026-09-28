@@ -1,4 +1,11 @@
 import { APP_SLUG, appSlugFor, fallbackAppName, type AppEntry } from '../domain/apps';
+import snapshot from './apps-snapshot.json';
+
+/**
+ * The connectable apps as of the last `bun scripts/snapshot-apps.ts`, bundled with the app. The Apps
+ * sheet lists and searches these without a request; only toolkits added since need the live catalog.
+ */
+export const SNAPSHOT_APPS: readonly AppEntry[] = snapshot.apps;
 
 const TOOLKITS_URL = 'https://backend.composio.dev/api/v3/toolkits';
 const PAGE_SIZE = 1000;
@@ -87,7 +94,10 @@ export function createToolkitCatalog(key: string, fetchFn: typeof fetch = fetch,
   };
   return {
     list,
-    find: async (slug: string) => (await list()).find((app) => app.slug === slug),
+    // A cold server answers from the snapshot rather than paging through the whole catalog before a
+    // Connect can open its sign-in window. No-auth toolkits are not in the snapshot, so they still get checked live.
+    find: async (slug: string) => (cached && now() - cached.at < ttlMs ? cached.apps : SNAPSHOT_APPS).find((app) => app.slug === slug)
+      ?? (await list()).find((app) => app.slug === slug),
   };
 }
 

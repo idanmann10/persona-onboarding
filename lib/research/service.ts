@@ -1,7 +1,7 @@
 import type { SessionEvent } from '../domain/events';
 import { isDirectIdentityClaim } from './claim';
-import { lookupPersonCandidate, type PersonCandidate } from './context';
-import { researchMatchedPerson, type ProfessionalContext } from './answers';
+import type { PersonCandidate, PersonClue } from './people';
+import type { ProfessionalContext } from './answers';
 import { projectSession } from '../domain/project';
 
 interface Store {
@@ -12,17 +12,19 @@ interface Store {
 }
 
 type Clue = { first: string; last: string; company: string };
-type Lookup = typeof lookupPersonCandidate;
-type Research = (candidate: PersonCandidate, key: string) => Promise<ProfessionalContext | null>;
+
+/** The person lookup (Exa) and the follow-up research (Context.dev), each bound to its own key by the caller. */
+export interface ResearchProviders {
+  lookup(clue: PersonClue): Promise<PersonCandidate | null>;
+  research(candidate: PersonCandidate): Promise<ProfessionalContext | null>;
+}
 
 export async function resolveIdentityClaim(
   store: Store,
   sessionId: string,
   userEvent: SessionEvent,
   clue: Clue,
-  key: string,
-  lookup: Lookup = lookupPersonCandidate,
-  research: Research = researchMatchedPerson,
+  { lookup, research }: ResearchProviders,
 ): Promise<(PersonCandidate & { research?: ProfessionalContext | null }) | { status: 'insufficient_evidence' | 'already_checked' | 'not_found' | 'rate_limited' }> {
   if (userEvent.type !== 'message' || userEvent.speaker !== 'user' || !isDirectIdentityClaim(userEvent.text, clue)) {
     return { status: 'insufficient_evidence' };
@@ -47,12 +49,12 @@ export async function resolveIdentityClaim(
     await store.appendEvent(sessionId, { id: checkedId, at: new Date().toISOString(), type: 'fact', key: 'identity_lookup_status', value: 'rate_limited', evidence: 'tentative', provenance: 'tool_observed', sourceEventId: userEvent.id });
     return { status: 'rate_limited' };
   }
-  const candidate = await lookup({ ...clue, provenance: 'user_said' }, key);
+  const candidate = await lookup({ ...clue, provenance: 'user_said' });
   await store.appendEvent(sessionId, { id: checkedId, at: new Date().toISOString(), type: 'fact', key: 'identity_lookup_status', value: candidate?.status || 'not_found', evidence: 'tentative', provenance: 'tool_observed', sourceEventId: userEvent.id });
   if (candidate?.status === 'matched_for_research') {
     await store.appendEvent(sessionId, { id: `identity:${userEvent.id}:candidate`, at: new Date().toISOString(), type: 'fact', key: 'public_identity_candidate', value: `${candidate.name} at ${candidate.company}`, evidence: 'tentative', provenance: 'tool_observed', sourceEventId: userEvent.id, sourceUrl: candidate.sourceUrl });
     try {
-      const result = await research(candidate, key);
+      const result = await research(candidate);
       if (result) {
         await store.appendEvent(sessionId, { id: `identity:${userEvent.id}:research-status`, at: new Date().toISOString(), type: 'fact', key: 'public_research_status', value: result.partial ? 'partial' : 'complete', evidence: 'tentative', provenance: 'tool_observed', sourceEventId: userEvent.id, sourceUrl: result.sources[0] });
         if (result.role) await store.appendEvent(sessionId, { id: `identity:${userEvent.id}:role`, at: new Date().toISOString(), type: 'fact', key: 'public_role', value: result.role, evidence: 'tentative', provenance: 'tool_observed', sourceEventId: userEvent.id, sourceUrl: result.sources[0] });

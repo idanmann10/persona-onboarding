@@ -3,11 +3,11 @@ import { projectSession } from '../domain/project';
 import { personaSettings } from '../domain/persona';
 import type { AutomationRecord } from '../domain/automation';
 import { buildAgentLog } from '../observability/log';
+import { buildUserState } from '../domain/user-state';
 import type { StoredTrace } from '../observability/trace';
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 
-interface Store {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
   readTraces(id: string): Promise<StoredTrace[]>;
   listAutomations?(id: string): Promise<AutomationRecord[]>;
@@ -19,8 +19,8 @@ interface Store {
  */
 export function createInspectHandler(store: Store, env: Record<string, string | undefined> = {}) {
   return async (request: Request): Promise<Response> => {
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) {
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) {
       return Response.json({ error: 'Session required' }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
     }
     const [events, traces, automations] = await Promise.all([
@@ -38,6 +38,17 @@ export function createInspectHandler(store: Store, env: Record<string, string | 
           ? automations.map((item) => ({ id: item.id, title: item.title, status: item.status, cadence: item.cadence, time: item.time, ...(item.nextRunAt ? { nextRunAt: item.nextRunAt } : {}) }))
           : state.automations.map((item) => ({ id: item.automationId, title: item.title, status: item.status, schedule: item.schedule, ...(item.nextRunAt ? { nextRunAt: item.nextRunAt } : {}) })),
         facts,
+        // The labeled state the agents read, and what each agent added to its own soul for this user.
+        user: (() => {
+          const user = buildUserState(state, new Date(), env.OPENAI_VOICE);
+          const count = (status: string) => state.memory.memories.filter((memory) => memory.status === status).length;
+          return {
+            lifecycle: user.lifecycle, setup: user.setup, labels: user.labels, openLoops: user.openLoops, checkIn: user.checkIn ?? null,
+            profile: user.profile, memories: user.memories, memoryCounts: { live: user.memories.length, replaced: count('replaced'), forgotten: count('forgotten') },
+            ...(state.memory.summary ? { summary: { text: state.memory.summary.text, lines: state.memory.summary.lines } } : {}),
+          };
+        })(),
+        soulNotes: Object.fromEntries(Object.entries(state.memory.soulNotes).map(([agent, notes]) => [agent, notes.map((note) => note.text)])),
       },
       ...log,
       generatedAt: new Date().toISOString(),

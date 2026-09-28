@@ -1,4 +1,4 @@
-import type { PersonCandidate } from './context';
+import type { PersonCandidate } from './people';
 
 export interface ProfessionalContext {
   role?: string;

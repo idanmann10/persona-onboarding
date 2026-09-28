@@ -51,8 +51,12 @@ export function clip(value: unknown, max = 600): string {
 /** The label a reviewer sees for a turn, from what woke the assistant. */
 export function turnName(triggerId?: string): string {
   if (!triggerId) return 'Reply';
-  if (triggerId.startsWith('followup:call:')) return 'After the call';
-  if (triggerId.startsWith('followup:')) return 'After connecting';
+  if (triggerId.startsWith('followup:call:')) return 'Follow-up after the call';
+  if (triggerId.startsWith('followup:connection:')) return 'Follow-up after connecting';
+  if (triggerId.startsWith('followup:visit:')) return 'Welcome back';
+  if (triggerId.startsWith('followup:check-in:')) return 'Scheduled check-in';
+  if (triggerId.startsWith('followup:task:')) return 'Follow-up after a task';
+  if (triggerId.startsWith('followup:')) return 'Follow-up';
   if (triggerId.startsWith('automation:')) return 'Recurring task';
   return 'Reply';
 }
@@ -101,6 +105,8 @@ export const isTraceSink = (value: unknown): value is TraceSink =>
 export function describeTurn(sink: TraceSink, sessionId: string, turn: {
   turnId: string; trigger?: { id: string; instruction: string }; channel: string; model?: string;
   instructions: string; messages: unknown[]; tools: Record<string, unknown>; userText?: string;
+  /** Estimated tokens per prompt section and what the replayed conversation held (lib/agent/budget.ts). */
+  context?: Record<string, unknown>;
 }): TurnTrace {
   return {
     sink, sessionId, turnId: turn.turnId, name: turnName(turn.trigger?.id),
@@ -111,6 +117,7 @@ export function describeTurn(sink: TraceSink, sessionId: string, turn: {
       messageCount: turn.messages.length,
       tools: Object.keys(turn.tools),
       channel: turn.channel,
+      ...(turn.context ? { context: turn.context } : {}),
       ...(turn.trigger ? { triggerId: turn.trigger.id, trigger: clip(turn.trigger.instruction, 2_000) } : turn.userText ? { userText: clip(turn.userText, 1_200) } : {}),
     },
   };

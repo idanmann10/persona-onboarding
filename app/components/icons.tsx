@@ -1,4 +1,8 @@
 import type { SVGProps } from 'react';
+import {
+  ArrowUp, ArrowUpRight, Calendar, Check, ChevronDown, Keyboard, LayoutGrid, LogOut, Mail, Mic, MicOff, Phone, Repeat2, RotateCcw, ScrollText, Search, Sparkles, X,
+  type LucideIcon, type LucideProps,
+} from 'lucide-react';
 
 /** Persona's logo mark (from yourpersona.com); fills with the current text color. */
 export function PersonaMark(props: SVGProps<SVGSVGElement>) {
@@ -9,41 +13,38 @@ export function PersonaMark(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-type IconProps = SVGProps<SVGSVGElement>;
-const stroke = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
+type IconProps = LucideProps;
 
-export function PhoneIcon(props: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
-      <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.61 21 3 13.39 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z" />
-    </svg>
-  );
-}
+/**
+ * Every other glyph is Lucide at one stroke weight, so the header, composer, cards, Apps sheet and call
+ * screen read as one set. Decorative by default (Lucide adds aria-hidden); the button carries the label.
+ */
+const lucide = (Glyph: LucideIcon, defaults: LucideProps = {}) => {
+  const Icon = (props: IconProps) => <Glyph strokeWidth={1.9} {...defaults} {...props} />;
+  Icon.displayName = `${Glyph.displayName ?? 'Lucide'}Icon`;
+  return Icon;
+};
 
-export function RepeatIcon(props: IconProps) {
-  return <svg {...stroke} {...props}><path d="M17 2l4 4-4 4" /><path d="M3 11V9a3 3 0 0 1 3-3h15" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v2a3 3 0 0 1-3 3H3" /></svg>;
-}
+/** A solid handset, like the phone.fill on iOS call buttons; rotated 135deg it is the hang-up glyph. */
+export const PhoneIcon = lucide(Phone, { fill: 'currentColor', strokeWidth: 1.4 });
+export const RepeatIcon = lucide(Repeat2);
+export const MailIcon = lucide(Mail);
+export const CalendarIcon = lucide(Calendar);
+export const SearchIcon = lucide(Search);
+export const CloseIcon = lucide(X);
+export const ArrowUpIcon = lucide(ArrowUp, { strokeWidth: 2.5 });
+export const AppsIcon = lucide(LayoutGrid);
+export const ChevronDownIcon = lucide(ChevronDown);
+export const CheckIcon = lucide(Check, { strokeWidth: 2.5 });
 
-export function MailIcon(props: IconProps) {
-  return <svg {...stroke} {...props}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3.5 7l8.5 6 8.5-6" /></svg>;
-}
+/* Account menu and the look picker. */
+export const AgentLogIcon = lucide(ScrollText);
+export const ExternalIcon = lucide(ArrowUpRight);
+export const StartOverIcon = lucide(RotateCcw);
+export const SignOutIcon = lucide(LogOut);
+export const PaintIcon = lucide(Sparkles);
 
-export function CalendarIcon(props: IconProps) {
-  return <svg {...stroke} {...props}><rect x="3" y="4.5" width="18" height="16.5" rx="2.5" /><path d="M16 2.5v4M8 2.5v4M3 10h18" /></svg>;
-}
-
-export function SearchIcon(props: IconProps) {
-  return <svg {...stroke} {...props}><circle cx="11" cy="11" r="7" /><path d="M20.5 20.5l-4.6-4.6" /></svg>;
-}
-
-export function CloseIcon(props: IconProps) {
-  return <svg {...stroke} {...props}><path d="M18 6L6 18M6 6l12 12" /></svg>;
-}
-
-export function ArrowUpIcon(props: IconProps) {
-  return <svg {...stroke} strokeWidth={2.4} {...props}><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" /></svg>;
-}
-
-export function AppsIcon(props: IconProps) {
-  return <svg {...stroke} {...props}><rect x="3.5" y="3.5" width="7" height="7" rx="2" /><rect x="13.5" y="3.5" width="7" height="7" rx="2" /><rect x="3.5" y="13.5" width="7" height="7" rx="2" /><rect x="13.5" y="13.5" width="7" height="7" rx="2" /></svg>;
-}
+/* Call screen controls. */
+export const MicIcon = lucide(Mic);
+export const MicOffIcon = lucide(MicOff);
+export const KeyboardIcon = lucide(Keyboard);

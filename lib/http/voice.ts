@@ -1,13 +1,13 @@
 import type { SessionEvent } from '../domain/events';
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { projectSession } from '../domain/project';
 import { availableCapabilities } from '../domain/capabilities';
 import { buildLiveSession } from '../voice/session-config';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
 import { recordTrace, type TraceEntry, type TraceSink } from '../observability/trace';
+import { sameOrigin } from './origin';
 
-interface Store extends IpQuotaStore {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends IpQuotaStore, LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   acquireCallLease(id: string, leaseId: string): Promise<boolean>;
@@ -19,9 +19,9 @@ interface Store extends IpQuotaStore {
 
 export function createVoiceSessionHandler(store: Store, key: string, upstream: typeof fetch, env: Record<string, string | undefined> = {}) {
   return async (request: Request): Promise<Response> => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId) || !(await store.sessionExists(sessionId))) return new Response('Session required', { status: 401 });
+    if (!sameOrigin(request)) return new Response('Unexpected origin', { status: 403 });
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) return new Response('Session required', { status: 401 });
     let body: unknown;
     try { body = await request.json(); } catch { return new Response('Invalid JSON', { status: 400 }); }
     const sdp = body && typeof body === 'object' && 'sdp' in body ? (body as { sdp: unknown }).sdp : undefined;
@@ -35,7 +35,7 @@ export function createVoiceSessionHandler(store: Store, key: string, upstream: t
     }
     const state = projectSession(await store.readEvents(sessionId));
     const capabilities = availableCapabilities(env);
-    const { session, greeting, limits, delegation } = buildLiveSession(state, env, { gmail: capabilities.gmail, calendar: capabilities.calendar });
+    const { session, greeting, greetingLine, limits, delegation } = buildLiveSession(state, env, { gmail: capabilities.gmail, calendar: capabilities.calendar });
     const setupStarted = Date.now();
     const described = session as { model?: string; instructions?: string; input?: unknown[]; audio?: { output?: { voice?: string } } };
     // The agent log's record of the setup: which voice and model, what it was seeded with, how long GPT-Live took.
@@ -74,6 +74,6 @@ export function createVoiceSessionHandler(store: Store, key: string, upstream: t
       store.appendEvent(sessionId, { id: `call:${payload.session.id}:accepted`, at: new Date().toISOString(), type: 'call', phase: 'accepted', callId: payload.session.id }),
       traced,
     ]);
-    return Response.json({ session: { id: payload.session.id }, transport: { type: 'webrtc', sdp: payload.transport.sdp }, greeting, limits, delegation }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({ session: { id: payload.session.id }, transport: { type: 'webrtc', sdp: payload.transport.sdp }, greeting, greetingLine, limits, delegation }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
   };
 }

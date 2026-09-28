@@ -19,6 +19,14 @@ interface Inspection {
     settings: Settings;
     connections: Record<string, string>;
     facts: Array<{ key: string; value: string; evidence: string; provenance: string }>;
+    user?: {
+      lifecycle: { stage: string; day: number }; labels: Array<{ label: string; confidence: string }>; checkIn: { wakeAt: string; reason: string } | null;
+      profile?: Array<{ id: string; label: string; value: string; status: string }>;
+      memories?: Array<{ id: string; text: string; kind: string; labels: string[] }>;
+      memoryCounts?: { live: number; replaced: number; forgotten: number };
+      summary?: { text: string; lines: number };
+    };
+    soulNotes?: Record<string, string[]>;
   };
   summary: LogSummary;
   items: LogItem[];
@@ -59,6 +67,8 @@ function elapsedOf(item: LogItem, serverNow: number): number | undefined {
 function rowText(item: LogItem): { text: string; quiet?: boolean } {
   if (item.kind === 'turn') {
     if (item.userText) return { text: item.userText };
+    // A background agent's row reads as its decision, not its JSON input.
+    if (item.agent) return { text: `${item.name} · ${(item.reply ?? '').replace(/[{}"\s]+/g, ' ').trim()}`, quiet: true };
     if (item.trigger) return { text: item.trigger, quiet: true };
     return { text: item.reply ?? sentence(item.name), quiet: true };
   }
@@ -248,6 +258,12 @@ function TurnDetail({ turn, serverNow, settings }: { turn: TurnItem; serverNow: 
         ['Cached', turn.totals.tokensIn ? `${Math.round((turn.totals.cachedIn / turn.totals.tokensIn) * 100)}%` : '–'],
         ['Steps', `${turn.steps.length}${turn.stalls ? ` · ${turn.stalls} stalled` : ''}`, turn.stalls > 0],
       ]} />
+      {turn.context && (
+        <details className="ins-fold">
+          <summary>Context budget<span>~{count(Number(turn.context.total) || 0)} tokens · memories {String(turn.context.memories ?? '–')} · {String(turn.context.replayed ?? '')}</span></summary>
+          <div className="ins-chips">{Object.entries(turn.context).map(([key, value]) => <code key={key}>{key} {typeof value === 'number' ? count(value) : value}</code>)}</div>
+        </details>
+      )}
       {turn.error && <p className="ins-error" role="alert">{turn.error}</p>}
       {(turn.userText || turn.trigger) && (
         <Section title={turn.userText ? 'User said' : 'Trigger'}>
@@ -353,6 +369,14 @@ function Knows({ data }: { data: Inspection['state'] }) {
         {row('Recurring task', automation.status === 'none' ? undefined : `${automation.title ?? 'Task'}${automation.schedule ? ` · ${automation.schedule}` : ''}`, automation.status === 'none' ? undefined : automation.status)}
         {row('Personality', personality, fact('personality')?.provenance ?? 'default')}
         {row('Voice', settings.voice, fact('voice')?.provenance ?? 'default')}
+        {data.user && row('Stage', `${sentence(data.user.lifecycle.stage)} · day ${data.user.lifecycle.day}`)}
+        {data.user && row('Check-in', data.user.checkIn ? `${clock(data.user.checkIn.wakeAt)} · ${data.user.checkIn.reason}` : undefined)}
+        {data.user && row('Labels', data.user.labels.length ? data.user.labels.map((label) => `${label.label} (${label.confidence})`).join(', ') : undefined)}
+        {data.user?.profile && row('Profile', data.user.profile.length ? data.user.profile.map((item) => `${item.label}: ${item.value} (${item.status})`).join(' · ') : undefined, 'pinned')}
+        {data.user?.memories && row('Memories', data.user.memories.length ? data.user.memories.map((memory) => `${memory.text} [${[memory.kind, ...memory.labels].join(', ')}]`).join(' · ') : undefined,
+          data.user.memoryCounts ? `${data.user.memoryCounts.live} live, ${data.user.memoryCounts.replaced} merged or corrected, ${data.user.memoryCounts.forgotten} forgotten` : undefined)}
+        {data.user && row('Summary', data.user.summary ? `${data.user.summary.text}` : undefined, data.user.summary ? `covers ${data.user.summary.lines} lines` : undefined)}
+        {Object.entries(data.soulNotes ?? {}).map(([agent, notes]) => row(`${sentence(agent)} soul notes`, notes.length ? notes.join(' · ') : undefined))}
       </dl>
     </div>
   );

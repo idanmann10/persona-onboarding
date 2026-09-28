@@ -3,21 +3,22 @@ import type { CallEndReason, SessionEvent, Toolkit } from '../../lib/domain/even
 import { projectSession, type OnboardingProgress, type SessionProjection } from '../../lib/domain/project';
 import type { AutomationRecord, AutomationStatus } from '../../lib/domain/automation';
 import { prepareTurn, type TurnTrigger } from '../../lib/agent/turn';
-import { describeTrigger, isSilent, type FollowUpRequest } from '../../lib/agent/follow-up';
+import { afterTurn } from '../../lib/agent/follow-ups';
 import { generateTurnResult } from '../../lib/agent/runtime';
 import { PROMPT_VERSION } from '../../lib/agent/prompts';
-import { greetingEvent } from '../../lib/agent/session';
+import { writeFirstMessage } from '../../lib/agent/first-message';
 import { VOICE_LIMITS, voiceGreeting } from '../../lib/voice/session-config';
 import { createCallOfferHandler } from '../../lib/http/call-offer';
 import { createConnectionHandlers } from '../../lib/http/connections';
 import { createAutomationHandler } from '../../lib/http/automations';
-import { createMemoryStore } from '../app/memory-store';
+import { createMemoryStore, EVAL_LOGIN_TOKEN } from '../app/memory-store';
 import { createFixtureComposio, FIXTURE_VERSION, type FixtureRead } from '../app/fixtures';
+import { settleFollowUps } from '../app/replay';
 import type { Persona } from './personas';
 import type { LeaveFeeling, SimAction, SimControl, SimUser } from './user';
 import { pendingControls, renderCallScreen, renderScreen } from './screen';
 
-/** A UUID, because the app's endpoints reject any other session cookie. */
+/** The simulated person's conversation; the app's endpoints reach it through the harness's sign-in (EVAL_LOGIN_TOKEN). */
 export const SIM_SESSION = '5e551a70-51a0-4000-8000-000000000001';
 export const SIM_TIMEZONE = 'America/New_York';
 /** The harness ends a call after this many things the person said; the last reply gets the app's wrap-up instruction. */
@@ -162,7 +163,7 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 
 /** The replay's in-memory store, plus the automation methods the app's approve and decline endpoints use. */
 export function createSimStore(connected: Partial<Record<Toolkit, string>>) {
-  const base = createMemoryStore(connected);
+  const base = createMemoryStore(connected, SIM_SESSION);
   const find = (id: string) => base.automations.find((automation) => automation.id === id);
   return {
     ...base,
@@ -216,7 +217,8 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
     OPENAI_API_KEY: 'eval', OPENAI_TEXT_MODEL: options.textModel ?? 'scripted', OPENAI_REASONING_EFFORT: options.reasoningEffort,
     COMPOSIO_API_KEY: 'fixture', COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'ac_gmail', COMPOSIO_CALENDAR_AUTH_CONFIG_ID: 'ac_calendar',
   };
-  const deps = { store, env, composio, now };
+  // The trace sink collects the follow-up turns' tool calls; the scripted model (if any) runs the background agents too.
+  const deps = { store, env, composio, now, trace: store, ...(options.model ? { model: options.model } : {}) };
   const append = (event: SessionEvent) => store.appendEvent(SIM_SESSION, event);
   const project = async (): Promise<SessionProjection> => projectSession(await store.readEvents());
   const connectedNow = () => (Object.keys(connected) as Toolkit[]);
@@ -224,7 +226,7 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
   // The buttons go through the app's own endpoints, called the way the page calls them.
   const request = (path: string, method: string, body?: unknown) => new Request(`${ORIGIN}${path}`, {
     method,
-    headers: { origin: ORIGIN, cookie: `persona_session=${SIM_SESSION}`, 'content-type': 'application/json' },
+    headers: { origin: ORIGIN, cookie: `persona_auth=${EVAL_LOGIN_TOKEN}`, 'content-type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const notUsed = async (): Promise<never> => { throw new Error('OAuth is not simulated'); };
@@ -271,22 +273,16 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
     }
   }
 
-  /** Exactly the replay's follow-up: a trigger from server state, one turn, a message or recorded silence. */
-  async function runFollowUp(step: SimStep, followUp: FollowUpRequest) {
-    const state = await project();
-    const trigger = describeTrigger(state, followUp);
-    if (!trigger) return note(step, `no follow-up trigger for ${followUp.kind}`);
-    if (state.decisions[trigger.id]) return;
-    const turn = await runTurn(step, 'follow_up', trigger.id, 'text', trigger);
-    const silent = isSilent(turn.text);
-    turn.shown = !silent;
-    const at = now().toISOString();
-    if (!silent) {
-      await append({ id: `answer:${trigger.id}`, at, type: 'message', speaker: 'assistant', channel: 'text', text: turn.text.trim(), origin: 'follow_up' });
-      step.outputs.push(turn.text.trim());
-    }
-    await append({ id: `decision:${trigger.id}`, at, type: 'decision', trigger: trigger.id, outcome: silent ? 'silent' : 'messaged' });
-    step.followUp = silent ? 'silent' : 'message';
+  /** Exactly the app's follow-up: the woken assistant decides, and the code guardrails have the last word. */
+  async function runFollowUp(step: SimStep) {
+    const started = Date.now();
+    const { text, tools } = await withTimeout(settleFollowUps(deps, SIM_SESSION, store), turnTimeoutMs, 'The follow-up');
+    step.turns.push({
+      kind: 'follow_up', turnId: 'follow-up', channel: 'text', stepTexts: text ? [text] : [], text: text ?? '', shown: Boolean(text),
+      tools: tools.map((tool) => ({ ...tool, modelStep: 0 })), latencyMs: Date.now() - started,
+    });
+    if (text) step.outputs.push(text);
+    step.followUp = text ? 'message' : 'silent';
   }
 
   async function endCall(step: SimStep, reason: CallEndReason, followUp = true) {
@@ -297,7 +293,7 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
     const phase = reason === 'connection_lost' || reason === 'page_closed' ? 'dropped' : 'ended';
     await append({ id: `call:${callId}:${phase}`, at: now().toISOString(), type: 'call', phase, callId, reason });
     step.callEnded = reason;
-    if (followUp) await runFollowUp(step, { kind: 'call_ended', callId });
+    if (followUp) await runFollowUp(step);
   }
 
   async function startCall(step: SimStep) {
@@ -316,10 +312,10 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
   async function connect(step: SimStep, toolkit: Toolkit) {
     connected[toolkit] = `ca_fixture_${toolkit}`;
     await append({ id: `connection:${toolkit}:sim-${step.index}:connected`, at: now().toISOString(), type: 'connection', toolkit, phase: 'connected' });
-    if (!live) return runFollowUp(step, { kind: 'connection', toolkit });
-    // During a call the page tells the live model and records the text follow-up as handled (app/page.tsx).
-    const trigger = describeTrigger(await project(), { kind: 'connection', toolkit });
-    if (trigger) await append({ id: `decision:${trigger.id}`, at: now().toISOString(), type: 'decision', trigger: trigger.id, outcome: 'silent' });
+    // The connection callback wakes the assistant either way; during a call the guardrail keeps text quiet.
+    if (!live) return runFollowUp(step);
+    await settleFollowUps(deps, SIM_SESSION, store);
+    // During a call the page tells the live model (app/page.tsx).
     const turn = await runTurn(step, 'voice_notice', `${live.callId}:connected-${toolkit}`, 'voice', {
       id: `voice-notice:${live.callId}:${toolkit}`,
       instruction: `The user just connected ${TOOLKIT_NAMES[toolkit]}, and the app confirmed it. Tell them briefly and offer to take a look for them.`,
@@ -354,6 +350,8 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
     if (!turn.text) return;
     await append({ id: `answer:${turnId}`, at: now().toISOString(), type: 'message', speaker: 'assistant', channel: 'text', text: turn.text });
     step.outputs.push(turn.text);
+    // As the chat route does after the stream: the memory.
+    await withTimeout(afterTurn(deps, SIM_SESSION, turnId), turnTimeoutMs, 'The after-turn agents');
   }
 
   /**
@@ -410,7 +408,8 @@ export async function simulate(persona: Persona, options: SimOptions): Promise<S
 
   let errorSource: SimTrace['errorSource'];
   try {
-    await append(greetingEvent(now()));
+    // The assistant writes its own first message, as the app does when a conversation opens.
+    await writeFirstMessage(deps, SIM_SESSION);
     for (let index = 0; index < maxActions; index++) {
       const state = await project();
       const onCall = Boolean(live);

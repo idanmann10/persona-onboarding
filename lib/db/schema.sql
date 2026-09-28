@@ -150,13 +150,52 @@ CREATE TABLE IF NOT EXISTS persona_traces (
 );
 CREATE INDEX IF NOT EXISTS persona_traces_session ON persona_traces (session_id, id);
 
--- One person, one main session: the verified Gmail address (lowercased) of whoever connected Gmail first.
--- Deleting the main session ("Start over") deletes the row, so the address can start fresh.
+-- Retired: the main session of a Gmail address under the old Gmail-as-sign-in. Read once, when a Google
+-- account with that verified email first signs in, which takes the conversation over and deletes the row.
 CREATE TABLE IF NOT EXISTS persona_users (
   email TEXT PRIMARY KEY CHECK (email = lower(email)),
   main_session_id UUID NOT NULL UNIQUE REFERENCES persona_sessions(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One account is one user with one main conversation: a Google account (its stable `sub`, email verified
+-- by Google) or an email + password account (email unverified, scrypt hash in password_hash). The two
+-- kinds never merge by email. The profile columns are what the user or Google last said at sign-in.
+-- "Start over" deletes the conversation, which clears main_session_id; the next page load opens a fresh one.
+CREATE TABLE IF NOT EXISTS persona_accounts (
+  id UUID PRIMARY KEY,
+  google_sub TEXT UNIQUE CHECK (length(google_sub) BETWEEN 1 AND 255),
+  email TEXT NOT NULL CHECK (email = lower(email)),
+  password_hash TEXT,
+  full_name TEXT,
+  given_name TEXT,
+  picture TEXT,
+  locale TEXT,
+  main_session_id UUID UNIQUE REFERENCES persona_sessions(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  signed_in_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE persona_accounts ALTER COLUMN google_sub DROP NOT NULL;
+ALTER TABLE persona_accounts ADD COLUMN IF NOT EXISTS password_hash TEXT;
+DO $$ BEGIN
+  ALTER TABLE persona_accounts ADD CONSTRAINT persona_accounts_one_kind
+    CHECK ((google_sub IS NOT NULL AND password_hash IS NULL) OR (google_sub IS NULL AND password_hash IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+-- One password account per email; Google accounts are found by email only to refuse such a sign-up.
+CREATE UNIQUE INDEX IF NOT EXISTS persona_accounts_password_email ON persona_accounts (email) WHERE google_sub IS NULL;
+CREATE INDEX IF NOT EXISTS persona_accounts_email ON persona_accounts (email);
+
+-- A signed-in browser: the SHA-256 of the random token in its persona_auth cookie, never the token.
+-- Signing out deletes the row.
+CREATE TABLE IF NOT EXISTS persona_logins (
+  token_hash TEXT PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  account_id UUID NOT NULL REFERENCES persona_accounts(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS persona_logins_account ON persona_logins (account_id);
+CREATE INDEX IF NOT EXISTS persona_logins_expiry ON persona_logins (expires_at);
 
 CREATE TABLE IF NOT EXISTS persona_avatars (
   id UUID PRIMARY KEY,

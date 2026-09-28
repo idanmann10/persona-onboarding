@@ -1,0 +1,8 @@
+.claude/
+node_modules/
+.next/
+test-results/
+playwright-report/
+evals/results/
+.env*
+!.env.example

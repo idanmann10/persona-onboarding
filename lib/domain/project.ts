@@ -1,12 +1,14 @@
-import type { CallEndReason, SessionEvent, Toolkit } from './events';
+import type { AgentName, CallEndReason, MemoryKind, MemorySource, Provenance, SessionEvent, Toolkit } from './events';
 import { groupUtterances, type Utterance } from '../voice/transcript';
 import { setupStatus, type SetupStatus } from './onboarding';
+import { memoryIdFor } from './memory';
 
 type FactEvent = Extract<SessionEvent, { type: 'fact' }>;
 type FactRecord = Omit<FactEvent, 'evidence'> & { evidence: FactEvent['evidence'] | 'superseded' };
 type CallPhase = Extract<SessionEvent, { type: 'call' }>['phase'] | 'idle';
 type ConnectionPhase = Extract<SessionEvent, { type: 'connection' }>['phase'];
 type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
+type Of<T extends SessionEvent['type']> = Extract<SessionEvent, { type: T }>;
 
 export type SlotStatus = 'unknown' | 'tentative' | 'confirmed' | 'declined';
 
@@ -41,6 +43,24 @@ export interface OnboardingProgress {
   automation: { status: 'none' | 'proposed' | 'active' | 'declined' | 'disabled'; title?: string; schedule?: string };
 }
 
+/** One memory as it stands now. A replaced or forgotten memory stays here for the record but is never recalled. */
+export interface MemoryRecord {
+  memoryId: string;
+  text: string;
+  kind: MemoryKind;
+  labels: string[];
+  confidence: 'low' | 'medium' | 'high';
+  source: MemorySource;
+  provenance: Provenance;
+  by: AgentName;
+  at: string;
+  eventId: string;
+  replaces: string[];
+  status: 'live' | 'replaced' | 'forgotten';
+  replacedBy?: string;
+  forgotten?: { reason: string; at: string; by: AgentName };
+}
+
 export interface SessionProjection {
   messages: MessageEvent[];
   facts: Record<string, FactRecord>;
@@ -57,6 +77,23 @@ export interface SessionProjection {
   onboarding: OnboardingProgress;
   /** The brief's goal: the four things known, or the user skipped ahead. */
   setup: SetupStatus;
+  /** What the agents learned and decided along the way (memory, labels, soul notes, follow-ups, check-ins). */
+  memory: {
+    soulNotes: Record<AgentName, Array<Of<'soul_note'>>>;
+    /** Every memory ever saved, oldest first, with its current status (see lib/domain/memory.ts). */
+    memories: MemoryRecord[];
+    /** Active labels by lowercased label; a `remove` drops one. */
+    labels: Record<string, Of<'label'>>;
+    /** Loops by id, oldest first; `open` is false once closed. */
+    loops: Array<{ loopId: string; text: string; at: string; open: boolean }>;
+    summary?: Of<'summary'>;
+    /** Conversation lines the memory has already read. */
+    readLines: number;
+    followUps: Array<Of<'follow_up'>>;
+    checkIns: Array<Of<'check_in'>>;
+  };
+  /** When things happened, for engagement and lifecycle: the first event, returns, and account reads. */
+  activity: { firstAt?: string; visits: string[]; reads: Array<Of<'account_read'>>; runs: Array<{ id: string; phase: 'ran' | 'failed'; at: string; title: string }> };
 }
 
 const ENDED: CallPhase[] = ['ended', 'dropped'];
@@ -65,6 +102,8 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
   const state: SessionProjection = {
     messages: [], facts: {}, history: [], call: { phase: 'idle', offerPending: false }, calls: [], voiceFragments: [],
     connections: { gmail: 'none', calendar: 'none' }, apps: {}, decisions: {}, automations: [], timeline: [], setup: { stage: 'active', open: [] },
+    memory: { soulNotes: { assistant: [], memory: [] }, memories: [], labels: {}, loops: [], readLines: 0, followUps: [], checkIns: [] },
+    activity: { visits: [], reads: [], runs: [] },
     onboarding: {
       assistantName: { status: 'unknown' }, preferredName: { status: 'unknown' }, need: { status: 'unknown' },
       gmail: 'not_offered', call: 'not_offered', automation: { status: 'none' },
@@ -92,9 +131,20 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
     if (turn) turnCards.set(turn, [...(turnCards.get(turn) ?? []), item]);
   };
   const connectionOffers: Partial<Record<Toolkit, Extract<TimelineItem, { kind: 'connection_offer' }>>> = {};
+  const memories = new Map<string, MemoryRecord>();
+  const keep = (record: MemoryRecord) => {
+    if (memories.has(record.memoryId)) return;
+    for (const id of record.replaces) {
+      const old = memories.get(id);
+      if (old?.status === 'live') { old.status = 'replaced'; old.replacedBy = record.memoryId; }
+    }
+    memories.set(record.memoryId, record);
+    state.memory.memories.push(record);
+  };
   for (const event of events) {
     if (seen.has(event.id)) continue;
     seen.add(event.id);
+    state.activity.firstAt ??= event.at;
     switch (event.type) {
       case 'message': {
         state.messages.push(event);
@@ -172,6 +222,56 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
       case 'decision':
         state.decisions[event.trigger] = event.outcome;
         break;
+      case 'visit':
+        state.activity.visits.push(event.at);
+        break;
+      case 'account_read':
+        state.activity.reads.push(event);
+        break;
+      case 'soul_note':
+        state.memory.soulNotes[event.agent]?.push(event);
+        break;
+      case 'note':
+        keep({
+          memoryId: memoryIdFor(event.id), text: event.text, kind: event.kind, labels: [], confidence: event.provenance === 'user_said' ? 'high' : 'medium',
+          source: event.source, provenance: event.provenance, by: 'memory', at: event.at, eventId: event.id, replaces: [], status: 'live',
+        });
+        break;
+      case 'memory':
+        keep({
+          memoryId: event.memoryId, text: event.text, kind: event.kind, labels: event.labels, confidence: event.confidence, source: event.source,
+          provenance: event.provenance, by: event.by, at: event.at, eventId: event.id, replaces: event.replaces ?? [], status: 'live',
+        });
+        break;
+      case 'forget': {
+        const memory = memories.get(event.memoryId);
+        if (memory && memory.status !== 'forgotten') { memory.status = 'forgotten'; memory.forgotten = { reason: event.reason, at: event.at, by: event.by }; }
+        break;
+      }
+      case 'label': {
+        const key = event.label.toLocaleLowerCase();
+        if (event.action === 'remove') delete state.memory.labels[key];
+        else state.memory.labels[key] = event;
+        break;
+      }
+      case 'loop': {
+        const loop = state.memory.loops.find((item) => item.loopId === event.loopId);
+        if (event.action === 'close') { if (loop) loop.open = false; }
+        else if (!loop) state.memory.loops.push({ loopId: event.loopId, text: event.text, at: event.at, open: true });
+        break;
+      }
+      case 'summary':
+        if (!state.memory.summary || event.lines >= state.memory.summary.lines) state.memory.summary = event;
+        break;
+      case 'memory_run':
+        state.memory.readLines = Math.max(state.memory.readLines, event.lines);
+        break;
+      case 'follow_up':
+        state.memory.followUps.push(event);
+        break;
+      case 'check_in':
+        state.memory.checkIns.push(event);
+        break;
       case 'automation': {
         let card = state.automations.find((item) => item.automationId === event.automationId);
         if (event.phase === 'proposed') {
@@ -184,6 +284,7 @@ export function projectSession(events: SessionEvent[]): SessionProjection {
           if (event.phase === 'approved') { card.status = 'active'; card.nextRunAt = event.nextRunAt; }
           else if (event.phase === 'declined' || event.phase === 'disabled') { card.status = event.phase; delete card.nextRunAt; }
           else if (event.phase === 'ran' || event.phase === 'failed') {
+            state.activity.runs.push({ id: event.id, phase: event.phase, at: event.at, title: event.title });
             // A run only happens for an approved task, whatever the approval path; a disabled card keeps no schedule.
             if (card.status === 'proposed') card.status = 'active';
             if (card.status === 'active' && event.nextRunAt) card.nextRunAt = event.nextRunAt;

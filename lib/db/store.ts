@@ -4,6 +4,13 @@ import { readFile } from 'node:fs/promises';
 import type { KnowledgeFact } from '../domain/knowledge';
 import type { AutomationRecord, AutomationStatus } from '../domain/automation';
 import type { StoredTrace, TraceEntry } from '../observability/trace';
+import type { SignedInUser } from '../auth/login';
+
+/** A Google user as the sign-in callback verified them. */
+export interface AccountProfile { sub: string; email: string; emailVerified: true; fullName?: string; givenName?: string; picture?: string; locale?: string }
+
+/** An email + password account as stored. */
+export interface PasswordAccount { id: string; mainSessionId: string | null; email: string; passwordHash: string; fullName?: string; givenName?: string }
 
 /** The newest agent-log entries a session keeps on screen. */
 const TRACE_LIMIT = 2_000;
@@ -27,19 +34,80 @@ export function createStore(sql: ReturnType<typeof postgres>) {
     createSession: async (id: string) => {
       await sql`INSERT INTO persona_sessions (id) VALUES (${id}) ON CONFLICT (id) DO NOTHING`;
     },
-    /**
-     * Makes this session the main session of a verified email unless the email already has one, and
-     * returns the email's main session. Undefined when this session is already main for another email.
-     */
-    claimMainSession: async (email: string, sessionId: string): Promise<string | undefined> => {
-      await sql`INSERT INTO persona_users (email, main_session_id) VALUES (${email}, ${sessionId}) ON CONFLICT DO NOTHING`;
-      const rows = await sql`SELECT main_session_id FROM persona_users WHERE email = ${email} LIMIT 1`;
-      return rows[0]?.main_session_id as string | undefined;
+    /** Creates or refreshes the account of a Google user (by `sub`) with what Google just said about them. */
+    upsertAccount: async (profile: AccountProfile): Promise<{ id: string; mainSessionId: string | null }> => {
+      const rows = await sql`INSERT INTO persona_accounts (id, google_sub, email, full_name, given_name, picture, locale)
+        VALUES (${crypto.randomUUID()}, ${profile.sub}, ${profile.email}, ${profile.fullName ?? null}, ${profile.givenName ?? null}, ${profile.picture ?? null}, ${profile.locale ?? null})
+        ON CONFLICT (google_sub) DO UPDATE SET email = EXCLUDED.email, full_name = EXCLUDED.full_name, given_name = EXCLUDED.given_name,
+          picture = EXCLUDED.picture, locale = EXCLUDED.locale, signed_in_at = now()
+        RETURNING id, main_session_id`;
+      return { id: rows[0].id as string, mainSessionId: (rows[0].main_session_id as string | null) ?? null };
     },
-    /** The account whose main session this is, if any. */
-    getSessionAccount: async (sessionId: string): Promise<{ email: string } | undefined> => {
-      const rows = await sql`SELECT email FROM persona_users WHERE main_session_id = ${sessionId} LIMIT 1`;
-      return rows[0] ? { email: rows[0].email as string } : undefined;
+    /**
+     * Creates an email + password account, unless the email already has a password account ('taken') or
+     * belongs to a Google account ('google'): accounts never merge by email.
+     */
+    createPasswordAccount: async (account: { email: string; passwordHash: string; fullName?: string; givenName?: string }): Promise<{ id: string } | 'google' | 'taken'> => sql.begin(async (tx) => {
+      const [existing] = await tx`SELECT google_sub IS NOT NULL AS google FROM persona_accounts WHERE email = ${account.email}
+        ORDER BY (google_sub IS NOT NULL) DESC LIMIT 1`;
+      if (existing) return existing.google ? 'google' : 'taken';
+      const rows = await tx`INSERT INTO persona_accounts (id, email, password_hash, full_name, given_name)
+        VALUES (${crypto.randomUUID()}, ${account.email}, ${account.passwordHash}, ${account.fullName ?? null}, ${account.givenName ?? null})
+        ON CONFLICT (email) WHERE google_sub IS NULL DO NOTHING RETURNING id`;
+      return rows[0] ? { id: rows[0].id as string } : 'taken';
+    }),
+    /** The email + password account for an email, if there is one. */
+    findPasswordAccount: async (email: string): Promise<PasswordAccount | undefined> => {
+      const [row] = await sql`SELECT id, main_session_id, email, password_hash, full_name, given_name FROM persona_accounts
+        WHERE email = ${email} AND google_sub IS NULL AND password_hash IS NOT NULL LIMIT 1`;
+      if (!row) return undefined;
+      return {
+        id: row.id as string, mainSessionId: (row.main_session_id as string | null) ?? null, email: row.email as string, passwordHash: row.password_hash as string,
+        ...(row.full_name ? { fullName: row.full_name as string } : {}), ...(row.given_name ? { givenName: row.given_name as string } : {}),
+      };
+    },
+    /** Notes a password sign-in on the account. */
+    touchAccount: async (accountId: string): Promise<void> => {
+      await sql`UPDATE persona_accounts SET signed_in_at = now() WHERE id = ${accountId}`;
+    },
+    /**
+     * The account's main conversation. Without one, it takes over the conversation `verifiedEmail` had under
+     * the retired Gmail sign-in (Google accounts only), or else creates `newSessionId`. Locked, so two tabs
+     * agree on one.
+     */
+    claimMainSession: async (accountId: string, verifiedEmail: string | undefined, newSessionId: string): Promise<{ id: string; created: boolean }> => sql.begin(async (tx) => {
+      const [account] = await tx`SELECT main_session_id FROM persona_accounts WHERE id = ${accountId} FOR UPDATE`;
+      if (!account) throw new Error('Unknown account');
+      if (account.main_session_id) return { id: account.main_session_id as string, created: false };
+      const [legacy] = verifiedEmail ? await tx`DELETE FROM persona_users WHERE email = ${verifiedEmail}
+        AND NOT EXISTS (SELECT 1 FROM persona_accounts WHERE main_session_id = persona_users.main_session_id)
+        RETURNING main_session_id` : [];
+      const id = (legacy?.main_session_id as string | undefined) ?? newSessionId;
+      if (!legacy) await tx`INSERT INTO persona_sessions (id) VALUES (${id})`;
+      await tx`UPDATE persona_accounts SET main_session_id = ${id} WHERE id = ${accountId}`;
+      return { id, created: !legacy };
+    }),
+    /** Records a signed-in browser by the hash of its login token. */
+    createLogin: async (tokenHash: string, accountId: string, expiresAt: Date): Promise<void> => {
+      if (Math.random() < 0.02) await sql`DELETE FROM persona_logins WHERE expires_at < now()`;
+      await sql`INSERT INTO persona_logins (token_hash, account_id, expires_at) VALUES (${tokenHash}, ${accountId}, ${expiresAt})`;
+    },
+    /** The signed-in user behind an unexpired login. */
+    findLogin: async (tokenHash: string): Promise<SignedInUser | undefined> => {
+      const rows = await sql`SELECT a.id, a.main_session_id, a.email, a.google_sub IS NOT NULL AS email_verified, a.full_name, a.given_name, a.picture, a.locale
+        FROM persona_logins l JOIN persona_accounts a ON a.id = l.account_id
+        WHERE l.token_hash = ${tokenHash} AND l.expires_at > now() LIMIT 1`;
+      const row = rows[0];
+      if (!row) return undefined;
+      const optional = (key: string, value: unknown) => (typeof value === 'string' && value ? { [key]: value } : {});
+      return {
+        accountId: row.id as string, sessionId: (row.main_session_id as string | null) ?? null, email: row.email as string,
+        emailVerified: row.email_verified === true, ...optional('fullName', row.full_name), ...optional('givenName', row.given_name), ...optional('picture', row.picture), ...optional('locale', row.locale),
+      };
+    },
+    /** Signs one browser out. */
+    deleteLogin: async (tokenHash: string): Promise<void> => {
+      await sql`DELETE FROM persona_logins WHERE token_hash = ${tokenHash}`;
     },
     sessionExists: async (id: string) => {
       const rows = await sql`SELECT 1 FROM persona_sessions WHERE id = ${id} LIMIT 1`;
@@ -157,8 +225,9 @@ export function createStore(sql: ReturnType<typeof postgres>) {
         VALUES (${avatar.id}, ${sessionId}, ${avatar.prompt}, ${avatar.mime}, ${Buffer.from(avatar.bytes)})
         ON CONFLICT (id) DO NOTHING`;
     },
-    getAvatar: async (id: string): Promise<{ mime: string; bytes: Uint8Array } | undefined> => {
-      const rows = await sql`SELECT mime, bytes FROM persona_avatars WHERE id = ${id} LIMIT 1`;
+    /** A portrait, only to the conversation it was painted for. */
+    getAvatar: async (id: string, sessionId: string): Promise<{ mime: string; bytes: Uint8Array } | undefined> => {
+      const rows = await sql`SELECT mime, bytes FROM persona_avatars WHERE id = ${id} AND session_id = ${sessionId} LIMIT 1`;
       return rows[0] ? { mime: rows[0].mime as string, bytes: new Uint8Array(rows[0].bytes as Uint8Array) } : undefined;
     },
     deleteSession: async (sessionId: string): Promise<void> => {
@@ -295,6 +364,31 @@ export function createStore(sql: ReturnType<typeof postgres>) {
       const rows = await sql`INSERT INTO persona_identity_reservations (session_id, user_event_id)
         VALUES (${sessionId}, ${userEventId}) ON CONFLICT DO NOTHING RETURNING user_event_id`;
       return rows.length > 0;
+    },
+    /** The newest event's number: the open page reloads the conversation when it moves. */
+    latestEventSeq: async (sessionId: string): Promise<number> => {
+      const rows = await sql`SELECT COALESCE(MAX(seq), 0) AS seq FROM persona_events WHERE session_id = ${sessionId}`;
+      return Number(rows[0]?.seq ?? 0);
+    },
+    /** A reservation under this prefix taken in the last `seconds` (a follow-up being written right now). */
+    hasActiveReservation: async (sessionId: string, prefix: string, seconds: number): Promise<boolean> => {
+      const rows = await sql`SELECT 1 FROM persona_reservations WHERE session_id = ${sessionId}
+        AND starts_with(reservation_key, ${prefix}) AND created_at > now() - make_interval(secs => ${seconds}) LIMIT 1`;
+      return rows.length > 0;
+    },
+    /**
+     * Sessions with a check-in that is due and still stands (for the cron): the newest one, nothing the
+     * user wrote since, and not decided yet (its decision is the event `follow-up:check-in:<its id>`).
+     */
+    sessionsWithDueCheckIns: async (limit = 25): Promise<string[]> => {
+      const rows = await sql`SELECT DISTINCT e.session_id FROM persona_events e
+        WHERE e.payload->>'type' = 'check_in' AND e.payload->>'wakeAt' <= ${new Date().toISOString()}
+        AND e.created_at > now() - interval '8 days'
+        AND NOT EXISTS (SELECT 1 FROM persona_events d WHERE d.session_id = e.session_id AND d.event_id = 'follow-up:check-in:' || e.event_id)
+        AND NOT EXISTS (SELECT 1 FROM persona_events n WHERE n.session_id = e.session_id AND n.seq > e.seq
+          AND (n.payload->>'type' = 'check_in' OR (n.payload->>'type' = 'message' AND n.payload->>'speaker' = 'user')))
+        LIMIT ${limit}`;
+      return rows.map((row) => row.session_id as string);
     },
   };
 }

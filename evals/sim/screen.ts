@@ -19,6 +19,7 @@ const ENDINGS: Record<CallEndReason, string> = {
   max_duration: 'Reached the time limit',
   content: 'Call stopped',
   setup_failed: "Couldn't connect",
+  goodbye: 'the assistant said goodbye and hung up',
 };
 
 /** The thread's line for a change the assistant made to itself with customize (mirrors app/thread.tsx). */

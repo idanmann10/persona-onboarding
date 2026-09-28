@@ -3,11 +3,11 @@ import { scheduleOf, type AutomationStore } from '../domain/automation';
 import { describeSchedule, isValidTimeZone, nextRun } from '../domain/schedule';
 import { runAutomation, type AutomationRunDependencies } from '../agent/automation-run';
 import type { TurnTrigger } from '../agent/turn';
-import { readSessionCookie } from './session';
+import { signedInSession, type LoginStore } from '../auth/login';
 import { withinIpLimit, type IpQuotaStore } from './client-key';
+import { sameOrigin } from './origin';
 
-interface Store extends AutomationStore, IpQuotaStore {
-  sessionExists(id: string): Promise<boolean>;
+interface Store extends AutomationStore, IpQuotaStore, LoginStore {
   readEvents(id: string): Promise<SessionEvent[]>;
   appendEvent(id: string, event: SessionEvent): Promise<void>;
   consumeQuota(id: string, scope: 'chat', limit: number, windowSeconds: number): Promise<boolean>;
@@ -23,9 +23,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function createAutomationHandler(store: Store, generate: Generate | undefined, now: () => Date = () => new Date()) {
   const deps = (): AutomationRunDependencies => ({ store, generate: generate!, now });
   return async (request: Request): Promise<Response> => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return new Response('Unexpected origin', { status: 403 });
-    const sessionId = readSessionCookie(request);
-    if (!sessionId || !UUID.test(sessionId) || !(await store.sessionExists(sessionId))) return new Response('Session required', { status: 401 });
+    if (!sameOrigin(request)) return new Response('Unexpected origin', { status: 403 });
+    const sessionId = await signedInSession(store, request);
+    if (!sessionId) return new Response('Session required', { status: 401 });
     let body: Record<string, unknown>;
     try { body = await request.json() as Record<string, unknown>; } catch { return new Response('Invalid JSON', { status: 400 }); }
     const action = body?.action;

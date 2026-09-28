@@ -1,6 +1,6 @@
 import type { SessionEvent } from '../../lib/domain/events';
 import { projectSession } from '../../lib/domain/project';
-import { userWords } from '../../lib/agent/turn';
+import { userWords } from '../../lib/agent/conversation';
 import { checkInvariants, type CheckResult } from '../app/invariants';
 import type { StepTrace } from '../app/replay';
 import type { SimAction } from './user';

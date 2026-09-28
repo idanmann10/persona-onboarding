@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "echo 'no install: Vercel only fronts the app, which runs on Railway'",
+  "buildCommand": "echo 'no build'",
+  "outputDirectory": "public",
+  "rewrites": [
+    { "source": "/:path*", "destination": "https://persona-app-production-7359.up.railway.app/:path*" }
+  ]
+}

@@ -1,34 +1,22 @@
-import { tool, type ModelMessage, type ToolSet } from 'ai';
-import { z } from 'zod';
-import type { CallEndReason, SessionEvent, Toolkit } from '../domain/events';
+import type { ModelMessage, ToolSet } from 'ai';
+import type { SessionEvent, Toolkit } from '../domain/events';
 import { projectSession, type SessionProjection } from '../domain/project';
-import { availableCapabilities } from '../domain/capabilities';
-import { buildSystemPrompt } from './prompts';
-import { customize, customizeInput, noteDecline, noteDeclineInput, offerCall, offerCallInput, proposeAutomation, proposeAutomationInput, remember, rememberInput, showConnection, showConnectionInput, type ActionContext, type ActionStore, graduate, graduateInput } from './actions';
-import type { AutomationStore } from '../domain/automation';
-import { createAccountTools, relevantToolkits, type AccountReadClient } from './account-tools';
-import { personalityLine, personaSettings } from '../domain/persona';
-import { repliesSinceSetupMoved, setupStatus } from '../domain/onboarding';
+import { buildUserState, IDENTITY_KEYS } from '../domain/user-state';
+import { soulNotes } from '../domain/memory';
+import { buildPrompt } from './prompts';
+import { historyWindow, windowMessages } from './conversation';
+import { textToolSet, toolContext, type ToolDeps } from './tools';
 import { describeTurn, type TraceSink, type TurnTrace } from '../observability/trace';
-import { generateAvatar } from '../avatars/generate';
 
-type MessageEvent = Extract<SessionEvent, { type: 'message' }>;
-
-export interface TurnStore extends ActionStore {
-  getActiveConnection(sessionId: string, toolkit: Toolkit): Promise<string | undefined>;
-}
-
-export interface TurnDependencies {
-  store: TurnStore & Partial<Pick<AutomationStore, 'proposeAutomation'>> & { saveAvatar?: NonNullable<ActionContext['avatars']>['save'] };
-  env: Record<string, string | undefined>;
-  composio?: AccountReadClient;
-  resolveIdentity?: (sessionId: string, userEvent: MessageEvent, clue: { first: string; last: string; company: string }) => Promise<unknown>;
-  now?: () => Date;
+export interface TurnDependencies extends ToolDeps {
   /** Where the agent log goes; turns are traced only when this is set. */
   trace?: TraceSink;
 }
 
-/** An app event that wakes the assistant without a new user message (a call ended, Gmail connected). */
+/**
+ * Something other than a user message woke the assistant: an app event it may follow up on, a recurring
+ * task's run, a line the call needs. The note is added after the conversation as an app note.
+ */
 export interface TurnTrigger {
   id: string;
   instruction: string;
@@ -44,182 +32,46 @@ export interface PreparedTurn {
   trace?: TurnTrace;
 }
 
-const MESSAGE_LIMIT = 40;
-const CHARACTER_LIMIT = 24_000;
+/** Facts the prompt already shows elsewhere (names, persona, the profile), so the "other facts" list stays short. */
+const SHOWN_ELSEWHERE = new Set<string>(['identity_lookup_status', 'assistant_name', 'preferred_name', 'current_need', 'personality', 'voice', 'avatar', 'public_identity_candidate', 'public_headline', 'public_profile', ...IDENTITY_KEYS]);
 
-/** The conversation as the model sees it: text turns plus call turns marked `(on the call)`, newest kept. */
-export function modelMessages(state: SessionProjection): ModelMessage[] {
-  const flat: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-  for (const item of state.timeline) {
-    if (item.kind === 'message' && item.text.trim()) flat.push({ role: item.speaker, content: item.channel === 'voice' ? `(on the call) ${item.text}` : item.text });
-    if (item.kind === 'call') for (const utterance of item.call.utterances) flat.push({ role: utterance.speaker, content: `(on the call) ${utterance.text}` });
-  }
-  const kept: typeof flat = [];
-  let characters = 0;
-  for (let index = flat.length - 1; index >= 0 && kept.length < MESSAGE_LIMIT; index--) {
-    const content = flat[index].content.slice(0, 4_000);
-    if (characters + content.length > CHARACTER_LIMIT && kept.length) break;
-    characters += content.length;
-    kept.unshift({ role: flat[index].role, content });
-  }
-  return kept;
+/** What the model can use, in words, from what's configured and connected. */
+export function capabilityLabels(ctx: { capabilities: { voice: boolean; gmail: boolean; calendar: boolean }; accounts: Partial<Record<Toolkit, string>> }, state: SessionProjection): string[] {
+  return [
+    'text',
+    ...(ctx.capabilities.voice ? ['browser call'] : []),
+    ...(ctx.accounts.gmail ? ['connected Gmail (read-only search)'] : ctx.capabilities.gmail ? ['Gmail (not connected; can be connected)'] : []),
+    ...(ctx.accounts.calendar ? ['connected Google Calendar (read-only)'] : ctx.capabilities.calendar ? ['Google Calendar (not connected; can be connected)'] : []),
+    ...Object.values(state.apps).filter((app) => app.phase === 'connected').map((app) => `${app.name} (connected; you can't act in it yet)`),
+  ];
 }
 
-/** Every line of the conversation in order, typed or spoken, without channel markers. */
-export function conversationLines(state: SessionProjection): Array<{ speaker: 'user' | 'assistant'; text: string }> {
-  const lines: Array<{ speaker: 'user' | 'assistant'; text: string }> = [];
-  for (const item of state.timeline) {
-    if (item.kind === 'message') lines.push({ speaker: item.speaker, text: item.text });
-    if (item.kind === 'call') for (const utterance of item.call.utterances) lines.push({ speaker: utterance.speaker, text: utterance.text });
-  }
-  return lines;
-}
-
-/** The assistant line the user's latest words answer (its question before their "yes"), if any. */
-export function answeredQuestion(state: SessionProjection): string | undefined {
-  const lines = conversationLines(state);
-  const lastUser = lines.map((line) => line.speaker).lastIndexOf('user');
-  for (let index = lastUser - 1; index >= 0; index--) if (lines[index].speaker === 'assistant') return lines[index].text;
-  return undefined;
-}
-
-/** The user's own recent words, typed or spoken, newest last. */
-export function userWords(state: SessionProjection, limit = 6): string[] {
-  const words: string[] = [];
-  for (const item of state.timeline) {
-    if (item.kind === 'message' && item.speaker === 'user') words.push(item.text);
-    if (item.kind === 'call') for (const utterance of item.call.utterances) if (utterance.speaker === 'user') words.push(utterance.text);
-  }
-  return words.slice(-limit);
-}
-
-export const END_REASONS: Record<CallEndReason, string> = {
-  user_hangup: 'the user hung up',
-  remote_hangup: 'the call was hung up',
-  connection_lost: 'the connection dropped',
-  page_closed: 'the user closed or left the page',
-  lost: 'the call was lost without a goodbye (the page closed or the network went away)',
-  inactive: 'it went quiet, so the call was closed',
-  max_duration: 'it reached the time limit',
-  expired: 'it reached the session time limit',
-  content: 'a safety filter stopped it',
-  setup_failed: 'it never connected',
-};
-
-export function callDuration(startedAt?: string, endedAt?: string): string | undefined {
-  if (!startedAt || !endedAt) return undefined;
-  const seconds = Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(startedAt)) / 1000));
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)} min ${seconds % 60}s`;
-}
-
-export function callLines(state: SessionProjection): string[] {
-  return state.calls.filter((call) => call.startedAt || call.utterances.length).map((call) => {
-    const duration = callDuration(call.startedAt, call.endedAt);
-    const ending = call.phase === 'ended' || call.phase === 'dropped' ? `ended: ${END_REASONS[call.reason ?? (call.phase === 'dropped' ? 'connection_lost' : 'remote_hangup')]}` : 'still live';
-    return `Call${call.startedAt ? ` at ${call.startedAt.slice(11, 16)} UTC` : ''}${duration ? `, ${duration}` : ''}, ${ending}.`;
-  });
-}
-
-function hungUpJustNow(state: SessionProjection, trigger?: TurnTrigger): boolean {
-  if (!trigger?.id.startsWith('followup:call:')) return false;
-  const call = state.calls.find((record) => trigger.id === `followup:call:${record.callId}`);
-  return call?.reason === 'user_hangup' || call?.reason === 'page_closed';
+export function otherFacts(state: SessionProjection) {
+  return Object.entries(state.facts).filter(([key]) => !SHOWN_ELSEWHERE.has(key))
+    .map(([key, fact]) => ({ key, value: fact.value, provenance: fact.provenance, evidence: fact.evidence, ...(fact.sourceUrl ? { sourceUrl: fact.sourceUrl } : {}) }));
 }
 
 export async function prepareTurn(deps: TurnDependencies, sessionId: string, history: SessionEvent[], options: { turnId: string; trigger?: TurnTrigger; channel?: 'text' | 'voice' }): Promise<PreparedTurn> {
   const state = projectSession(history);
-  const capabilities = availableCapabilities(deps.env);
-  const accounts: Partial<Record<Toolkit, string>> = deps.composio ? {
-    calendar: await deps.store.getActiveConnection(sessionId, 'calendar'),
-    gmail: await deps.store.getActiveConnection(sessionId, 'gmail'),
-  } : {};
-  const connected = { gmail: Boolean(accounts.gmail), calendar: Boolean(accounts.calendar) };
-  const words = userWords(state);
   const channel = options.channel ?? 'text';
-  const context: ActionContext = {
-    store: deps.store, sessionId, channel, turnId: options.turnId, state, userWords: words,
-    capabilities: { voice: capabilities.voice, gmail: capabilities.gmail, calendar: capabilities.calendar }, connected, now: deps.now,
-    ...(deps.store.proposeAutomation ? { automations: { proposeAutomation: deps.store.proposeAutomation } } : {}),
-    ...(deps.store.saveAvatar && deps.env.OPENAI_API_KEY ? { avatars: { generate: (input) => generateAvatar(input, { env: deps.env }), save: deps.store.saveAvatar } } : {}),
-  };
-  const relevant = relevantToolkits({ userTexts: words, lastAssistant: answeredQuestion(state), include: options.trigger?.include });
-  const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
-  const tools: ToolSet = {
-    remember: tool({
-      description: 'Save something new or changed: what to call the user (preferred_name) or what they want help with (current_need). Use declined only when they refuse to share that exact thing.',
-      inputSchema: rememberInput,
-      execute: (input) => remember(context, input),
-    }),
-    customize: tool({
-      description: 'Change your own name, look (avatar), personality or call voice when the user names you or asks for a change. Send only what changes.',
-      inputSchema: customizeInput,
-      execute: (input) => customize(context, input),
-    }),
-    note_decline: tool({
-      description: 'Record that the user said no to a call, to connecting Gmail, or to connecting Google Calendar, so it is not offered again.',
-      inputSchema: noteDeclineInput,
-      execute: (input) => noteDecline(context, input),
-    }),
-    ...(state.setup.stage === 'active' ? {
-      graduate: tool({
-        description: 'The user wants to skip the rest of setup and just get started ("skip", "just let me in", "enough questions"). After this, no more setup questions.',
-        inputSchema: graduateInput,
-        execute: (input) => graduate(context, input),
-      }),
-    } : {}),
-    // They ended the call themselves: the follow-up must not put another call offer up (a prompt line alone didn't hold).
-    ...(capabilities.voice && channel === 'text' && !hungUpJustNow(state, options.trigger) ? {
-      offer_call: tool({
-        description: 'Put an Answer button in the chat for a short browser call. The button is the invitation: the call starts only if they tap it.',
-        inputSchema: offerCallInput,
-        execute: () => offerCall(context),
-      }),
-    } : {}),
-    ...(deps.store.proposeAutomation && channel === 'text' && !options.trigger?.id.startsWith('automation:') ? {
-      propose_automation: tool({
-        description: 'Show a preview card for one recurring task (daily, weekdays or weekly at a local time) with an Approve button. Nothing is scheduled until they approve it.',
-        inputSchema: proposeAutomationInput,
-        execute: (input) => proposeAutomation(context, input),
-      }),
-    } : {}),
-    ...(capabilities.gmail || capabilities.calendar ? {
-      show_connection: tool({
-        description: 'Put a Connect button for Gmail or Google Calendar in the chat when connecting would help with the current need.',
-        inputSchema: showConnectionInput,
-        execute: (input) => showConnection(context, input),
-      }),
-    } : {}),
-    ...(deps.composio ? createAccountTools(deps.composio, sessionId, relevant, accounts, (toolkit, items) => deps.store.appendEvent(sessionId, {
-      id: `read:${options.turnId}:${toolkit}`, at: (deps.now?.() ?? new Date()).toISOString(), type: 'account_read', toolkit, items,
-    })) : {}),
-    ...(deps.resolveIdentity && latestUser ? {
-      resolve_identity: tool({
-        description: 'Check a directly stated first-person full name and company against a public Context.dev candidate. The server rejects weak or inferred claims.',
-        inputSchema: z.object({ first: z.string().min(1), last: z.string().min(1), company: z.string().min(1) }),
-        execute: async (clue) => {
-          try { return await deps.resolveIdentity!(sessionId, latestUser, clue); }
-          catch (error) { console.error('Identity lookup failed', error); return { status: 'unavailable' }; }
-        },
-      }),
-    } : {}),
-  };
-  const labels = [
-    'text',
-    ...(capabilities.voice ? ['browser call'] : []),
-    ...(connected.gmail ? ['connected Gmail (read-only search)'] : capabilities.gmail ? ['Gmail (not connected; can be connected)'] : []),
-    ...(connected.calendar ? ['connected Google Calendar (read-only)'] : capabilities.calendar ? ['Google Calendar (not connected; can be connected)'] : []),
-    ...Object.values(state.apps).filter((app) => app.phase === 'connected').map((app) => `${app.name} (connected; you can't act in it yet — say so honestly)`),
-  ];
-  const facts = Object.entries(state.facts).map(([key, fact]) => ({ key, value: fact.value, provenance: fact.provenance, evidence: fact.evidence, sourceUrl: fact.sourceUrl }));
-  const instructions = buildSystemPrompt({
-    facts, capabilities: labels, onboarding: state.onboarding, calls: callLines(state), personality: personalityLine(personaSettings(state)),
-    setup: setupStatus(state.onboarding, { graduated: state.setup.stage === 'graduated', voice: capabilities.voice }),
-    // Automation runs and app-event follow-ups don't nudge; a reply to the user does.
-    setupStalledFor: options.trigger ? 0 : repliesSinceSetupMoved(history),
-    now: (deps.now?.() ?? new Date()).toISOString(), mode: channel === 'voice' ? 'voice_backend' : 'text',
+  const now = deps.now?.() ?? new Date();
+  const ctx = await toolContext(deps, sessionId, state, { channel, turnId: options.turnId, trigger: options.trigger?.id, include: options.trigger?.include });
+  const tools = textToolSet(ctx);
+  const { instructions, context } = buildPrompt({
+    user: buildUserState(state, now, deps.env.OPENAI_VOICE), mode: channel === 'voice' ? 'voice_backend' : 'text',
+    capabilities: capabilityLabels(ctx, state), soulNotes: soulNotes(state, 'assistant'), facts: otherFacts(state),
+    noOverlay: Boolean(options.trigger?.id.startsWith('automation:')),
   });
-  const messages = modelMessages(state);
+  const window = historyWindow(state);
+  const messages = windowMessages(window);
   if (options.trigger) messages.push({ role: 'system', content: options.trigger.instruction });
-  const trace = deps.trace ? describeTurn(deps.trace, sessionId, { turnId: options.turnId, trigger: options.trigger, channel, model: deps.env.OPENAI_TEXT_MODEL, instructions, messages, tools, userText: latestUser?.text }) : undefined;
+  const latestUser = state.messages.filter((message) => message.speaker === 'user').at(-1);
+  // What each part of the prompt took, and how much of the conversation was replayed, trimmed or summarized.
+  const budget = {
+    ...context.tokens, history: window.tokens, total: context.tokens.total + window.tokens,
+    memories: `${context.memories.shown} of ${context.memories.total}`,
+    replayed: `${window.lines.length} lines${window.trimmed ? `, ${window.trimmed} trimmed` : ''}${window.start ? `; ${state.memory.summary?.lines ?? 0} in the summary${window.dropped ? `, ${window.dropped} past the cap` : ''}` : ''}`,
+  };
+  const trace = deps.trace ? describeTurn(deps.trace, sessionId, { turnId: options.turnId, trigger: options.trigger, channel, model: deps.env.OPENAI_TEXT_MODEL, instructions, messages, tools, userText: latestUser?.text, context: budget }) : undefined;
   return { instructions, messages, tools, state, allowSystemInMessages: Boolean(options.trigger), ...(trace ? { trace } : {}) };
 }
